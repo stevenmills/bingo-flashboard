@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bingo Flashboard</title>
+  <link rel="stylesheet" href="/tailwind.css">
+</head>
+<body class="bg-gray-100 text-gray-800 p-4">
+  <div class="container">
+    <h1 class="text-2xl font-bold mb-4">Bingo Flashboard</h1>
+
+    <!-- Game type -->
+    <section class="mb-4">
+      <h2 class="text-lg font-bold mb-2">Game type</h2>
+      <div class="flex flex-wrap gap-2" id="gameTypeGroup">
+        <label class="flex items-center gap-2 p-2 rounded border bg-white cursor-pointer">
+          <input type="radio" name="gameType" value="traditional"> Traditional
+        </label>
+        <label class="flex items-center gap-2 p-2 rounded border bg-white cursor-pointer">
+          <input type="radio" name="gameType" value="four_corners"> Four corners
+        </label>
+        <label class="flex items-center gap-2 p-2 rounded border bg-white cursor-pointer">
+          <input type="radio" name="gameType" value="postage_stamp"> Postage stamp
+        </label>
+        <label class="flex items-center gap-2 p-2 rounded border bg-white cursor-pointer">
+          <input type="radio" name="gameType" value="cover_all"> Cover all
+        </label>
+      </div>
+      <div class="grid grid-cols-5 gap-1 p-2 w-full max-w-[120px] mt-2 border rounded bg-white" id="gameTypePreview" aria-hidden="true"></div>
+    </section>
+
+    <!-- Calling style (only when !gameEstablished) -->
+    <section class="mb-4 hidden" id="callingStyleSection">
+      <h2 class="text-lg font-bold mb-2">Calling style</h2>
+      <div class="flex gap-2">
+        <label class="flex items-center gap-2 p-2 rounded border bg-white cursor-pointer">
+          <input type="radio" name="callingStyle" value="automatic"> Automatic
+        </label>
+        <label class="flex items-center gap-2 p-2 rounded border bg-white cursor-pointer">
+          <input type="radio" name="callingStyle" value="manual"> Manual
+        </label>
+      </div>
+    </section>
+
+    <!-- Manual call panel -->
+    <section class="mb-4 hidden" id="manualCallSection">
+      <h2 class="text-lg font-bold mb-2">Manual call</h2>
+      <div class="flex flex-wrap gap-2 items-end">
+        <div>
+          <label class="text-sm block mb-1">Letter</label>
+          <select id="manualLetter" class="p-2 rounded border min-h-touch w-20">
+            <option value="B">B</option>
+            <option value="I">I</option>
+            <option value="N">N</option>
+            <option value="G">G</option>
+            <option value="O">O</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-sm block mb-1">Number</label>
+          <select id="manualNumber" class="p-2 rounded border min-h-touch w-24"></select>
+        </div>
+        <button type="button" id="btnManualCall" class="bg-blue-500 text-white px-4 py-2 rounded min-h-touch">Call</button>
+      </div>
+    </section>
+
+    <!-- Current number -->
+    <section class="mb-4 p-4 bg-white rounded-lg shadow text-center">
+      <div class="text-sm text-gray-600 mb-1">Current number</div>
+      <div class="text-4xl md:text-4xl font-bold" id="currentNumber">—</div>
+    </section>
+
+    <!-- Flashboard preview (horizontal: B,I,N,G,O columns × 15 numbers) -->
+    <section class="mb-4 overflow-auto">
+      <h2 class="text-lg font-bold mb-2">Board preview</h2>
+      <div id="flashboardPreview" class="bg-white border rounded p-2 inline-block min-w-0"></div>
+    </section>
+
+    <!-- Call history -->
+    <section class="mb-4">
+      <h2 class="text-lg font-bold mb-2">Call history</h2>
+      <div id="callHistory" class="max-h-48 overflow-auto p-2 bg-white border rounded text-sm flex flex-wrap gap-1"></div>
+    </section>
+
+    <!-- Actions -->
+    <section class="flex flex-wrap gap-2 mb-4">
+      <button type="button" id="btnDraw" class="bg-green-500 text-white px-4 py-2 rounded min-h-touch">Draw next</button>
+      <button type="button" id="btnReset" class="bg-gray-100 border text-gray-800 px-4 py-2 rounded min-h-touch">Reset game</button>
+      <button type="button" id="btnVerify" class="border px-4 py-2 rounded min-h-touch">Verify winner</button>
+      <button type="button" id="btnDeclareWinner" class="bg-amber-500 text-white px-4 py-2 rounded min-h-touch">Declare winner</button>
+    </section>
+
+    <!-- Verify winner: letter selector + 15 numbers -->
+    <section class="mb-4 hidden" id="verifySection">
+      <h2 class="text-lg font-bold mb-2">Verify column</h2>
+      <select id="verifyLetter" class="p-2 rounded border mb-2">
+        <option value="B">B (1–15)</option>
+        <option value="I">I (16–30)</option>
+        <option value="N">N (31–45)</option>
+        <option value="G">G (46–60)</option>
+        <option value="O">O (61–75)</option>
+      </select>
+      <div id="verifyNumbers" class="flex flex-wrap gap-1"></div>
+    </section>
+
+    <!-- Settings -->
+    <section class="mb-4 p-4 bg-white rounded-lg shadow">
+      <h2 class="text-lg font-bold mb-2">Settings</h2>
+      <div class="flex flex-col gap-3">
+        <div>
+          <label class="text-sm block mb-1">Brightness</label>
+          <input type="range" id="brightness" min="0" max="255" value="128" class="w-full">
+          <span id="brightnessVal" class="text-sm">128</span>
+        </div>
+        <div>
+          <label class="text-sm block mb-1">Theme</label>
+          <select id="theme" class="p-2 rounded border w-full min-h-touch">
+            <option value="0">Green / Yellow / Cyan</option>
+            <option value="1">Red / Orange / Gold</option>
+            <option value="2">Blue / Purple / Teal</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-sm block mb-1">Static color</label>
+          <input type="color" id="staticColor" value="#22c55e" class="w-12 h-10 rounded border cursor-pointer">
+          <input type="text" id="staticColorHex" value="#22c55e" class="p-2 rounded border ml-2 w-24 text-sm" maxlength="7">
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Reset confirmation modal -->
+  <div id="modalReset" class="modal-overlay hidden">
+    <div class="modal-box">
+      <p class="mb-4">Are you sure? All called numbers will be cleared.</p>
+      <div class="flex gap-2 justify-center">
+        <button type="button" id="modalResetConfirm" class="bg-red-500 text-white px-4 py-2 rounded">Reset</button>
+        <button type="button" id="modalResetCancel" class="border px-4 py-2 rounded">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Declare winner → Keep going / Reset -->
+  <div id="modalWinner" class="modal-overlay hidden">
+    <div class="modal-box">
+      <p class="mb-4">Winner declared! What would you like to do?</p>
+      <div class="flex flex-col gap-2">
+        <button type="button" id="modalWinnerKeepGoing" class="bg-green-500 text-white px-4 py-2 rounded min-h-touch">Keep going</button>
+        <button type="button" id="modalWinnerReset" class="bg-blue-500 text-white px-4 py-2 rounded min-h-touch">Reset / New game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- After Keep going: change game type? -->
+  <div id="modalChangeGameType" class="modal-overlay hidden">
+    <div class="modal-box">
+      <p class="mb-4">Change game type for the next round?</p>
+      <div class="flex flex-wrap gap-2" id="modalGameTypeOptions"></div>
+      <button type="button" id="modalChangeGameTypeSkip" class="mt-4 border px-4 py-2 rounded w-full">Keep current</button>
+    </div>
+  </div>
+
+  <script>
+    const API = { base: '' };
+    let state = { current: 0, called: [], remaining: 75, gameType: 'traditional', callingStyle: 'automatic', gameEstablished: false, winnerDeclared: false, theme: 0, brightness: 128, colorMode: 'theme', staticColor: '#22c55e' };
+
+    function url(path) { return API.base + path; }
+
+    async function fetchState() {
+      try {
+        const r = await fetch(url('/api/state'));
+        if (!r.ok) return;
+        state = await r.json();
+        if (Array.isArray(state.called)) state.called = state.called;
+        else state.called = state.called || [];
+        render();
+      } catch (e) { console.warn('fetch state', e); }
+    }
+
+    async function post(path, body) {
+      const opt = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
+      if (body) opt.body = typeof body === 'string' ? body : JSON.stringify(body);
+      const r = await fetch(url(path), opt);
+      if (r.headers.get('content-type')?.includes('json')) return r.json().catch(() => ({}));
+      return {};
+    }
+
+    function render() {
+      document.querySelectorAll('input[name="gameType"]').forEach(el => { el.checked = el.value === state.gameType; });
+      document.querySelectorAll('input[name="callingStyle"]').forEach(el => { el.checked = el.value === state.callingStyle; });
+      document.getElementById('callingStyleSection').classList.toggle('hidden', state.gameEstablished);
+      document.getElementById('manualCallSection').classList.toggle('hidden', state.callingStyle !== 'manual' || state.gameEstablished);
+      document.getElementById('btnDraw').classList.toggle('hidden', state.callingStyle === 'manual');
+      document.getElementById('currentNumber').textContent = state.current ? `${numberToLetter(state.current)}-${state.current}` : '—';
+      document.getElementById('brightness').value = state.brightness ?? 128;
+      document.getElementById('brightnessVal').textContent = state.brightness ?? 128;
+      document.getElementById('theme').value = String(state.theme ?? 0);
+      const hex = state.staticColor || '#22c55e';
+      document.getElementById('staticColor').value = hex;
+      document.getElementById('staticColorHex').value = hex;
+      renderFlashboard();
+      renderCallHistory();
+      renderVerifyNumbers();
+      renderGameTypePreview();
+      fillManualNumbers();
+    }
+
+    function numberToLetter(n) {
+      if (n >= 1 && n <= 15) return 'B';
+      if (n >= 16 && n <= 30) return 'I';
+      if (n >= 31 && n <= 45) return 'N';
+      if (n >= 46 && n <= 60) return 'G';
+      if (n >= 61 && n <= 75) return 'O';
+      return '?';
+    }
+
+    const LETTERS = ['B','I','N','G','O'];
+    const RANGES = { B: [1,15], I: [16,30], N: [31,45], G: [46,60], O: [61,75] };
+
+    function renderFlashboard() {
+      const calledSet = new Set(state.called || []);
+      const current = state.current;
+      let html = '<table class="text-sm border-collapse"><tbody>';
+      for (let i = 0; i < 5; i++) {
+        const letter = LETTERS[i];
+        const [lo, hi] = RANGES[letter];
+        let row = '<tr><td class="p-1 border font-bold ' + (calledSet.size && [...Array(hi-lo+1)].some((_, j) => calledSet.has(lo + j)) ? 'cell-called' : '') + '">' + letter + '</td>';
+        for (let n = lo; n <= hi; n++) {
+          const isCalled = calledSet.has(n);
+          const isCur = n === current;
+          row += '<td class="w-6 h-6 p-0 border text-center ' + (isCalled ? 'cell-called' : '') + (isCur ? ' cell-current' : '') + '">' + (isCalled ? n : '') + '</td>';
+        }
+        row += '</tr>';
+        html += row;
+      }
+      html += '</tbody></table>';
+      document.getElementById('flashboardPreview').innerHTML = html;
+    }
+
+    function renderCallHistory() {
+      const called = state.called || [];
+      const list = called.length ? called.slice().reverse().map(n => numberToLetter(n) + '-' + n) : ['—'];
+      document.getElementById('callHistory').innerHTML = list.map(s => '<span class="px-1 rounded bg-gray-100">' + s + '</span>').join('');
+    }
+
+    function renderVerifyNumbers() {
+      const letter = document.getElementById('verifyLetter').value;
+      const [lo, hi] = RANGES[letter];
+      const calledSet = new Set(state.called || []);
+      let html = '';
+      for (let n = lo; n <= hi; n++) {
+        const on = calledSet.has(n);
+        html += '<span class="inline-block w-8 h-8 p-1 border rounded text-center text-sm ' + (on ? 'cell-called' : 'bg-gray-100') + '">' + n + '</span>';
+      }
+      document.getElementById('verifyNumbers').innerHTML = html;
+    }
+
+    function renderGameTypePreview() {
+      const gt = state.gameType || 'traditional';
+      const cells = { traditional: [11,12,13,14,15], four_corners: [1,5,21,25], postage_stamp: [1,2,6,7], cover_all: Array.from({ length: 25 }, (_, i) => i + 1) }[gt] || [];
+      const set = new Set(cells);
+      let html = '';
+      for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+          const cell = row * 5 + col + 1;
+          html += '<span class="inline-block w-3 h-3 border rounded ' + (set.has(cell) ? 'bg-green-500' : 'bg-gray-100') + '"></span>';
+        }
+      }
+      document.getElementById('gameTypePreview').innerHTML = html;
+    }
+
+    function fillManualNumbers() {
+      const letter = document.getElementById('manualLetter').value;
+      const [lo, hi] = RANGES[letter];
+      const calledSet = new Set(state.called || []);
+      const sel = document.getElementById('manualNumber');
+      sel.innerHTML = '';
+      for (let n = lo; n <= hi; n++) {
+        if (calledSet.has(n)) continue;
+        const opt = document.createElement('option');
+        opt.value = n;
+        opt.textContent = n;
+        sel.appendChild(opt);
+      }
+    }
+
+    document.querySelectorAll('input[name="gameType"]').forEach(el => {
+      el.addEventListener('change', async () => {
+        await post('/game-type', { gameType: el.value });
+        await fetchState();
+      });
+    });
+    document.querySelectorAll('input[name="callingStyle"]').forEach(el => {
+      el.addEventListener('change', async () => {
+        await post('/calling-style', { callingStyle: el.value });
+        await fetchState();
+      });
+    });
+    document.getElementById('manualLetter').addEventListener('change', fillManualNumbers);
+    document.getElementById('btnManualCall').addEventListener('click', async () => {
+      const num = parseInt(document.getElementById('manualNumber').value, 10);
+      if (!num) return;
+      await post('/call', { number: num });
+      await fetchState();
+    });
+    document.getElementById('btnDraw').addEventListener('click', async () => {
+      await post('/draw');
+      await fetchState();
+    });
+    document.getElementById('btnReset').addEventListener('click', () => {
+      document.getElementById('modalReset').classList.remove('hidden');
+    });
+    document.getElementById('modalResetConfirm').addEventListener('click', async () => {
+      document.getElementById('modalReset').classList.add('hidden');
+      await post('/reset');
+      await fetchState();
+    });
+    document.getElementById('modalResetCancel').addEventListener('click', () => {
+      document.getElementById('modalReset').classList.add('hidden');
+    });
+    document.getElementById('btnVerify').addEventListener('click', () => {
+      document.getElementById('verifySection').classList.toggle('hidden');
+      renderVerifyNumbers();
+    });
+    document.getElementById('verifyLetter').addEventListener('change', renderVerifyNumbers);
+    document.getElementById('btnDeclareWinner').addEventListener('click', async () => {
+      await post('/declare-winner');
+      await fetchState();
+      document.getElementById('modalWinner').classList.remove('hidden');
+    });
+    document.getElementById('modalWinnerKeepGoing').addEventListener('click', async () => {
+      document.getElementById('modalWinner').classList.add('hidden');
+      await post('/clear-winner');
+      await fetchState();
+      document.getElementById('modalChangeGameType').classList.remove('hidden');
+      const box = document.getElementById('modalGameTypeOptions');
+      box.innerHTML = ['traditional','four_corners','postage_stamp','cover_all'].map(gt => {
+        const label = gt.replace('_',' ');
+        return '<label class="flex items-center gap-2 p-2 rounded border cursor-pointer"><input type="radio" name="modalGameType" value="' + gt + '"> ' + label + '</label>';
+      }).join('');
+      box.querySelectorAll('input').forEach(inp => {
+        inp.checked = inp.value === state.gameType;
+        inp.addEventListener('change', async () => {
+          await post('/game-type', { gameType: inp.value });
+          await fetchState();
+          document.getElementById('modalChangeGameType').classList.add('hidden');
+        });
+      });
+    });
+    document.getElementById('modalWinnerReset').addEventListener('click', async () => {
+      document.getElementById('modalWinner').classList.add('hidden');
+      await post('/reset');
+      await fetchState();
+    });
+    document.getElementById('modalChangeGameTypeSkip').addEventListener('click', () => {
+      document.getElementById('modalChangeGameType').classList.add('hidden');
+    });
+    document.getElementById('brightness').addEventListener('input', async (e) => {
+      const v = e.target.value;
+      document.getElementById('brightnessVal').textContent = v;
+      await fetch(url('/brightness?value=' + v), { method: 'POST' });
+    });
+    document.getElementById('theme').addEventListener('change', async (e) => {
+      await post('/theme', { theme: parseInt(e.target.value, 10) });
+      await fetchState();
+    });
+    document.getElementById('staticColor').addEventListener('input', (e) => {
+      document.getElementById('staticColorHex').value = e.target.value;
+    });
+    document.getElementById('staticColorHex').addEventListener('change', async (e) => {
+      const hex = e.target.value.replace(/^#/, '');
+      if (hex.length >= 6) {
+        await post('/color', { hex: hex });
+        await fetchState();
+      }
+    });
+    document.getElementById('staticColor').addEventListener('change', async (e) => {
+      await post('/color', { hex: e.target.value.replace('#','') });
+      await fetchState();
+    });
+
+    fetchState();
+    setInterval(fetchState, 1500);
+  </script>
+</body>
+</html>
