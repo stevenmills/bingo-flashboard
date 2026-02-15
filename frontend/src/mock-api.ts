@@ -23,6 +23,13 @@ const savedCallingStyle = localStorage.getItem("bingo-callingStyle");
 if (savedCallingStyle && ["automatic", "manual"].includes(savedCallingStyle)) {
   state.callingStyle = savedCallingStyle as CallingStyle;
 }
+const savedBrightnessRaw = localStorage.getItem("bingo-brightness");
+if (savedBrightnessRaw !== null) {
+  const savedBrightness = Number(savedBrightnessRaw);
+  if (Number.isFinite(savedBrightness)) {
+    state.brightness = Math.max(0, Math.min(255, Math.round(savedBrightness)));
+  }
+}
 let pool: number[] = Array.from({ length: 75 }, (_, i) => i + 1);
 let callOrder: number[] = [];
 let boardSeed = Math.floor(1000 + Math.random() * 9000);
@@ -403,6 +410,7 @@ export const mockApi = {
     await delay(10);
     assertBoardAuth();
     state.brightness = Math.max(0, Math.min(255, value));
+    localStorage.setItem("bingo-brightness", String(state.brightness));
     return {};
   },
 

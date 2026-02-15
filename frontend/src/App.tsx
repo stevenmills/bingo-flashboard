@@ -638,7 +638,7 @@ export default function App() {
             <span className="text-muted-foreground">
               Players: <span className="font-semibold text-foreground">{state.playerCount ?? 0}</span>
             </span>
-            <span className="text-muted-foreground">Board active</span>
+            <span />
             <span className="text-muted-foreground">
               Cards: <span className="font-semibold text-foreground">{state.cardCount ?? 0}</span>
             </span>

@@ -32,7 +32,7 @@ Core hardware/network config is in `include/config.h`:
 
 ### Game flow
 - Automatic or manual calling style
-- Game types: Traditional, Four Corners, Postage Stamp, Cover All, Letter X, Letter Y, Frame Outside, Frame Inside
+- Game types: Traditional, Four Corners, Postage Stamp, Cover All, Letter X, Letter Y, Frame Outside, Frame Inside, Plus Sign, Field Goal
 - Winner flow + out-of-numbers modal
 - **Undo** support (`/undo`) for last called number
 
@@ -54,7 +54,7 @@ Core hardware/network config is in `include/config.h`:
   - API status dot tooltip
   - Automatic-mode play/pause timer controls (seconds + countdown loader)
 - Board mode bottom status bar: live player count + card count
-- Board mode bottom status bar includes clickable 4-digit board seed
+- Board mode bottom status bar shows live player and card counts
 - Current number shown as a bingo-ball style display
 - Odds drawer includes Monte Carlo game-win estimates with tunable assumptions:
   - Opponents (default `20`)
@@ -68,6 +68,7 @@ Core hardware/network config is in `include/config.h`:
 - Full-width 5x5 bingo card with FREE center
 - Card values are randomized by column ranges (B/I/N/G/O) and preserved on refresh
 - Re-roll and auto-sync are icon-only controls with tooltips
+- Card mode joins the available board session directly (no seed entry required)
 - Manual marking rules:
   - Unjoined card: arbitrary non-FREE marking allowed
   - Joined card: only called numbers are clickable
