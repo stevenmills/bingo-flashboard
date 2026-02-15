@@ -7,6 +7,9 @@
 
 #define AP_SSID       "BINGO"
 #define AP_PASSWORD   "washisnameo"
+#define BOARD_DEFAULT_PIN "1975"
+#define CARD_JOIN_PIN "BINGO"
+#define BOARD_AUTH_TTL_MS 1800000UL
 
 #define NVS_NAMESPACE "bingo"
 #define NVS_BRIGHTNESS "br"
@@ -14,5 +17,7 @@
 #define NVS_COLOR_MODE "cm"
 #define NVS_STATIC_COLOR "sc"
 #define NVS_GAME_TYPE "gt"
+#define NVS_CALLING_STYLE "cs"
+#define NVS_BOARD_PIN "bp"
 
 #endif
