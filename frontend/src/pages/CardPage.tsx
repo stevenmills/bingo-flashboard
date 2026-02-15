@@ -43,7 +43,14 @@ interface WsMessageEnvelope {
 }
 
 function gameTypeUsesFreeSpace(gameType: GameType): boolean {
-  return gameType === "traditional" || gameType === "cover_all" || gameType === "x" || gameType === "y";
+  return (
+    gameType === "traditional" ||
+    gameType === "cover_all" ||
+    gameType === "x" ||
+    gameType === "y" ||
+    gameType === "plus_sign" ||
+    gameType === "field_goal"
+  );
 }
 
 function loadStoredCardState(): { card: CardGrid; autoSync: boolean } {
@@ -141,6 +148,12 @@ function winningPatterns(card: CardGrid, gameType: GameType, calledSet: Set<numb
   }
   if (gameType === "frame_inside") {
     return findSatisfiedPatterns([[6, 7, 8, 11, 13, 16, 17, 18]]);
+  }
+  if (gameType === "plus_sign") {
+    return findSatisfiedPatterns([[2, 7, 10, 11, 12, 13, 14, 17, 22]]);
+  }
+  if (gameType === "field_goal") {
+    return findSatisfiedPatterns([[0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22]]);
   }
   // traditional
   const patterns: number[][] = [];
@@ -305,6 +318,14 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, [card, autoSync]);
 
   useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("bingo:card-auto-sync-changed", {
+        detail: { enabled: autoSync },
+      })
+    );
+  }, [autoSync]);
+
+  useEffect(() => {
     latestCardRef.current = card;
   }, [card]);
 
@@ -338,7 +359,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
           setCardId(null);
           localStorage.removeItem("bingo-card-id");
           prevWinnerRef.current = false;
-          setJoinError("Card session not found. Rejoin using the current board seed.");
+          setJoinError("Card session not found. Rejoin the available board.");
         }
       }
     };
@@ -379,15 +400,9 @@ export function CardPage({ state, letterColors, connected }: Props) {
     return () => window.removeEventListener("bingo:ws-message", onWsMessage as EventListener);
   }, [cardId, autoSync, applyWinnerState]);
 
-  const handleJoin = useCallback(async (seedInput: string) => {
-    const normalizedSeed = seedInput.replace(/\D/g, "").slice(0, 4);
-    if (normalizedSeed.length !== 4) {
-      setJoinError("Enter a 4-digit board seed.");
-      setJoinErrorOpen(true);
-      return;
-    }
+  const handleJoin = useCallback(async () => {
     try {
-      const joined = await api.joinCard(normalizedSeed, cardNumbers, cardId ?? undefined);
+      const joined = await api.joinCard(cardNumbers, cardId ?? undefined);
       setCardId(joined.cardId);
       localStorage.setItem("bingo-card-id", joined.cardId);
       pendingMarksRef.current.clear();
@@ -399,13 +414,8 @@ export function CardPage({ state, letterColors, connected }: Props) {
         setJoinErrorOpen(true);
         return;
       }
-      if (e instanceof Error && e.message.includes("invalid board seed")) {
-        setJoinError("Invalid board seed for this session. Ensure both windows are on the same shared dev server and refresh both tabs.");
-        setJoinErrorOpen(true);
-        return;
-      }
       if (e instanceof Error && e.message.includes("401")) {
-        setJoinError("Unable to join card session. Check board seed and try again.");
+        setJoinError("Unable to join card session.");
         setJoinErrorOpen(true);
         return;
       }
@@ -419,7 +429,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
         setJoinErrorOpen(true);
         return;
       }
-      setJoinError("Unable to join card session. Check seed format and try again.");
+      setJoinError("Unable to join card session. Try again.");
       setJoinErrorOpen(true);
     }
   }, [cardNumbers, cardId, connected, applyWinnerState, card]);
@@ -453,13 +463,18 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, [handleLeaveBoard]);
 
   useEffect(() => {
-    const onJoinBoardSeed = (event: Event) => {
-      const customEvent = event as CustomEvent<{ seed?: string }>;
-      void handleJoin(customEvent.detail?.seed ?? "");
+    const onJoinBoard = () => {
+      void handleJoin();
     };
-    window.addEventListener("bingo:join-board-seed", onJoinBoardSeed as EventListener);
-    return () => window.removeEventListener("bingo:join-board-seed", onJoinBoardSeed as EventListener);
+    window.addEventListener("bingo:join-board", onJoinBoard as EventListener);
+    return () => window.removeEventListener("bingo:join-board", onJoinBoard as EventListener);
   }, [handleJoin]);
+
+  useEffect(() => {
+    if (!connected) return;
+    if (cardId) return;
+    void handleJoin();
+  }, [connected, cardId, handleJoin]);
 
   useEffect(() => {
     if (!cardId) return;
@@ -543,7 +558,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
     pendingMarksRef.current.clear();
     if (joinedToBoard && connected && cardId) {
       const numbers = next.flat().map((cell) => (cell.isFree ? null : cell.value));
-      await api.joinCard(String(state.boardSeed), numbers, cardId);
+      await api.joinCard(numbers, cardId);
     }
   };
 

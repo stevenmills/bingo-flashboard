@@ -99,7 +99,11 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
   if (phase === "changeType") {
     return (
       <Dialog open={open} onOpenChange={(o) => { if (!o) handleSkip(); }}>
-        <DialogContent>
+        <DialogContent
+          hideClose
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>Change game type?</DialogTitle>
             <DialogDescription>
@@ -136,7 +140,12 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="text-center">
+      <DialogContent
+        className="text-center"
+        hideClose
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         <div className="flex justify-center">
           <PartyPopper className="h-12 w-12" style={{ color: letterColors.G }} />
         </div>

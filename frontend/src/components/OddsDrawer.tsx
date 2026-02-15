@@ -31,7 +31,18 @@ interface Props {
   onGameTypeChange?: (gameType: GameType) => void;
 }
 
-const GAME_TYPES: GameType[] = ["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside"];
+const GAME_TYPES: GameType[] = [
+  "traditional",
+  "four_corners",
+  "postage_stamp",
+  "cover_all",
+  "x",
+  "y",
+  "frame_outside",
+  "frame_inside",
+  "plus_sign",
+  "field_goal",
+];
 
 export function OddsDrawer({
   open,

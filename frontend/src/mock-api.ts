@@ -16,7 +16,7 @@ import {
 // Deep clone initial state, restoring persisted game type and calling style
 const state: GameState = JSON.parse(JSON.stringify(DEFAULT_STATE));
 const savedGameType = localStorage.getItem("bingo-gameType");
-if (savedGameType && ["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside"].includes(savedGameType)) {
+if (savedGameType && ["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside", "plus_sign", "field_goal"].includes(savedGameType)) {
   state.gameType = savedGameType as GameType;
 }
 const savedCallingStyle = localStorage.getItem("bingo-callingStyle");
@@ -47,6 +47,8 @@ interface MockCardSession {
   claimedYMask: number;
   claimedFrameOutsideMask: number;
   claimedFrameInsideMask: number;
+  claimedPlusSignMask: number;
+  claimedFieldGoalMask: number;
 }
 const cardSessions = new Map<string, MockCardSession>();
 
@@ -168,6 +170,16 @@ function frameInsideSatisfiedMask(session: MockCardSession): number {
   return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
 }
 
+function plusSignSatisfiedMask(session: MockCardSession): number {
+  const pattern = [2, 7, 10, 11, 12, 13, 14, 17, 22];
+  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
+}
+
+function fieldGoalSatisfiedMask(session: MockCardSession): number {
+  const pattern = [0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22];
+  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
+}
+
 function satisfiedMaskForCurrentGameType(session: MockCardSession): number {
   if (state.gameType === "traditional") return traditionalSatisfiedMask(session);
   if (state.gameType === "four_corners") {
@@ -186,6 +198,8 @@ function satisfiedMaskForCurrentGameType(session: MockCardSession): number {
   if (state.gameType === "y") return ySatisfiedMask(session);
   if (state.gameType === "frame_outside") return frameOutsideSatisfiedMask(session);
   if (state.gameType === "frame_inside") return frameInsideSatisfiedMask(session);
+  if (state.gameType === "plus_sign") return plusSignSatisfiedMask(session);
+  if (state.gameType === "field_goal") return fieldGoalSatisfiedMask(session);
   return 0;
 }
 
@@ -198,6 +212,8 @@ function claimedMaskForCurrentGameType(session: MockCardSession): number {
   if (state.gameType === "y") return session.claimedYMask;
   if (state.gameType === "frame_outside") return session.claimedFrameOutsideMask;
   if (state.gameType === "frame_inside") return session.claimedFrameInsideMask;
+  if (state.gameType === "plus_sign") return session.claimedPlusSignMask;
+  if (state.gameType === "field_goal") return session.claimedFieldGoalMask;
   return session.claimedTraditionalMask;
 }
 
@@ -211,6 +227,8 @@ function claimCurrentWinningPatterns(session: MockCardSession) {
   else if (state.gameType === "y") session.claimedYMask |= satisfied;
   else if (state.gameType === "frame_outside") session.claimedFrameOutsideMask |= satisfied;
   else if (state.gameType === "frame_inside") session.claimedFrameInsideMask |= satisfied;
+  else if (state.gameType === "plus_sign") session.claimedPlusSignMask |= satisfied;
+  else if (state.gameType === "field_goal") session.claimedFieldGoalMask |= satisfied;
 }
 
 function recomputeWinners() {
@@ -262,6 +280,8 @@ function resetGame() {
     s.claimedYMask = 0;
     s.claimedFrameOutsideMask = 0;
     s.claimedFrameInsideMask = 0;
+    s.claimedPlusSignMask = 0;
+    s.claimedFieldGoalMask = 0;
   }
 }
 
@@ -433,9 +453,8 @@ export const mockApi = {
     return {};
   },
 
-  joinCard: async (pin: string, numbers: Array<number | null>, cardId?: string): Promise<CardJoinResponse> => {
+  joinCard: async (numbers: Array<number | null>, cardId?: string): Promise<CardJoinResponse> => {
     await delay(15);
-    if (normalizePin(pin) !== String(boardSeed)) throw new Error("invalid board seed");
     if (numbers.length !== 25) throw new Error("numbers[25] required");
     const id = cardId ?? genToken().slice(0, 16);
     const existing = cardSessions.get(id);
@@ -448,10 +467,12 @@ export const mockApi = {
       claimedFourCornersMask: 0,
       claimedPostageMask: 0,
       claimedCoverAllMask: 0,
-    claimedXMask: 0,
-    claimedYMask: 0,
-    claimedFrameOutsideMask: 0,
-    claimedFrameInsideMask: 0,
+      claimedXMask: 0,
+      claimedYMask: 0,
+      claimedFrameOutsideMask: 0,
+      claimedFrameInsideMask: 0,
+      claimedPlusSignMask: 0,
+      claimedFieldGoalMask: 0,
     };
     session.numbers = [...numbers];
     session.marks = Array.from({ length: 25 }, (_, i) => i === 12);
@@ -463,6 +484,8 @@ export const mockApi = {
     session.claimedYMask = 0;
     session.claimedFrameOutsideMask = 0;
     session.claimedFrameInsideMask = 0;
+    session.claimedPlusSignMask = 0;
+    session.claimedFieldGoalMask = 0;
     cardSessions.set(id, session);
     recomputeWinners();
     return { cardId: id, winner: session.winner, winnerCount: state.winnerCount ?? 0, winnerEventId };

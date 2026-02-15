@@ -148,6 +148,16 @@ function frameInsideSatisfiedMask(session) {
   return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
 }
 
+function plusSignSatisfiedMask(session) {
+  const pattern = [2, 7, 10, 11, 12, 13, 14, 17, 22];
+  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
+}
+
+function fieldGoalSatisfiedMask(session) {
+  const pattern = [0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22];
+  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
+}
+
 function satisfiedMaskForCurrentGameType(session) {
   if (state.gameType === "traditional") return traditionalSatisfiedMask(session);
   if (state.gameType === "four_corners") {
@@ -163,6 +173,8 @@ function satisfiedMaskForCurrentGameType(session) {
   if (state.gameType === "y") return ySatisfiedMask(session);
   if (state.gameType === "frame_outside") return frameOutsideSatisfiedMask(session);
   if (state.gameType === "frame_inside") return frameInsideSatisfiedMask(session);
+  if (state.gameType === "plus_sign") return plusSignSatisfiedMask(session);
+  if (state.gameType === "field_goal") return fieldGoalSatisfiedMask(session);
   return 0;
 }
 
@@ -175,6 +187,8 @@ function claimedMaskForCurrentGameType(session) {
   if (state.gameType === "y") return session.claimedYMask ?? 0;
   if (state.gameType === "frame_outside") return session.claimedFrameOutsideMask ?? 0;
   if (state.gameType === "frame_inside") return session.claimedFrameInsideMask ?? 0;
+  if (state.gameType === "plus_sign") return session.claimedPlusSignMask ?? 0;
+  if (state.gameType === "field_goal") return session.claimedFieldGoalMask ?? 0;
   return session.claimedTraditionalMask ?? 0;
 }
 
@@ -188,6 +202,8 @@ function claimCurrentWinningPatterns(session) {
   else if (state.gameType === "y") session.claimedYMask = (session.claimedYMask ?? 0) | satisfied;
   else if (state.gameType === "frame_outside") session.claimedFrameOutsideMask = (session.claimedFrameOutsideMask ?? 0) | satisfied;
   else if (state.gameType === "frame_inside") session.claimedFrameInsideMask = (session.claimedFrameInsideMask ?? 0) | satisfied;
+  else if (state.gameType === "plus_sign") session.claimedPlusSignMask = (session.claimedPlusSignMask ?? 0) | satisfied;
+  else if (state.gameType === "field_goal") session.claimedFieldGoalMask = (session.claimedFieldGoalMask ?? 0) | satisfied;
 }
 
 function recomputeWinners() {
@@ -237,6 +253,8 @@ function resetGame() {
     s.claimedYMask = 0;
     s.claimedFrameOutsideMask = 0;
     s.claimedFrameInsideMask = 0;
+    s.claimedPlusSignMask = 0;
+    s.claimedFieldGoalMask = 0;
   }
   syncCardCounts();
 }
@@ -429,7 +447,7 @@ const server = http.createServer(async (req, res) => {
   if (method === "POST" && path === "/game-type") {
     if (!requireBoardAuth(req, res)) return;
     const body = await parseBody(req);
-    if (!["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside"].includes(body.gameType)) return badRequest(res, "invalid");
+    if (!["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside", "plus_sign", "field_goal"].includes(body.gameType)) return badRequest(res, "invalid");
     state.gameType = body.gameType;
     state.patternIndex = 0;
     recomputeWinners();
@@ -496,8 +514,6 @@ const server = http.createServer(async (req, res) => {
 
   if (method === "POST" && path === "/card/join") {
     const body = await parseBody(req);
-    const pin = normalizePin(body.pin);
-    if (pin !== String(state.boardSeed)) return json(res, 401, { error: "invalid board seed" });
     const numbers = Array.isArray(body.numbers) ? body.numbers : [];
     if (numbers.length !== 25) return badRequest(res, "numbers[25] required");
     const id = String(body.cardId || genToken().slice(0, 16));
@@ -513,6 +529,8 @@ const server = http.createServer(async (req, res) => {
     session.claimedYMask = 0;
     session.claimedFrameOutsideMask = 0;
     session.claimedFrameInsideMask = 0;
+    session.claimedPlusSignMask = 0;
+    session.claimedFieldGoalMask = 0;
     cardSessions.set(id, session);
     recomputeWinners();
     broadcastState("card_joined");
@@ -684,7 +702,7 @@ function handleWsCommand(ws, msg) {
     const auth = guarded();
     if (!auth.ok) return wsResult(ws, requestId, false, auth.status, null, auth.error);
     const gameType = payload.gameType;
-    if (!["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside"].includes(gameType)) {
+    if (!["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside", "plus_sign", "field_goal"].includes(gameType)) {
       return wsResult(ws, requestId, false, 400, null, "invalid");
     }
     state.gameType = gameType;
@@ -720,8 +738,6 @@ function handleWsCommand(ws, msg) {
     return;
   }
   if (action === "join_card") {
-    const pin = normalizePin(payload.pin);
-    if (pin !== String(state.boardSeed)) return wsResult(ws, requestId, false, 401, null, "invalid board seed");
     const numbers = Array.isArray(payload.numbers) ? payload.numbers : [];
     if (numbers.length !== 25) return wsResult(ws, requestId, false, 400, null, "numbers[25] required");
     const id = String(payload.cardId || genToken().slice(0, 16));
@@ -737,6 +753,8 @@ function handleWsCommand(ws, msg) {
     session.claimedYMask = 0;
     session.claimedFrameOutsideMask = 0;
     session.claimedFrameInsideMask = 0;
+    session.claimedPlusSignMask = 0;
+    session.claimedFieldGoalMask = 0;
     cardSessions.set(id, session);
     recomputeWinners();
     broadcastState("card_joined");

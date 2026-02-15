@@ -268,9 +268,9 @@ const realApi = {
   setColor: (hex: string) =>
     postJson("/color", { hex: hex.replace("#", "") }),
 
-  joinCard: (pin: string, numbers: Array<number | null>, cardId?: string) =>
-    wsCommand<CardJoinResponse>("join_card", { pin, numbers, cardId }, false)
-      .catch(() => postJson<CardJoinResponse>("/card/join", { pin, numbers, cardId }, false)),
+  joinCard: (numbers: Array<number | null>, cardId?: string) =>
+    wsCommand<CardJoinResponse>("join_card", { numbers, cardId }, false)
+      .catch(() => postJson<CardJoinResponse>("/card/join", { numbers, cardId }, false)),
   markCardCell: (cardId: string, cellIndex: number, marked: boolean) =>
     wsCommand<CardJoinResponse>("mark_card_cell", { cardId, cellIndex, marked }, false)
       .catch(() => postJson<CardJoinResponse>("/card/mark", { cardId, cellIndex, marked }, false)),
@@ -372,8 +372,8 @@ export const api = {
   },
   getBoardToken: () => boardToken,
 
-  joinCard: async (pin: string, numbers: Array<number | null>, cardId?: string) =>
-    useMock ? mockApi.joinCard(pin, numbers, cardId) : realApi.joinCard(pin, numbers, cardId),
+  joinCard: async (numbers: Array<number | null>, cardId?: string) =>
+    useMock ? mockApi.joinCard(numbers, cardId) : realApi.joinCard(numbers, cardId),
   markCardCell: async (cardId: string, cellIndex: number, marked: boolean) =>
     useMock ? mockApi.markCardCell(cardId, cellIndex, marked) : realApi.markCardCell(cardId, cellIndex, marked),
   leaveCard: async (cardId: string) =>

@@ -52,6 +52,16 @@ const BOARD_TOKEN_STORAGE_KEY = "bingo-board-token";
 const BOARD_TOKEN_EXPIRY_STORAGE_KEY = "bingo-board-token-expiry";
 
 export default function App() {
+  const readStoredAutoSync = () => {
+    try {
+      const raw = localStorage.getItem("bingo-card-state");
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as { autoSync?: boolean };
+      return Boolean(parsed.autoSync);
+    } catch {
+      return false;
+    }
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [oddsOpen, setOddsOpen] = useState(false);
   const [modeInitialized, setModeInitialized] = useState(false);
@@ -73,9 +83,8 @@ export default function App() {
   const [unlockPin, setUnlockPin] = useState("");
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
-  const [boardSeedOpen, setBoardSeedOpen] = useState(false);
-  const [cardJoinSeed, setCardJoinSeed] = useState("");
   const [cardOddsGameType, setCardOddsGameType] = useState<GameType>("traditional");
+  const [cardAutoSyncEnabled, setCardAutoSyncEnabled] = useState<boolean>(() => readStoredAutoSync());
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() => isFullscreenNow());
   const [secondsDraft, setSecondsDraft] = useState<string>("30");
   const cardJoined = Boolean(localStorage.getItem("bingo-card-id"));
@@ -99,6 +108,15 @@ export default function App() {
     if (!cardJoined) return;
     setCardOddsGameType(state.gameType);
   }, [state.gameType, cardJoined]);
+
+  useEffect(() => {
+    const onCardAutoSyncChanged = (event: Event) => {
+      const custom = event as CustomEvent<{ enabled?: boolean }>;
+      setCardAutoSyncEnabled(Boolean(custom.detail?.enabled));
+    };
+    window.addEventListener("bingo:card-auto-sync-changed", onCardAutoSyncChanged as EventListener);
+    return () => window.removeEventListener("bingo:card-auto-sync-changed", onCardAutoSyncChanged as EventListener);
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem(BOARD_TOKEN_STORAGE_KEY);
@@ -343,18 +361,6 @@ export default function App() {
     setMode("card");
   };
 
-  const handleLeaveBoardFromCardStatus = () => {
-    window.dispatchEvent(new Event("bingo:leave-board"));
-  };
-
-  const handleCardHeaderJoin = () => {
-    window.dispatchEvent(
-      new CustomEvent("bingo:join-board-seed", {
-        detail: { seed: cardJoinSeed },
-      })
-    );
-  };
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -364,30 +370,6 @@ export default function App() {
             <PawPrint className="h-6 w-6" style={{ color: uiLetterColors.N }} />
             <h1 className="text-lg font-bold tracking-tight">Bingo Flashboard</h1>
           </div>
-          {modeInitialized && appMode === "card" && (
-            <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-              <Input
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={4}
-                value={cardJoinSeed}
-                onChange={(e) => setCardJoinSeed(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                className="h-8 w-28 px-2 text-xs text-center tabular-nums"
-                placeholder="Seed"
-                aria-label="Board seed"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleCardHeaderJoin}
-                disabled={cardJoinSeed.length !== 4}
-              >
-                {cardJoined ? "Rejoin" : "Join"}
-              </Button>
-            </div>
-          )}
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1.5">
               {modeInitialized && (
@@ -656,18 +638,7 @@ export default function App() {
             <span className="text-muted-foreground">
               Players: <span className="font-semibold text-foreground">{state.playerCount ?? 0}</span>
             </span>
-            <button
-              type="button"
-              onClick={() => setBoardSeedOpen(true)}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Show board seed"
-              title="Show board seed"
-            >
-              Seed:{" "}
-              <span className="font-semibold text-foreground tabular-nums">
-                {String(state.boardSeed ?? 1000).padStart(4, "0")}
-              </span>
-            </button>
+            <span className="text-muted-foreground">Board active</span>
             <span className="text-muted-foreground">
               Cards: <span className="font-semibold text-foreground">{state.cardCount ?? 0}</span>
             </span>
@@ -682,40 +653,16 @@ export default function App() {
               <span className="font-semibold text-foreground">
                 {cardJoined ? (connected ? "Joined" : "Joined (offline)") : "Not joined"}
               </span>
-              {cardJoined && (
-                <>
-                  <span className="mx-2 text-muted-foreground/70">/</span>
-                  <button
-                    type="button"
-                    className="underline underline-offset-2 hover:text-foreground transition-colors"
-                    onClick={handleLeaveBoardFromCardStatus}
-                  >
-                    Leave board
-                  </button>
-                </>
-              )}
             </span>
             <span className="text-muted-foreground">
-              Seed:{" "}
-              <span className="font-semibold text-foreground tabular-nums">
-                {cardJoined && connected ? String(state.boardSeed ?? 1000).padStart(4, "0") : "----"}
+              Cards synced:{" "}
+              <span className="font-semibold text-foreground">
+                {cardJoined && connected && cardAutoSyncEnabled ? "Yes" : "No"}
               </span>
             </span>
           </div>
         </div>
       )}
-      <Dialog open={boardSeedOpen} onOpenChange={setBoardSeedOpen}>
-        <DialogContent className="max-w-xl sm:max-w-2xl p-8 sm:p-10">
-          <DialogHeader>
-            <DialogTitle>Board Seed</DialogTitle>
-          </DialogHeader>
-          <div className="py-8 text-center">
-            <p className="text-7xl sm:text-8xl md:text-9xl font-bold tracking-[0.12em] tabular-nums leading-none">
-              {String(state.boardSeed ?? 1000).padStart(4, "0")}
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

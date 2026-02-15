@@ -9,6 +9,8 @@ export const GAME_TYPE_REQUIRED_HITS: Record<GameType, number> = {
   y: 5,
   frame_outside: 16,
   frame_inside: 8,
+  plus_sign: 8,
+  field_goal: 10,
 };
 
 export interface MonteCarloConfig {

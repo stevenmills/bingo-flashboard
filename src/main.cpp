@@ -64,6 +64,8 @@ struct CardSession {
   uint16_t claimedYMask;
   uint16_t claimedFrameOutsideMask;
   uint16_t claimedFrameInsideMask;
+  uint16_t claimedPlusSignMask;
+  uint16_t claimedFieldGoalMask;
 };
 CardSession cardSessions[MAX_CARD_SESSIONS];
 
@@ -144,7 +146,6 @@ void issueBoardAuthToken();
 void syncWinnerDeclared();
 void recomputeCardWinners();
 String normalizedPin(const char* raw);
-String normalizedJoinCode(const char* raw);
 String buildStateJson();
 void broadcastStateWs(const char* type = "snapshot");
 String buildCardStateJson(const CardSession& s);
@@ -208,12 +209,6 @@ String normalizedPin(const char* raw) {
   return s;
 }
 
-String normalizedJoinCode(const char* raw) {
-  String s = raw ? String(raw) : String("");
-  s.trim();
-  return s;
-}
-
 void clearCardSession(CardSession& s) {
   s.active = false;
   s.cardId[0] = '\0';
@@ -230,6 +225,8 @@ void clearCardSession(CardSession& s) {
   s.claimedYMask = 0;
   s.claimedFrameOutsideMask = 0;
   s.claimedFrameInsideMask = 0;
+  s.claimedPlusSignMask = 0;
+  s.claimedFieldGoalMask = 0;
 }
 
 CardSession* findCardSessionById(const char* cardId) {
@@ -409,6 +406,22 @@ uint16_t frameInsideSatisfiedMask(const CardSession& s) {
   return 1u;
 }
 
+uint16_t plusSignSatisfiedMask(const CardSession& s) {
+  const int pattern[9] = {2, 7, 10, 11, 12, 13, 14, 17, 22};
+  for (int i = 0; i < 9; i++) {
+    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
+  }
+  return 1u;
+}
+
+uint16_t fieldGoalSatisfiedMask(const CardSession& s) {
+  const int pattern[11] = {0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22};
+  for (int i = 0; i < 11; i++) {
+    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
+  }
+  return 1u;
+}
+
 uint16_t satisfiedMaskForCurrentGameType(const CardSession& s) {
   if (strcmp(gameType, "traditional") == 0) return traditionalSatisfiedMask(s);
   if (strcmp(gameType, "four_corners") == 0) {
@@ -425,6 +438,8 @@ uint16_t satisfiedMaskForCurrentGameType(const CardSession& s) {
   if (strcmp(gameType, "y") == 0) return ySatisfiedMask(s);
   if (strcmp(gameType, "frame_outside") == 0) return frameOutsideSatisfiedMask(s);
   if (strcmp(gameType, "frame_inside") == 0) return frameInsideSatisfiedMask(s);
+  if (strcmp(gameType, "plus_sign") == 0) return plusSignSatisfiedMask(s);
+  if (strcmp(gameType, "field_goal") == 0) return fieldGoalSatisfiedMask(s);
   return 0u;
 }
 
@@ -437,6 +452,8 @@ uint16_t& claimedMaskForCurrentGameType(CardSession& s) {
   if (strcmp(gameType, "y") == 0) return s.claimedYMask;
   if (strcmp(gameType, "frame_outside") == 0) return s.claimedFrameOutsideMask;
   if (strcmp(gameType, "frame_inside") == 0) return s.claimedFrameInsideMask;
+  if (strcmp(gameType, "plus_sign") == 0) return s.claimedPlusSignMask;
+  if (strcmp(gameType, "field_goal") == 0) return s.claimedFieldGoalMask;
   return s.claimedTraditionalMask;
 }
 
@@ -508,6 +525,10 @@ void getGameTypePhysicalIndices(int* out, int* count) {
     add(20); add(21); add(22); add(23); add(24); add(25);
   } else if (strcmp(gameType, "frame_inside") == 0) {
     add(7); add(8); add(9); add(12); add(14); add(17); add(18); add(19);
+  } else if (strcmp(gameType, "plus_sign") == 0) {
+    add(3); add(8); add(11); add(12); add(13); add(14); add(15); add(18); add(23);
+  } else if (strcmp(gameType, "field_goal") == 0) {
+    add(1); add(5); add(6); add(10); add(11); add(12); add(13); add(14); add(15); add(18); add(23);
   }
 }
 
@@ -940,6 +961,8 @@ void doReset() {
     cardSessions[i].claimedYMask = 0;
     cardSessions[i].claimedFrameOutsideMask = 0;
     cardSessions[i].claimedFrameInsideMask = 0;
+    cardSessions[i].claimedPlusSignMask = 0;
+    cardSessions[i].claimedFieldGoalMask = 0;
   }
   winnerCount = 0;
   syncWinnerDeclared();
@@ -961,7 +984,9 @@ void loadNvs() {
         strcmp(gameTypeBuf, "cover_all") != 0 && strcmp(gameTypeBuf, "traditional") != 0 &&
         strcmp(gameTypeBuf, "x") != 0 && strcmp(gameTypeBuf, "y") != 0 &&
         strcmp(gameTypeBuf, "frame_outside") != 0 &&
-        strcmp(gameTypeBuf, "frame_inside") != 0)
+        strcmp(gameTypeBuf, "frame_inside") != 0 &&
+        strcmp(gameTypeBuf, "plus_sign") != 0 &&
+        strcmp(gameTypeBuf, "field_goal") != 0)
       strcpy(gameTypeBuf, "traditional");
   }
   size_t csLen = sizeof(callingStyleBuf);
@@ -1206,7 +1231,9 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
         strcmp(gt, "postage_stamp") != 0 && strcmp(gt, "cover_all") != 0 &&
         strcmp(gt, "x") != 0 && strcmp(gt, "y") != 0 &&
         strcmp(gt, "frame_outside") != 0 &&
-        strcmp(gt, "frame_inside") != 0) {
+        strcmp(gt, "frame_inside") != 0 &&
+        strcmp(gt, "plus_sign") != 0 &&
+        strcmp(gt, "field_goal") != 0) {
       sendWsCommandResult(client, requestId, false, 400, "{}", "invalid");
       return;
     }
@@ -1253,11 +1280,6 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
   }
 
   if (action == "join_card") {
-    String joinCode = normalizedJoinCode(payload["pin"] | "");
-    if (joinCode.length() == 0 || joinCode != String(boardSeed)) {
-      sendWsCommandResult(client, requestId, false, 401, "{}", "invalid board seed");
-      return;
-    }
     JsonArray nums = payload["numbers"].as<JsonArray>();
     if (!nums || nums.size() != 25) {
       sendWsCommandResult(client, requestId, false, 400, "{}", "numbers[25] required");
@@ -1284,6 +1306,8 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     s->claimedYMask = 0;
     s->claimedFrameOutsideMask = 0;
     s->claimedFrameInsideMask = 0;
+    s->claimedPlusSignMask = 0;
+    s->claimedFieldGoalMask = 0;
     recomputeCardWinners();
     broadcastStateWs("card_joined");
     broadcastCardStateWs(*s, "card_state");
@@ -1567,7 +1591,9 @@ void setup() {
               strcmp(gt, "postage_stamp") == 0 || strcmp(gt, "cover_all") == 0 ||
               strcmp(gt, "x") == 0 || strcmp(gt, "y") == 0 ||
               strcmp(gt, "frame_outside") == 0 ||
-              strcmp(gt, "frame_inside") == 0)) {
+              strcmp(gt, "frame_inside") == 0 ||
+              strcmp(gt, "plus_sign") == 0 ||
+              strcmp(gt, "field_goal") == 0)) {
       strncpy(gameTypeBuf, gt, sizeof(gameTypeBuf) - 1);
       gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
       recomputeCardWinners();
@@ -1741,13 +1767,6 @@ void setup() {
 
   server.addHandler(new AsyncCallbackJsonWebHandler("/card/join", [](AsyncWebServerRequest* req, JsonVariant& json) {
     JsonObject obj = json.as<JsonObject>();
-    String joinCode = normalizedJoinCode(obj["pin"].as<const char*>());
-    String activeSeed = String(boardSeed);
-    if (joinCode.length() == 0 || joinCode != activeSeed) {
-      req->send(401, "application/json", "{\"error\":\"invalid board seed\"}");
-      return;
-    }
-
     JsonArray nums = obj["numbers"].as<JsonArray>();
     if (!nums || nums.size() != 25) {
       req->send(400, "application/json", "{\"error\":\"numbers[25] required\"}");
@@ -1776,6 +1795,8 @@ void setup() {
     s->claimedYMask = 0;
     s->claimedFrameOutsideMask = 0;
     s->claimedFrameInsideMask = 0;
+    s->claimedPlusSignMask = 0;
+    s->claimedFieldGoalMask = 0;
     recomputeCardWinners();
     broadcastStateWs("card_joined");
     broadcastCardStateWs(*s, "card_state");

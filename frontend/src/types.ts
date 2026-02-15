@@ -52,7 +52,9 @@ export type GameType =
   | "x"
   | "y"
   | "frame_outside"
-  | "frame_inside";
+  | "frame_inside"
+  | "plus_sign"
+  | "field_goal";
 export type CallingStyle = "automatic" | "manual";
 export type ColorMode = "theme" | "solid";
 
@@ -76,6 +78,8 @@ export const GAME_TYPE_LABELS: Record<GameType, string> = {
   y: "Letter Y",
   frame_outside: "Frame Outside",
   frame_inside: "Frame Inside",
+  plus_sign: "Plus Sign",
+  field_goal: "Field Goal",
 };
 
 export const GAME_TYPE_MIN_CALLS: Record<GameType, number> = {
@@ -87,6 +91,8 @@ export const GAME_TYPE_MIN_CALLS: Record<GameType, number> = {
   y: 5,
   frame_outside: 16,
   frame_inside: 8,
+  plus_sign: 8,
+  field_goal: 10,
 };
 
 export const GAME_TYPE_CELLS: Record<GameType, number[]> = {
@@ -98,6 +104,8 @@ export const GAME_TYPE_CELLS: Record<GameType, number[]> = {
   y: [1, 5, 7, 9, 13, 18, 23],
   frame_outside: [1, 2, 3, 4, 5, 6, 10, 11, 15, 16, 20, 21, 22, 23, 24, 25],
   frame_inside: [7, 8, 9, 12, 14, 17, 18, 19],
+  plus_sign: [3, 8, 11, 12, 13, 14, 15, 18, 23],
+  field_goal: [1, 5, 6, 10, 11, 12, 13, 14, 15, 18, 23],
 };
 
 /** All possible winning orientations for Traditional bingo (5×5 grid, 1-indexed row-major) */
