@@ -2,12 +2,21 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/api";
 import { DEFAULT_STATE, type GameState } from "@/types";
 
+function isValidSnapshot(state: GameState): boolean {
+  if (!Array.isArray(state.called)) return false;
+  if (typeof state.remaining !== "number") return false;
+  const expectedCalledCount = 75 - state.remaining;
+  if (expectedCalledCount < 0 || expectedCalledCount > 75) return false;
+  return state.called.length === expectedCalledCount;
+}
+
 export function useGameState(pollMs = 1500) {
   const [state, setState] = useState<GameState>(DEFAULT_STATE);
   const [connected, setConnected] = useState(false);
   const mountedRef = useRef(true);
   const inFlightRef = useRef(false);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const lastWsSnapshotAtRef = useRef(0);
 
   const refresh = useCallback(async () => {
     if (inFlightRef.current) return;
@@ -15,7 +24,12 @@ export function useGameState(pollMs = 1500) {
     try {
       const s = await api.getState();
       if (mountedRef.current) {
-        setState(s);
+        if (!isValidSnapshot(s)) return;
+        const wsRecentlyUpdated = Date.now() - lastWsSnapshotAtRef.current < pollMs * 2;
+        // When websocket is healthy, avoid racing with slightly stale poll responses.
+        if (!wsRecentlyUpdated) {
+          setState(s);
+        }
         setConnected(true);
       }
     } catch {
@@ -145,8 +159,11 @@ export function useGameState(pollMs = 1500) {
           }
           const snapshot = "type" in parsed ? parsed.data : parsed;
           if (!snapshot || typeof snapshot !== "object" || !("called" in snapshot)) return;
+          const nextState = snapshot as GameState;
+          if (!isValidSnapshot(nextState)) return;
           if (mountedRef.current) {
-            setState(snapshot as GameState);
+            setState(nextState);
+            lastWsSnapshotAtRef.current = Date.now();
             setConnected(true);
           }
         } catch {

@@ -245,10 +245,13 @@ export function Settings({
             </div>
             <Button
               type="button"
-              variant={ledTestMode ? "destructive" : "default"}
+              variant="default"
               onClick={handleLedTestToggle}
-              className={ledTestMode ? undefined : "text-white"}
-              style={ledTestMode ? undefined : { backgroundColor: letterColors.N }}
+              className="text-white"
+              style={{
+                backgroundColor: ledTestMode ? letterColors.I : letterColors.N,
+                borderColor: ledTestMode ? letterColors.I : letterColors.N,
+              }}
             >
               {ledTestMode ? "Disable LED Board Test" : "Enable LED Board Test"}
             </Button>

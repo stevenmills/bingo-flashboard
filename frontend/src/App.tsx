@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useGameState } from "@/hooks/useGameState";
 import { GamePage } from "@/pages/GamePage";
 import { CardPage } from "@/pages/CardPage";
@@ -7,8 +7,9 @@ import { ModeChooser } from "@/components/ModeChooser";
 import { Settings } from "@/components/Settings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { Dices, Lock, LogOut, Maximize2, Minimize2, Pause, PawPrint, Play, Settings2 } from "lucide-react";
+import { Dices, Lock, LogOut, Maximize2, Menu, Minimize2, Moon, Pause, PawPrint, Play, Settings2, Sun } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useTheme } from "@/hooks/useTheme";
 import { useBingoUiColors } from "@/hooks/useBingoUiColors";
 import { useAutoCallingTimer } from "@/hooks/useAutoCallingTimer";
 import { api } from "@/api";
@@ -87,6 +88,9 @@ export default function App() {
   const [cardAutoSyncEnabled, setCardAutoSyncEnabled] = useState<boolean>(() => readStoredAutoSync());
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() => isFullscreenNow());
   const [secondsDraft, setSecondsDraft] = useState<string>("30");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const mobileMenuRef = useRef<HTMLDivElement | null>(null);
+  const { theme, setTheme } = useTheme();
   const cardJoined = Boolean(localStorage.getItem("bingo-card-id"));
   const allowOddsGameTypeSelect = modeInitialized && appMode === "card" && (!cardJoined || !connected);
   const oddsGameType = allowOddsGameTypeSelect ? cardOddsGameType : state.gameType;
@@ -151,29 +155,25 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [boardToken, boardTokenExpiry, appMode]);
 
-  const boardAuthActive = Boolean(
-    boardToken &&
-      boardTokenExpiry > Date.now() &&
-      (
-        // Before the first successful state poll, avoid invalidating a stored token preemptively.
-        !connected ||
-        state.boardAccessRequired === false ||
-        state.boardAuthValid !== false
-      )
-  );
-
   useEffect(() => {
-    // If the server says our board auth is invalid, clear stale local auth so unlock flow can recover.
-    if (!connected) return;
-    if (!boardToken) return;
-    if (state.boardAccessRequired === false) return;
-    if (state.boardAuthValid !== false) return;
-    setBoardToken(null);
-    setBoardTokenExpiry(0);
-    api.setBoardToken(null);
-    localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
-    localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
-  }, [connected, boardToken, state.boardAccessRequired, state.boardAuthValid]);
+    const clearBoardAuth = () => {
+      setBoardToken(null);
+      setBoardTokenExpiry(0);
+      api.setBoardToken(null);
+      localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
+      localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
+      if (appMode === "board") {
+        setPendingMode("board");
+        setUnlockError(null);
+        setUnlockPin("");
+        setUnlockOpen(true);
+      }
+    };
+    window.addEventListener("bingo:board-auth-invalid", clearBoardAuth as EventListener);
+    return () => window.removeEventListener("bingo:board-auth-invalid", clearBoardAuth as EventListener);
+  }, [appMode]);
+
+  const boardAuthActive = Boolean(boardToken && boardTokenExpiry > Date.now());
 
   useEffect(() => {
     if (!modeInitialized) return;
@@ -269,6 +269,33 @@ export default function App() {
     }
     setAutoSeconds(parsed);
   };
+
+  const toggleSettingsPanel = useCallback(() => {
+    setSettingsOpen((open) => {
+      const nextOpen = !open;
+      if (nextOpen) {
+        pauseAuto();
+        setOddsOpen(false);
+      }
+      return nextOpen;
+    });
+  }, [pauseAuto]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      if (!mobileMenuRef.current) return;
+      const target = event.target as Node | null;
+      if (target && mobileMenuRef.current.contains(target)) return;
+      setMobileMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+    };
+  }, [mobileMenuOpen]);
 
   const handleToggleFullscreen = async () => {
     try {
@@ -370,8 +397,8 @@ export default function App() {
             <PawPrint className="h-6 w-6" style={{ color: uiLetterColors.N }} />
             <h1 className="text-lg font-bold tracking-tight">Bingo Flashboard</h1>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            <div className="hidden md:flex items-center gap-1.5">
               {modeInitialized && (
                 <button
                   type="button"
@@ -394,16 +421,7 @@ export default function App() {
                   )}
                   style={settingsOpen ? { backgroundColor: uiLetterColors.N } : undefined}
                   aria-label="Toggle settings"
-                  onClick={() =>
-                    setSettingsOpen((open) => {
-                      const nextOpen = !open;
-                      if (nextOpen) {
-                        pauseAuto();
-                        setOddsOpen(false);
-                      }
-                      return nextOpen;
-                    })
-                  }
+                  onClick={toggleSettingsPanel}
                 >
                   <Settings2 className="h-4 w-4" />
                 </button>
@@ -433,6 +451,78 @@ export default function App() {
                 )}
               </button>
               <ThemeToggle />
+            </div>
+            <div className="md:hidden relative" ref={mobileMenuRef}>
+              <button
+                type="button"
+                className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
+                aria-label="Open menu"
+                title="Menu"
+                onClick={() => setMobileMenuOpen((open) => !open)}
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+              {mobileMenuOpen && (
+                <div className="absolute right-0 top-10 z-50 w-48 rounded-md border bg-card text-card-foreground p-1 shadow-md">
+                  {modeInitialized && (
+                    <button
+                      type="button"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setExitConfirmOpen(true);
+                      }}
+                    >
+                      Exit to mode selection
+                    </button>
+                  )}
+                  {modeInitialized && (
+                    <button
+                      type="button"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        toggleSettingsPanel();
+                      }}
+                    >
+                      {settingsOpen ? "Hide settings" : "Show settings"}
+                    </button>
+                  )}
+                  {modeInitialized && (
+                    <button
+                      type="button"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setOddsOpen((open) => !open);
+                      }}
+                    >
+                      {oddsOpen ? "Hide odds" : "Show odds"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      void handleToggleFullscreen();
+                    }}
+                  >
+                    {isFullscreen ? "Exit full screen" : "Enter full screen"}
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setTheme(theme === "dark" ? "light" : "dark");
+                    }}
+                  >
+                    {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                    {theme === "dark" ? "Light mode" : "Dark mode"}
+                  </button>
+                </div>
+              )}
             </div>
             {showAutoControls && (
               <div className="flex items-center gap-1.5">

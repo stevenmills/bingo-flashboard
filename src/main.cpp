@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 #include <ArduinoJson.h>
@@ -17,6 +18,9 @@
 
 // --- LED strip ---
 CRGB leds[NUM_LEDS];
+#if STATUS_LED_ENABLED
+CRGB statusLed[STATUS_LED_COUNT];
+#endif
 uint8_t brightness = 128;
 const uint8_t DEFAULT_BRIGHTNESS = 128;
 
@@ -78,6 +82,10 @@ struct WsSubscription {
 };
 WsSubscription wsSubscriptions[MAX_WS_SUBSCRIPTIONS];
 
+// State payload can include up to 75 called numbers; keep generous JSON headroom.
+const size_t STATE_JSON_DOC_CAPACITY = 4096;
+const size_t STATE_WS_ENV_DOC_CAPACITY = 4608;
+
 // --- LED board test mode ---
 bool ledTestMode = false;
 int ledTestSequence[NUM_LEDS];
@@ -125,6 +133,20 @@ const unsigned long PATTERN_CYCLE_MS = 1500;
 // --- NVS ---
 nvs_handle nvs;
 
+// Persisted runtime game state (separate from saveNvsSettings()).
+const uint32_t GAME_STATE_MAGIC = 0xB1A00001;
+const uint16_t GAME_STATE_VERSION = 1;
+struct PersistedGameState {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t boardSeed;
+  uint8_t gameEstablished;
+  uint8_t callOrderCount;
+  uint8_t currentNumber;
+  uint8_t reserved;
+  uint8_t callOrder[75];
+};
+
 // --- Server ---
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -132,8 +154,11 @@ uint32_t wsSeq = 0;
 
 // --- Forward declarations ---
 void updateAllLeds();
+void updateStatusLed();
 void loadNvs();
 void saveNvsSettings();
+void saveGameStateSnapshot();
+bool loadGameStateSnapshot();
 int drawNext();
 void doReset();
 void applyGameTypeToMatrix();
@@ -160,6 +185,18 @@ void removeWsSubscription(uint32_t clientId);
 void setWsSubscription(uint32_t clientId, bool boardMode, const char* cardId);
 bool wsCanReceiveState(uint32_t clientId);
 bool wsCanReceiveCardState(uint32_t clientId, const char* cardId);
+uint32_t uniformRandomBelow(uint32_t maxExclusive);
+
+uint32_t uniformRandomBelow(uint32_t maxExclusive) {
+  if (maxExclusive <= 1) return 0;
+  // Rejection sampling to avoid modulo bias.
+  const uint32_t limit = UINT32_MAX - (UINT32_MAX % maxExclusive);
+  uint32_t r = 0;
+  do {
+    r = esp_random();
+  } while (r >= limit);
+  return r % maxExclusive;
+}
 
 // Letter for number N (1-75)
 char numberToLetter(int n) {
@@ -888,9 +925,17 @@ void updateAllLeds() {
   applyGameTypeToMatrix();
 }
 
+void updateStatusLed() {
+#if STATUS_LED_ENABLED
+  // Keep a simple onboard "alive" indicator: continuous rainbow cycle.
+  const uint8_t hue = (uint8_t)(millis() / 8);
+  statusLed[0] = CHSV(hue, 255, 180);
+#endif
+}
+
 int drawNext() {
   if (poolCount <= 0) return -1;
-  int idx = random(poolCount);
+  int idx = (int)uniformRandomBelow((uint32_t)poolCount);
   int k = 0;
   for (int n = 1; n <= 75; n++) {
     if (!pool[n]) continue;
@@ -904,6 +949,7 @@ int drawNext() {
         callOrder[callOrderCount++] = n;
       }
       recomputeCardWinners();
+      saveGameStateSnapshot();
       updateAllLeds();
       broadcastStateWs("number_called");
       broadcastAllCardStatesWs("card_state");
@@ -930,6 +976,7 @@ bool undoLastCall() {
   // Undo keeps the current game session active, even at zero calls.
   gameEstablished = true;
   recomputeCardWinners();
+  saveGameStateSnapshot();
   updateAllLeds();
   broadcastStateWs("number_undone");
   broadcastAllCardStatesWs("card_state");
@@ -966,9 +1013,70 @@ void doReset() {
   }
   winnerCount = 0;
   syncWinnerDeclared();
+  saveGameStateSnapshot();
   updateAllLeds();
   broadcastStateWs("game_reset");
   broadcastAllCardStatesWs("card_state");
+}
+
+void saveGameStateSnapshot() {
+  PersistedGameState snap{};
+  snap.magic = GAME_STATE_MAGIC;
+  snap.version = GAME_STATE_VERSION;
+  snap.boardSeed = boardSeed;
+  snap.gameEstablished = gameEstablished ? 1 : 0;
+  snap.callOrderCount = (uint8_t)callOrderCount;
+  snap.currentNumber = (uint8_t)((currentNumber >= 0 && currentNumber <= 75) ? currentNumber : 0);
+  for (int i = 0; i < callOrderCount && i < 75; i++) {
+    snap.callOrder[i] = (uint8_t)callOrder[i];
+  }
+
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+  nvs_set_blob(nvs, NVS_GAME_STATE, &snap, sizeof(snap));
+  nvs_commit(nvs);
+  nvs_close(nvs);
+}
+
+bool loadGameStateSnapshot() {
+  PersistedGameState snap{};
+  size_t len = sizeof(snap);
+  if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return false;
+  esp_err_t err = nvs_get_blob(nvs, NVS_GAME_STATE, &snap, &len);
+  nvs_close(nvs);
+  if (err != ESP_OK || len != sizeof(snap)) return false;
+  if (snap.magic != GAME_STATE_MAGIC || snap.version != GAME_STATE_VERSION) return false;
+  if (snap.callOrderCount > 75) return false;
+
+  for (int i = 1; i <= 75; i++) {
+    called[i] = false;
+    pool[i] = true;
+  }
+  callOrderCount = 0;
+
+  for (int i = 0; i < snap.callOrderCount; i++) {
+    int n = snap.callOrder[i];
+    if (n < 1 || n > 75) return false;
+    if (called[n]) return false;
+    called[n] = true;
+    pool[n] = false;
+    callOrder[callOrderCount++] = n;
+  }
+
+  poolCount = 75 - callOrderCount;
+  currentNumber = (callOrderCount > 0) ? callOrder[callOrderCount - 1] : 0;
+  if (snap.currentNumber >= 1 && snap.currentNumber <= 75 && called[snap.currentNumber]) {
+    currentNumber = snap.currentNumber;
+  }
+  boardSeed = (snap.boardSeed >= 1000) ? snap.boardSeed : (uint16_t)random(1000, 10000);
+  gameEstablished = (snap.gameEstablished != 0) || (callOrderCount > 0);
+
+  // Winner/card-session runtime state is intentionally not restored on reboot.
+  manualWinnerDeclared = false;
+  winnerSuppressed = false;
+  winnerEventId = 0;
+  winnerCount = 0;
+  syncWinnerDeclared();
+  return true;
 }
 
 void loadNvs() {
@@ -1027,7 +1135,7 @@ void saveNvsSettings() {
 }
 
 String buildStateJson() {
-  StaticJsonDocument<768> doc;
+  DynamicJsonDocument doc(STATE_JSON_DOC_CAPACITY);
   doc["current"] = currentNumber;
   doc["remaining"] = poolCount;
   doc["boardSeed"] = boardSeed;
@@ -1052,21 +1160,23 @@ String buildStateJson() {
   snprintf(hex, sizeof(hex), "#%06X", staticColor);
   doc["staticColor"] = hex;
   JsonArray arr = doc.createNestedArray("called");
-  for (int n = 1; n <= 75; n++)
-    if (called[n]) arr.add(n);
+  for (int i = 0; i < callOrderCount; i++) {
+    int n = callOrder[i];
+    if (n >= 1 && n <= 75 && called[n]) arr.add(n);
+  }
   String buf;
   serializeJson(doc, buf);
   return buf;
 }
 
 void broadcastStateWs(const char* type) {
-  StaticJsonDocument<1024> env;
+  DynamicJsonDocument env(STATE_WS_ENV_DOC_CAPACITY);
   env["type"] = type ? type : "snapshot";
   env["seq"] = ++wsSeq;
   env["seed"] = boardSeed;
   env["ts"] = millis();
   String stateJson = buildStateJson();
-  DynamicJsonDocument nested(768);
+  DynamicJsonDocument nested(STATE_JSON_DOC_CAPACITY);
   deserializeJson(nested, stateJson);
   env["data"] = nested.as<JsonObject>();
   String payload;
@@ -1121,13 +1231,13 @@ void broadcastAllCardStatesWs(const char* type) {
 void sendWsCommandResult(AsyncWebSocketClient* client, const String& requestId, bool ok, int status,
                          const String& dataJson, const char* error) {
   if (!client) return;
-  StaticJsonDocument<1024> env;
+  DynamicJsonDocument env(STATE_WS_ENV_DOC_CAPACITY);
   env["type"] = "command_result";
   env["requestId"] = requestId;
   env["ok"] = ok;
   env["status"] = status;
   if (ok) {
-    DynamicJsonDocument nested(768);
+    DynamicJsonDocument nested(STATE_JSON_DOC_CAPACITY);
     if (deserializeJson(nested, dataJson) == DeserializationError::Ok) {
       env["data"] = nested.as<JsonVariant>();
     } else {
@@ -1216,6 +1326,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     winnerSuppressed = false;
     if (callOrderCount < 75) callOrder[callOrderCount++] = num;
     recomputeCardWinners();
+    saveGameStateSnapshot();
     updateAllLeds();
     broadcastStateWs("number_called");
     broadcastAllCardStatesWs("card_state");
@@ -1398,9 +1509,14 @@ void setup() {
   initThemePalettes();
   initLedTestSequence();
   FastLED.addLeds<WS2811, DATA_PIN, GRB>(leds, NUM_LEDS);
+#if STATUS_LED_ENABLED
+  FastLED.addLeds<WS2812B, STATUS_LED_PIN, GRB>(statusLed, STATUS_LED_COUNT);
+#endif
   FastLED.setBrightness(brightness);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  doReset();
+  if (!loadGameStateSnapshot()) {
+    doReset();
+  }
   updateAllLeds();
 
   if (!SPIFFS.begin(true)) Serial.println("SPIFFS mount failed");
@@ -1408,9 +1524,16 @@ void setup() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASSWORD);
   Serial.println("AP started: " AP_SSID " – open http://192.168.4.1");
+  if (MDNS.begin("bingo")) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.println("mDNS started: http://bingo.local");
+  } else {
+    Serial.println("mDNS start failed");
+  }
 
   // Serve all static files from SPIFFS (Vite build output with hashed names)
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+
 
   ws.onEvent([](AsyncWebSocket* serverWs, AsyncWebSocketClient* client, AwsEventType type,
                 void* arg, uint8_t* data, size_t len) {
@@ -1441,13 +1564,13 @@ void setup() {
         setWsSubscription(client->id(), boardMode, cardId);
 
         if (wsCanReceiveState(client->id())) {
-          StaticJsonDocument<1024> env;
+          DynamicJsonDocument env(STATE_WS_ENV_DOC_CAPACITY);
           env["type"] = "snapshot";
           env["seq"] = ++wsSeq;
           env["seed"] = boardSeed;
           env["ts"] = millis();
           String stateJson = buildStateJson();
-          DynamicJsonDocument nested(768);
+          DynamicJsonDocument nested(STATE_JSON_DOC_CAPACITY);
           deserializeJson(nested, stateJson);
           env["data"] = nested.as<JsonObject>();
           String payload;
@@ -1577,6 +1700,7 @@ void setup() {
       callOrder[callOrderCount++] = num;
     }
     recomputeCardWinners();
+    saveGameStateSnapshot();
     updateAllLeds();
     broadcastStateWs("number_called");
     broadcastAllCardStatesWs("card_state");
@@ -1906,6 +2030,7 @@ void loop() {
 
   ws.cleanupClients();
   updateAllLeds();
+  updateStatusLed();
   FastLED.show();
   delay(20);
 }

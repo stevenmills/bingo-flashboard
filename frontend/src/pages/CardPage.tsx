@@ -185,6 +185,11 @@ export function CardPage({ state, letterColors, connected }: Props) {
   const freeSpaceActive = useMemo(() => gameTypeUsesFreeSpace(state.gameType), [state.gameType]);
   const joinedToBoard = Boolean(cardId);
   const rerollDisabled = state.called.length > 0;
+  const clearJoinedCardSession = useCallback(() => {
+    setCardId(null);
+    localStorage.removeItem("bingo-card-id");
+    pendingMarksRef.current.clear();
+  }, []);
   const captureWinningFlashCells = useCallback((grid: CardGrid) => {
     const satisfied = winningPatterns(grid, state.gameType, calledSet);
     if (satisfied.length === 0) {
@@ -355,11 +360,10 @@ export function CardPage({ state, letterColors, connected }: Props) {
         applyWinnerState(Boolean(cardState.winner), nextGrid ?? latestCardRef.current);
       } catch (e: unknown) {
         // If the card session is gone, fall back to local/unjoined mode.
-        if (e instanceof Error && e.message.includes("404")) {
-          setCardId(null);
-          localStorage.removeItem("bingo-card-id");
+        if (e instanceof Error && (e.message.includes("404") || e.message.includes("400"))) {
+          clearJoinedCardSession();
           prevWinnerRef.current = false;
-          setJoinError("Card session not found. Rejoin the available board.");
+          setJoinError("Card session is unavailable. Rejoin the available board.");
         }
       }
     };
@@ -369,7 +373,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
       void pollCardState();
     }, 1500);
     return () => clearInterval(id);
-  }, [cardId, connected, autoSync, state.current, applyWinnerState]);
+  }, [cardId, connected, autoSync, state.current, applyWinnerState, clearJoinedCardSession]);
 
   useEffect(() => {
     if (!cardId) return;
@@ -402,7 +406,14 @@ export function CardPage({ state, letterColors, connected }: Props) {
 
   const handleJoin = useCallback(async () => {
     try {
-      const joined = await api.joinCard(cardNumbers, cardId ?? undefined);
+      let joined;
+      try {
+        joined = await api.joinCard(cardNumbers, cardId ?? undefined);
+      } catch {
+        if (!cardId) throw new Error("join failed");
+        clearJoinedCardSession();
+        joined = await api.joinCard(cardNumbers);
+      }
       setCardId(joined.cardId);
       localStorage.setItem("bingo-card-id", joined.cardId);
       pendingMarksRef.current.clear();
@@ -432,7 +443,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
       setJoinError("Unable to join card session. Try again.");
       setJoinErrorOpen(true);
     }
-  }, [cardNumbers, cardId, connected, applyWinnerState, card]);
+  }, [cardNumbers, cardId, connected, applyWinnerState, card, clearJoinedCardSession]);
 
   const handleLeaveBoard = useCallback(async () => {
     if (cardId) {

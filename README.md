@@ -1,14 +1,15 @@
 # Bingo Flashboard
 
-ESP32-driven **105-LED 12V WS2811** bingo flashboard with a WiFi AP and a modern React web UI.
+ESP32-S3-driven **105-LED 12V WS2811** bingo flashboard with a WiFi AP and a modern React web UI.
 
 The device hosts the UI from SPIFFS, and players control games from a phone/tablet/laptop connected to the `BINGO` network.
 
 ## Hardware
 
-- **ESP32** (DevKit C or compatible)
+- **ESP32-S3** (DevKit-compatible)
 - **WS2811** strip, 105 LEDs, 12V supply, single data line
 - **Momentary button** between GPIO and GND (internal pull-up) for automatic draws
+- **Onboard RGB status LED** (GPIO 48 on ESP32-S3 DevKitC-1) cycles rainbow when firmware is running
 
 Core hardware/network config is in `include/config.h`:
 - `DATA_PIN`
@@ -22,7 +23,7 @@ Core hardware/network config is in `include/config.h`:
 - **Firmware** (`src/main.cpp`)
   - FastLED rendering for board + game-type indicator LEDs
   - REST API + websocket state/event push via ESPAsyncWebServer
-  - NVS persistence for LED/game preferences
+  - NVS persistence for LED/game preferences plus live game snapshot restore
 - **Frontend** (`frontend/`)
   - React + TypeScript + Tailwind + shadcn/ui
   - WebSocket-first state/event updates (`/ws`) with HTTP polling fallback
@@ -35,6 +36,8 @@ Core hardware/network config is in `include/config.h`:
 - Game types: Traditional, Four Corners, Postage Stamp, Cover All, Letter X, Letter Y, Frame Outside, Frame Inside, Plus Sign, Field Goal
 - Winner flow + out-of-numbers modal
 - **Undo** support (`/undo`) for last called number
+- **Power-loss recovery**: called numbers/current game resume after reboot
+- Draw selection uses ESP32 hardware RNG with unbiased index selection
 
 ### LED behavior
 - 80 LED board (letters + numbers) + 25 LED game-type matrix
@@ -134,6 +137,13 @@ See `AGENTS.md` for full endpoint behavior and payload details.
 ### ESP32 NVS
 Persists LED/game preferences such as brightness, theme, color mode, static color, game type, and calling style.
 
+Also persists a runtime game snapshot (`NVS_GAME_STATE`):
+- call order
+- current number
+- remaining pool
+- game-established flag
+- board seed
+
 ### Browser localStorage
 - `bingo-theme` (light/dark mode)
 - `bingo-gameType` (mock API)
@@ -163,15 +173,15 @@ npm run build   # outputs to ../data/
 Requires [PlatformIO](https://platformio.org/):
 
 ```bash
-pio run
-pio run --target upload
-pio run --target uploadfs
+pio run -e esp32s3
+pio run -e esp32s3 --target upload
+pio run -e esp32s3 --target uploadfs
 ```
 
 ### Device usage
 1. Power ESP32
 2. Connect to WiFi `BINGO` (password `washisnameo`)
-3. Open `http://192.168.4.1`
+3. Open `http://bingo.local` (fallback: `http://192.168.4.1`)
 
 ## Local development
 

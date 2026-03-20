@@ -37,6 +37,8 @@ export function GameControls({
   const [resetOpen, setResetOpen] = useState(false);
   const [winnerOpen, setWinnerOpen] = useState(false);
   const [gameOverOpen, setGameOverOpen] = useState(false);
+  const [drawing, setDrawing] = useState(false);
+  const drawingRef = useRef(false);
   const lastWinnerEventIdRef = useRef(0);
   const lastWinnerFallbackKeyRef = useRef("");
 
@@ -112,6 +114,9 @@ export function GameControls({
   }, [winnerCount, winnerDeclared, called.length]);
 
   const handleDraw = async () => {
+    if (drawingRef.current) return;
+    drawingRef.current = true;
+    setDrawing(true);
     try {
       await api.draw();
       onRefresh();
@@ -124,8 +129,13 @@ export function GameControls({
         setGameOverOpen(true);
       } else if (e instanceof Error && e.message.includes("409")) {
         setGameOverOpen(true);
+      } else if (e instanceof Error && e.message.includes("401")) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
       }
       onRefresh();
+    } finally {
+      drawingRef.current = false;
+      setDrawing(false);
     }
   };
 
@@ -135,6 +145,10 @@ export function GameControls({
       setResetOpen(false);
       setGameOverOpen(false);
       onResetComplete?.();
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("401")) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+      }
     } finally {
       onRefresh();
     }
@@ -144,18 +158,25 @@ export function GameControls({
     try {
       await api.declareWinner();
       setWinnerOpen(true);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("401")) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+      }
     } finally {
       onRefresh();
     }
   };
 
   const poolEmpty = remaining === 0 && called.length > 0;
+  const drawDisabled = poolEmpty || drawing;
   const minCalls = GAME_TYPE_MIN_CALLS[gameType];
   const winnerDisabled = called.length < minCalls;
   const gridClassName =
     callingStyle === "manual"
       ? "grid grid-cols-2 gap-3"
       : "grid grid-cols-2 md:grid-cols-3 gap-3";
+  const resetButtonClassName =
+    callingStyle === "manual" ? "col-span-2 sm:col-span-1" : "col-span-2 md:col-span-1";
 
   return (
     <>
@@ -164,12 +185,12 @@ export function GameControls({
           <Button
             size="lg"
             onClick={handleDraw}
-            disabled={poolEmpty}
+            disabled={drawDisabled}
             className="text-white"
             style={{ backgroundColor: letterColors.N }}
           >
             <Dices className="mr-2 h-5 w-5" />
-            Draw next
+            {drawing ? "Drawing..." : "Draw next"}
           </Button>
         )}
         <Button
@@ -185,6 +206,7 @@ export function GameControls({
         <Button
           size="lg"
           variant="outline"
+          className={resetButtonClassName}
           onClick={() => {
             if (poolEmpty || called.length === 0) {
               void handleReset();
