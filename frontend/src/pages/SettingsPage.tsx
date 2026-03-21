@@ -20,9 +20,13 @@ export function SettingsPage({ state, onRefresh }: Props) {
         <Settings
           settingsMode="board"
           brightness={state.brightness}
+          ledVibrance={state.ledVibrance}
           theme={state.theme}
           colorMode={state.colorMode}
           staticColor={state.staticColor}
+          ledHeaderColor={state.ledHeaderColor}
+          ledGameTypeColor={state.ledGameTypeColor}
+          ledLetterColors={state.ledLetterColors}
           ledTestMode={state.ledTestMode}
           boardAuthGranted={false}
           uiColorTheme={defaultTheme}

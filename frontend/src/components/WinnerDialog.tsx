@@ -126,10 +126,10 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
             ))}
           </RadioGroup>
           <div className="flex gap-3 mt-2">
-            <Button className="flex-1" onClick={handleChangeType} disabled={!newType}>
+            <Button variant="outline" className="flex-1" onClick={handleChangeType} disabled={!newType}>
               Change
             </Button>
-            <Button variant="outline" className="flex-1" onClick={handleSkip}>
+            <Button className="flex-1" onClick={handleSkip}>
               Keep current
             </Button>
           </div>

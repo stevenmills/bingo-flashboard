@@ -5,8 +5,15 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { api } from "@/api";
-import { THEME_NAMES, type AppMode, type ColorMode } from "@/types";
-import { LETTERS } from "@/types";
+import {
+  THEME_NAMES,
+  LETTERS,
+  DEFAULT_LED_LETTER_COLORS,
+  type AppMode,
+  type ColorMode,
+  type Letter,
+  type LedLetterColors,
+} from "@/types";
 import {
   BINGO_UI_THEME_LABELS,
   BINGO_UI_THEME_ORDER,
@@ -17,6 +24,7 @@ import {
 } from "@/lib/bingo-ui-colors";
 
 const STATIC_VALUE = "static";
+const CUSTOM_LETTERS_VALUE = "custom_letters";
 const MAX_BRIGHTNESS = 255;
 
 function rawToPercent(raw: number): number {
@@ -50,9 +58,13 @@ function blurSelectWithLetterN(e: FocusEvent<HTMLButtonElement>, color: string) 
 interface Props {
   settingsMode: AppMode;
   brightness: number;
+  ledVibrance: number;
   theme: number;
   colorMode: ColorMode;
   staticColor: string;
+  ledHeaderColor: string;
+  ledGameTypeColor: string;
+  ledLetterColors: LedLetterColors;
   ledTestMode: boolean;
   boardAuthGranted: boolean;
   uiColorTheme: BingoUiThemeId;
@@ -66,9 +78,13 @@ interface Props {
 export function Settings({
   settingsMode,
   brightness,
+  ledVibrance,
   theme,
   colorMode,
   staticColor,
+  ledHeaderColor,
+  ledGameTypeColor,
+  ledLetterColors,
   ledTestMode,
   boardAuthGranted,
   uiColorTheme,
@@ -79,55 +95,205 @@ export function Settings({
   onRefresh,
 }: Props) {
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
+  const [isAdjustingBrightness, setIsAdjustingBrightness] = useState(false);
+  const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
+  const [isAdjustingLedVibrance, setIsAdjustingLedVibrance] = useState(false);
   const [localTheme, setLocalTheme] = useState(theme);
   const [localColorMode, setLocalColorMode] = useState<ColorMode>(colorMode);
   const [localColor, setLocalColor] = useState(staticColor);
+  const [localLedHeaderColor, setLocalLedHeaderColor] = useState(ledHeaderColor);
+  const [localLedGameTypeColor, setLocalLedGameTypeColor] = useState(ledGameTypeColor);
+  const [localLedLetterColors, setLocalLedLetterColors] = useState<LedLetterColors>(ledLetterColors);
   const [currentBoardPin, setCurrentBoardPin] = useState("");
   const [nextBoardPin, setNextBoardPin] = useState("");
   const [pinMessage, setPinMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    setLocalBrightnessPercent(rawToPercent(brightness));
+    if (!isAdjustingBrightness) {
+      setLocalBrightnessPercent(rawToPercent(brightness));
+    }
+    if (!isAdjustingLedVibrance) {
+      setLocalLedVibrance(ledVibrance);
+    }
     setLocalTheme(theme);
     setLocalColorMode(colorMode);
     setLocalColor(staticColor);
-  }, [brightness, theme, colorMode, staticColor]);
+    setLocalLedHeaderColor(ledHeaderColor);
+    setLocalLedGameTypeColor(ledGameTypeColor);
+    setLocalLedLetterColors(ledLetterColors);
+  }, [brightness, ledVibrance, theme, colorMode, staticColor, ledHeaderColor, ledGameTypeColor, ledLetterColors, isAdjustingBrightness, isAdjustingLedVibrance]);
 
   // The select value: "0"–"7" for palettes, "static" for solid color
-  const selectValue = localColorMode === "solid" ? STATIC_VALUE : String(localTheme);
+  const selectValue = localColorMode === "solid"
+    ? STATIC_VALUE
+    : localColorMode === "custom"
+      ? CUSTOM_LETTERS_VALUE
+      : String(localTheme);
 
-  const handleThemeChange = async (value: string) => {
-    if (value === STATIC_VALUE) {
-      setLocalColorMode("solid");
-      await api.setColor(localColor);
-      onRefresh();
-    } else {
-      const nextTheme = parseInt(value, 10);
-      setLocalColorMode("theme");
-      setLocalTheme(nextTheme);
-      await api.setTheme(nextTheme);
-      onRefresh();
+  const handleBoardAuthFailure = (error: unknown) => {
+    if (error instanceof Error && error.message.includes("401")) {
+      window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
     }
   };
 
-  const handleBrightness = async (value: number[]) => {
+  const handleThemeChange = async (value: string) => {
+    try {
+      if (value === STATIC_VALUE) {
+        setLocalColorMode("solid");
+        await api.setColor(localColor);
+      } else if (value === CUSTOM_LETTERS_VALUE) {
+        setLocalColorMode("custom");
+        await api.setLedLetterColors(localLedLetterColors);
+      } else {
+        const nextTheme = parseInt(value, 10);
+        setLocalColorMode("theme");
+        setLocalTheme(nextTheme);
+        await api.setTheme(nextTheme);
+      }
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
+  };
+
+  const updateLedLetterColor = async (letter: Letter, colorValue: string) => {
+    const normalized = colorValue.startsWith("#") ? colorValue : `#${colorValue}`;
+    const next = {
+      ...localLedLetterColors,
+      [letter]: normalized,
+    };
+    setLocalLedLetterColors(next);
+    try {
+      await api.setLedLetterColors(next);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
+  };
+
+  const handleLedCustomColorPicker =
+    (letter: Letter) => async (e: ChangeEvent<HTMLInputElement>) => {
+      await updateLedLetterColor(letter, e.target.value);
+    };
+
+  const handleLedCustomColorHex =
+    (letter: Letter) => async (e: ChangeEvent<HTMLInputElement>) => {
+      const next = e.target.value;
+      if (!isValidHexColor(next)) return;
+      await updateLedLetterColor(letter, next);
+    };
+
+  const handleResetLedLetterColors = async () => {
+    setLocalLedLetterColors(DEFAULT_LED_LETTER_COLORS);
+    try {
+      await api.setLedLetterColors(DEFAULT_LED_LETTER_COLORS);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
+  };
+
+  const handleBrightness = (value: number[]) => {
+    const percent = value[0];
+    setIsAdjustingBrightness(true);
+    setLocalBrightnessPercent(percent);
+  };
+
+  const handleBrightnessCommit = async (value: number[]) => {
     const percent = value[0];
     setLocalBrightnessPercent(percent);
-    await api.setBrightness(percentToRaw(percent));
-    onRefresh();
+    try {
+      await api.setBrightness(percentToRaw(percent));
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    } finally {
+      setIsAdjustingBrightness(false);
+    }
+  };
+
+  const handleLedVibrance = (value: number[]) => {
+    const next = value[0];
+    setIsAdjustingLedVibrance(true);
+    setLocalLedVibrance(next);
+  };
+
+  const handleLedVibranceCommit = async (value: number[]) => {
+    const next = value[0];
+    setLocalLedVibrance(next);
+    try {
+      await api.setLedVibrance(next);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    } finally {
+      setIsAdjustingLedVibrance(false);
+    }
   };
 
   const handleColorPicker = async (e: ChangeEvent<HTMLInputElement>) => {
     setLocalColor(e.target.value);
-    await api.setColor(e.target.value);
-    onRefresh();
+    try {
+      await api.setColor(e.target.value);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
   };
 
   const handleColorHex = async (e: ChangeEvent<HTMLInputElement>) => {
     setLocalColor(e.target.value);
     if (/^#?[0-9a-fA-F]{6}$/.test(e.target.value.replace("#", ""))) {
-      await api.setColor(e.target.value);
+      try {
+        await api.setColor(e.target.value);
+        onRefresh();
+      } catch (error) {
+        handleBoardAuthFailure(error);
+      }
+    }
+  };
+
+  const handleLedHeaderColorPicker = async (e: ChangeEvent<HTMLInputElement>) => {
+    setLocalLedHeaderColor(e.target.value);
+    try {
+      await api.setLedHeaderColor(e.target.value);
       onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
+  };
+
+  const handleLedHeaderColorHex = async (e: ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value;
+    setLocalLedHeaderColor(next);
+    if (!isValidHexColor(next)) return;
+    try {
+      await api.setLedHeaderColor(next);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
+  };
+
+  const handleLedGameTypeColorPicker = async (e: ChangeEvent<HTMLInputElement>) => {
+    setLocalLedGameTypeColor(e.target.value);
+    try {
+      await api.setLedGameTypeColor(e.target.value);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
+  };
+
+  const handleLedGameTypeColorHex = async (e: ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value;
+    setLocalLedGameTypeColor(next);
+    if (!isValidHexColor(next)) return;
+    try {
+      await api.setLedGameTypeColor(next);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
     }
   };
 
@@ -149,8 +315,12 @@ export function Settings({
     };
 
   const handleLedTestToggle = async () => {
-    await api.setLedTestMode(!ledTestMode);
-    onRefresh();
+    try {
+      await api.setLedTestMode(!ledTestMode);
+      onRefresh();
+    } catch (error) {
+      handleBoardAuthFailure(error);
+    }
   };
 
   const handleBoardPinChange = async () => {
@@ -185,6 +355,25 @@ export function Settings({
               max={100}
               step={1}
               onValueChange={handleBrightness}
+              onValueCommit={handleBrightnessCommit}
+              accentColor={letterColors.N}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <Label>LED Vibrance</Label>
+              <span className="text-sm text-muted-foreground tabular-nums">
+                {localLedVibrance}%
+              </span>
+            </div>
+            <Slider
+              value={[localLedVibrance]}
+              min={0}
+              max={100}
+              step={1}
+              onValueChange={handleLedVibrance}
+              onValueCommit={handleLedVibranceCommit}
               accentColor={letterColors.N}
             />
           </div>
@@ -207,6 +396,7 @@ export function Settings({
                   </SelectItem>
                 ))}
                 <SelectItem value={STATIC_VALUE}>Static</SelectItem>
+                <SelectItem value={CUSTOM_LETTERS_VALUE}>Custom BINGO Letters</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -232,6 +422,84 @@ export function Settings({
                   onFocus={(e) => focusWithLetterN(e, letterColors.N)}
                   onBlur={(e) => blurWithLetterN(e, letterColors.N)}
                 />
+              </div>
+            </div>
+          )}
+
+          <div>
+            <Label className="mb-2 block">BINGO Header LED Color</Label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={localLedHeaderColor.startsWith("#") ? localLedHeaderColor : `#${localLedHeaderColor}`}
+                onChange={handleLedHeaderColorPicker}
+                className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+              />
+              <Input
+                value={localLedHeaderColor}
+                onChange={handleLedHeaderColorHex}
+                maxLength={7}
+                className="w-28"
+                placeholder="#ff0000"
+                style={{ borderColor: letterColors.N }}
+                onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label className="mb-2 block">Game Type Indicator LED Color</Label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={localLedGameTypeColor.startsWith("#") ? localLedGameTypeColor : `#${localLedGameTypeColor}`}
+                onChange={handleLedGameTypeColorPicker}
+                className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+              />
+              <Input
+                value={localLedGameTypeColor}
+                onChange={handleLedGameTypeColorHex}
+                maxLength={7}
+                className="w-28"
+                placeholder="#ffd8a8"
+                style={{ borderColor: letterColors.N }}
+                onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+              />
+            </div>
+          </div>
+
+          {localColorMode === "custom" && (
+            <div>
+              <Label className="mb-3 block">LED letter colors (B/I/N/G/O)</Label>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {LETTERS.map((letter) => (
+                  <div key={letter} className="flex items-center gap-3">
+                    <span className="w-5 text-sm font-semibold text-muted-foreground">{letter}</span>
+                    <input
+                      type="color"
+                      value={localLedLetterColors[letter]}
+                      onChange={handleLedCustomColorPicker(letter)}
+                      className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                    />
+                    <Input
+                      value={localLedLetterColors[letter]}
+                      onChange={handleLedCustomColorHex(letter)}
+                      maxLength={7}
+                      className="w-28"
+                      placeholder="#3b82f6"
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                      onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3">
+                <Button type="button" variant="outline" onClick={() => void handleResetLedLetterColors()}>
+                  Reset LED colors to defaults
+                </Button>
               </div>
             </div>
           )}

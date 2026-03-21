@@ -70,7 +70,7 @@ export default function App() {
   const [pendingMode, setPendingMode] = useState<AppMode | null>(null);
   // Keep state highly responsive during active board/card play even if websocket hiccups.
   const gameStatePollMs = modeInitialized ? 250 : 1500;
-  const { state, connected, refresh } = useGameState(gameStatePollMs);
+  const { state, connected, refresh, hydrated } = useGameState(gameStatePollMs);
   const {
     activeTheme: uiColorTheme,
     customColors: uiCustomColors,
@@ -91,12 +91,13 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
   const { theme, setTheme } = useTheme();
+  const boardAuthActive = Boolean(boardToken && boardTokenExpiry > Date.now());
   const cardJoined = Boolean(localStorage.getItem("bingo-card-id"));
   const allowOddsGameTypeSelect = modeInitialized && appMode === "card" && (!cardJoined || !connected);
   const oddsGameType = allowOddsGameTypeSelect ? cardOddsGameType : state.gameType;
 
   const showAutoControls =
-    modeInitialized && appMode === "board" && !settingsOpen && state.callingStyle === "automatic";
+    modeInitialized && appMode === "board" && boardAuthActive && !settingsOpen && state.callingStyle === "automatic";
 
   useEffect(() => {
     const savedMode = sessionStorage.getItem(APP_MODE_STORAGE_KEY);
@@ -172,8 +173,6 @@ export default function App() {
     window.addEventListener("bingo:board-auth-invalid", clearBoardAuth as EventListener);
     return () => window.removeEventListener("bingo:board-auth-invalid", clearBoardAuth as EventListener);
   }, [appMode]);
-
-  const boardAuthActive = Boolean(boardToken && boardTokenExpiry > Date.now());
 
   useEffect(() => {
     if (!modeInitialized) return;
@@ -388,6 +387,35 @@ export default function App() {
     setMode("card");
   };
 
+  const renderBoardLockedState = () => (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Lock className="h-4 w-4" />
+          Board Locked
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Enter the board PIN to unlock board controls and game state.
+        </p>
+        <Button
+          type="button"
+          onClick={() => {
+            setPendingMode("board");
+            setUnlockError(null);
+            setUnlockPin("");
+            setUnlockOpen(true);
+          }}
+          className="text-white"
+          style={{ backgroundColor: uiLetterColors.N }}
+        >
+          Unlock Board
+        </Button>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -395,11 +423,14 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 flex h-14 items-center justify-between relative">
           <div className="flex items-center gap-3">
             <PawPrint className="h-6 w-6" style={{ color: uiLetterColors.N }} />
-            <h1 className="text-lg font-bold tracking-tight">Bingo Flashboard</h1>
+            <h1 className="text-lg font-bold tracking-tight">
+              <span className="portrait:inline landscape:hidden md:hidden">Bingo</span>
+              <span className="hidden landscape:inline md:inline">Bingo Flashboard</span>
+            </h1>
           </div>
           <div className="flex items-center gap-2">
             <div className="hidden md:flex items-center gap-1.5">
-              {modeInitialized && (
+              {modeInitialized && (appMode !== "board" || boardAuthActive) && (
                 <button
                   type="button"
                   className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
@@ -410,7 +441,7 @@ export default function App() {
                   <LogOut className="h-4 w-4" />
                 </button>
               )}
-              {modeInitialized && (
+              {modeInitialized && (appMode !== "board" || boardAuthActive) && (
                 <button
                   type="button"
                   className={cn(
@@ -464,7 +495,7 @@ export default function App() {
               </button>
               {mobileMenuOpen && (
                 <div className="absolute right-0 top-10 z-50 w-48 rounded-md border bg-card text-card-foreground p-1 shadow-md">
-                  {modeInitialized && (
+                  {modeInitialized && (appMode !== "board" || boardAuthActive) && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
@@ -476,7 +507,7 @@ export default function App() {
                       Exit to mode selection
                     </button>
                   )}
-                  {modeInitialized && (
+                  {modeInitialized && (appMode !== "board" || boardAuthActive) && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
@@ -488,7 +519,7 @@ export default function App() {
                       {settingsOpen ? "Hide settings" : "Show settings"}
                     </button>
                   )}
-                  {modeInitialized && (
+                  {modeInitialized && (appMode !== "board" || boardAuthActive) && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
@@ -614,50 +645,65 @@ export default function App() {
           <>
             <div className={cn(settingsOpen && "hidden")} aria-hidden={settingsOpen}>
               {appMode === "board" ? (
-                <GamePage
-                  state={state}
-                  onRefresh={refresh}
-                  uiLetterColors={uiLetterColors}
-                />
+                boardAuthActive ? (
+                  <GamePage
+                    state={state}
+                    onRefresh={refresh}
+                    uiLetterColors={uiLetterColors}
+                    stateHydrated={hydrated}
+                  />
+                ) : (
+                  renderBoardLockedState()
+                )
               ) : (
                 <CardPage state={state} letterColors={uiLetterColors} connected={connected} />
               )}
             </div>
             <div className={cn(!settingsOpen && "hidden")} aria-hidden={!settingsOpen}>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Settings</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Settings
-                    settingsMode={appMode}
-                    brightness={state.brightness}
-                    theme={state.theme}
-                    colorMode={state.colorMode}
-                    staticColor={state.staticColor}
-                    ledTestMode={state.ledTestMode}
-                    boardAuthGranted={boardAuthActive}
-                    uiColorTheme={uiColorTheme}
-                    uiCustomColors={uiCustomColors}
-                    letterColors={uiLetterColors}
-                    onUiColorThemeChange={setUiColorTheme}
-                    onUiCustomColorChange={setUiCustomColor}
-                    onRefresh={refresh}
-                  />
-                </CardContent>
-              </Card>
+              {appMode === "board" && !boardAuthActive ? (
+                renderBoardLockedState()
+              ) : (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Settings</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Settings
+                      settingsMode={appMode}
+                      brightness={state.brightness}
+                      ledVibrance={state.ledVibrance}
+                      theme={state.theme}
+                      colorMode={state.colorMode}
+                      staticColor={state.staticColor}
+                      ledHeaderColor={state.ledHeaderColor}
+                      ledGameTypeColor={state.ledGameTypeColor}
+                      ledLetterColors={state.ledLetterColors}
+                      ledTestMode={state.ledTestMode}
+                      boardAuthGranted={boardAuthActive}
+                      uiColorTheme={uiColorTheme}
+                      uiCustomColors={uiCustomColors}
+                      letterColors={uiLetterColors}
+                      onUiColorThemeChange={setUiColorTheme}
+                      onUiCustomColorChange={setUiCustomColor}
+                      onRefresh={refresh}
+                    />
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </>
         )}
       </main>
-      <OddsDrawer
-        open={oddsOpen}
-        onOpenChange={setOddsOpen}
-        gameType={oddsGameType}
-        remaining={state.remaining}
-        allowGameTypeSelect={allowOddsGameTypeSelect}
-        onGameTypeChange={setCardOddsGameType}
-      />
+      {(appMode !== "board" || boardAuthActive) && (
+        <OddsDrawer
+          open={oddsOpen}
+          onOpenChange={setOddsOpen}
+          gameType={oddsGameType}
+          remaining={state.remaining}
+          allowGameTypeSelect={allowOddsGameTypeSelect}
+          onGameTypeChange={setCardOddsGameType}
+        />
+      )}
       <Dialog open={unlockOpen} onOpenChange={setUnlockOpen}>
         <DialogContent>
           <DialogHeader>
@@ -722,7 +768,7 @@ export default function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {modeInitialized && appMode === "board" && (
+      {modeInitialized && appMode === "board" && boardAuthActive && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="max-w-7xl mx-auto px-4 h-10 flex items-center justify-between text-xs sm:text-sm">
             <span className="text-muted-foreground">

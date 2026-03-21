@@ -4,6 +4,15 @@ ESP32-S3-driven **105-LED 12V WS2811** bingo flashboard with a WiFi AP and a mod
 
 The device hosts the UI from SPIFFS, and players control games from a phone/tablet/laptop connected to the `BINGO` network.
 
+## Recent updates
+
+- LED mapping now follows a CSV-defined physical layout in `include/led_map.h` (non-contiguous logical regions are supported).
+- Current called number LED now uses a high-contrast white flash/beacon behavior while it is current.
+- BINGO header LEDs now use a dedicated hardware color (default red), independent of active number theme.
+- Game-type indicator LEDs now use a dedicated configurable hardware color (default warm white `#FFD8A8`).
+- Added LED vibrance control (`0..100`) to prioritize physical strip visibility.
+- Start game flow now issues a backend reset before transitioning, to keep UI/LED state synchronized.
+
 ## Hardware
 
 - **ESP32-S3** (DevKit-compatible)
@@ -44,6 +53,9 @@ Core hardware/network config is in `include/config.h`:
 - 19 LED themes (static + animated)
 - Static solid color option
 - Winner sparkle mode
+- Dedicated BINGO header LED color setting (lights only when that column has calls; includes short preview on color change)
+- Dedicated game-type indicator LED color setting
+- LED vibrance boost control for custom/static/header/game-type colors
 
 ### Web UI
 - Responsive board + game-type indicator layout
@@ -108,6 +120,10 @@ Core hardware/network config is in `include/config.h`:
 - `POST /brightness`
 - `POST /theme`
 - `POST /color`
+- `POST /vibrance`
+- `POST /letter-colors`
+- `POST /letter-header-color`
+- `POST /game-type-color`
 - `POST /led-test`
 - `POST /auth/board/unlock`
 - `POST /auth/board/lock`
@@ -135,7 +151,7 @@ See `AGENTS.md` for full endpoint behavior and payload details.
 ## Persistence
 
 ### ESP32 NVS
-Persists LED/game preferences such as brightness, theme, color mode, static color, game type, and calling style.
+Persists LED/game preferences such as brightness, vibrance, theme, color mode, static color, header color, game-type indicator color, custom B/I/N/G/O colors, game type, and calling style.
 
 Also persists a runtime game snapshot (`NVS_GAME_STATE`):
 - call order
@@ -148,6 +164,8 @@ Also persists a runtime game snapshot (`NVS_GAME_STATE`):
 - `bingo-theme` (light/dark mode)
 - `bingo-gameType` (mock API)
 - `bingo-callingStyle` (mock API)
+- `bingo-brightness` (mock API brightness mirror)
+- `bingo-led-vibrance` (mock API vibrance mirror)
 - `bingo-ui-colors` (UI-only BINGO letter theme/colors)
 - `bingo-auto-seconds` (automatic-calling interval)
 - `bingo-board-token` (board auth token)

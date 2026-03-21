@@ -11,6 +11,7 @@ import {
   type GameState,
   type GameType,
   type CallingStyle,
+  type Letter,
 } from "./types";
 
 // Deep clone initial state, restoring persisted game type and calling style
@@ -28,6 +29,13 @@ if (savedBrightnessRaw !== null) {
   const savedBrightness = Number(savedBrightnessRaw);
   if (Number.isFinite(savedBrightness)) {
     state.brightness = Math.max(0, Math.min(255, Math.round(savedBrightness)));
+  }
+}
+const savedLedVibranceRaw = localStorage.getItem("bingo-led-vibrance");
+if (savedLedVibranceRaw !== null) {
+  const savedLedVibrance = Number(savedLedVibranceRaw);
+  if (Number.isFinite(savedLedVibrance)) {
+    state.ledVibrance = Math.max(0, Math.min(100, Math.round(savedLedVibrance)));
   }
 }
 let pool: number[] = Array.from({ length: 75 }, (_, i) => i + 1);
@@ -414,6 +422,14 @@ export const mockApi = {
     return {};
   },
 
+  setLedVibrance: async (value: number) => {
+    await delay(10);
+    assertBoardAuth();
+    state.ledVibrance = Math.max(0, Math.min(100, Math.round(value)));
+    localStorage.setItem("bingo-led-vibrance", String(state.ledVibrance));
+    return {};
+  },
+
   setTheme: async (theme: number) => {
     await delay(10);
     assertBoardAuth();
@@ -427,6 +443,34 @@ export const mockApi = {
     assertBoardAuth();
     state.staticColor = hex.startsWith("#") ? hex : `#${hex}`;
     state.colorMode = "solid";
+    return {};
+  },
+
+  setLedHeaderColor: async (hex: string) => {
+    await delay(10);
+    assertBoardAuth();
+    state.ledHeaderColor = hex.startsWith("#") ? hex : `#${hex}`;
+    return {};
+  },
+
+  setLedGameTypeColor: async (hex: string) => {
+    await delay(10);
+    assertBoardAuth();
+    state.ledGameTypeColor = hex.startsWith("#") ? hex : `#${hex}`;
+    return {};
+  },
+
+  setLedLetterColors: async (colors: Record<Letter, string>) => {
+    await delay(10);
+    assertBoardAuth();
+    state.ledLetterColors = {
+      B: colors.B.startsWith("#") ? colors.B : `#${colors.B}`,
+      I: colors.I.startsWith("#") ? colors.I : `#${colors.I}`,
+      N: colors.N.startsWith("#") ? colors.N : `#${colors.N}`,
+      G: colors.G.startsWith("#") ? colors.G : `#${colors.G}`,
+      O: colors.O.startsWith("#") ? colors.O : `#${colors.O}`,
+    };
+    state.colorMode = "custom";
     return {};
   },
 

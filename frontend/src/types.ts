@@ -17,8 +17,12 @@ export interface GameState {
   boardAuthValid?: boolean;
   theme: number;
   brightness: number;
+  ledVibrance: number;
   colorMode: ColorMode;
   staticColor: string;
+  ledHeaderColor: string;
+  ledGameTypeColor: string;
+  ledLetterColors: LedLetterColors;
   patternIndex: number;
 }
 
@@ -56,10 +60,19 @@ export type GameType =
   | "plus_sign"
   | "field_goal";
 export type CallingStyle = "automatic" | "manual";
-export type ColorMode = "theme" | "solid";
+export type ColorMode = "theme" | "solid" | "custom";
 
 export const LETTERS = ["B", "I", "N", "G", "O"] as const;
 export type Letter = (typeof LETTERS)[number];
+export type LedLetterColors = Record<Letter, string>;
+
+export const DEFAULT_LED_LETTER_COLORS: LedLetterColors = {
+  B: "#3b82f6",
+  I: "#ef4444",
+  N: "#10b981",
+  G: "#f59e0b",
+  O: "#a855f7",
+};
 
 export const LETTER_RANGES: Record<Letter, [number, number]> = {
   B: [1, 15],
@@ -191,7 +204,11 @@ export const DEFAULT_STATE: GameState = {
   boardAuthValid: false,
   theme: 0,
   brightness: 128,
+  ledVibrance: 70,
   colorMode: "theme",
   staticColor: "#22c55e",
+  ledHeaderColor: "#ff0000",
+  ledGameTypeColor: "#ffd8a8",
+  ledLetterColors: DEFAULT_LED_LETTER_COLORS,
   patternIndex: 0,
 };

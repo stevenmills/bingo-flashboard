@@ -8,6 +8,7 @@ import type { CallingStyle, GameType } from "@/types";
 import { GAME_TYPE_MIN_CALLS } from "@/types";
 import { Dices, Trophy, RotateCcw } from "lucide-react";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
+import { cn } from "@/lib/utils";
 
 interface Props {
   callingStyle: CallingStyle;
@@ -39,6 +40,7 @@ export function GameControls({
   const [gameOverOpen, setGameOverOpen] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const drawingRef = useRef(false);
+  const gameOverShownRef = useRef(false);
   const lastWinnerEventIdRef = useRef(0);
   const lastWinnerFallbackKeyRef = useRef("");
 
@@ -81,7 +83,12 @@ export function GameControls({
   }, []);
 
   useEffect(() => {
-    if (remaining === 0 && called.length > 0) {
+    if (remaining > 0 || called.length === 0) {
+      gameOverShownRef.current = false;
+      return;
+    }
+    if (!gameOverShownRef.current) {
+      gameOverShownRef.current = true;
       setGameOverOpen(true);
     }
   }, [remaining, called.length]);
@@ -121,13 +128,16 @@ export function GameControls({
       await api.draw();
       onRefresh();
       const freshState = await api.getState();
-      if (freshState.remaining === 0) {
+      if (freshState.remaining === 0 && !gameOverShownRef.current) {
+        gameOverShownRef.current = true;
         setGameOverOpen(true);
       }
     } catch (e: unknown) {
-      if (e instanceof Error && e.message.includes("pool empty")) {
+      if (e instanceof Error && e.message.includes("pool empty") && !gameOverShownRef.current) {
+        gameOverShownRef.current = true;
         setGameOverOpen(true);
-      } else if (e instanceof Error && e.message.includes("409")) {
+      } else if (e instanceof Error && e.message.includes("409") && !gameOverShownRef.current) {
+        gameOverShownRef.current = true;
         setGameOverOpen(true);
       } else if (e instanceof Error && e.message.includes("401")) {
         window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
@@ -144,6 +154,7 @@ export function GameControls({
       await api.reset();
       setResetOpen(false);
       setGameOverOpen(false);
+      gameOverShownRef.current = false;
       onResetComplete?.();
     } catch (e: unknown) {
       if (e instanceof Error && e.message.includes("401")) {
@@ -173,10 +184,13 @@ export function GameControls({
   const winnerDisabled = called.length < minCalls;
   const gridClassName =
     callingStyle === "manual"
-      ? "grid grid-cols-2 gap-3"
-      : "grid grid-cols-2 md:grid-cols-3 gap-3";
+      ? "grid gap-3 portrait:grid-cols-1 landscape:grid-cols-2 md:grid-cols-2"
+      : "grid gap-3 portrait:grid-cols-1 landscape:grid-cols-2 md:grid-cols-3";
+  const primaryButtonClassName = "portrait:col-span-1 landscape:col-span-1 md:col-span-1";
   const resetButtonClassName =
-    callingStyle === "manual" ? "col-span-2 sm:col-span-1" : "col-span-2 md:col-span-1";
+    callingStyle === "manual"
+      ? "portrait:col-span-1 landscape:col-span-2 md:col-span-1"
+      : "portrait:col-span-1 landscape:col-span-2 md:col-span-1";
 
   return (
     <>
@@ -186,7 +200,7 @@ export function GameControls({
             size="lg"
             onClick={handleDraw}
             disabled={drawDisabled}
-            className="text-white"
+            className={cn("text-white", primaryButtonClassName)}
             style={{ backgroundColor: letterColors.N }}
           >
             <Dices className="mr-2 h-5 w-5" />
@@ -197,7 +211,7 @@ export function GameControls({
           size="lg"
           onClick={handleDeclareWinner}
           disabled={winnerDisabled}
-          className="text-white"
+          className={cn("text-white", primaryButtonClassName)}
           style={{ backgroundColor: letterColors.G }}
         >
           <Trophy className="mr-2 h-5 w-5" />

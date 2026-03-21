@@ -13,6 +13,7 @@ function isValidSnapshot(state: GameState): boolean {
 export function useGameState(pollMs = 1500) {
   const [state, setState] = useState<GameState>(DEFAULT_STATE);
   const [connected, setConnected] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const mountedRef = useRef(true);
   const inFlightRef = useRef(false);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -25,6 +26,7 @@ export function useGameState(pollMs = 1500) {
       const s = await api.getState();
       if (mountedRef.current) {
         if (!isValidSnapshot(s)) return;
+        setHydrated(true);
         const wsRecentlyUpdated = Date.now() - lastWsSnapshotAtRef.current < pollMs * 2;
         // When websocket is healthy, avoid racing with slightly stale poll responses.
         if (!wsRecentlyUpdated) {
@@ -164,6 +166,7 @@ export function useGameState(pollMs = 1500) {
           if (mountedRef.current) {
             setState(nextState);
             lastWsSnapshotAtRef.current = Date.now();
+            setHydrated(true);
             setConnected(true);
           }
         } catch {
@@ -196,5 +199,5 @@ export function useGameState(pollMs = 1500) {
     };
   }, []);
 
-  return { state, connected, refresh };
+  return { state, connected, refresh, hydrated };
 }

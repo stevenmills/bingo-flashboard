@@ -5,6 +5,7 @@ import type {
   GameState,
   GameType,
   CallingStyle,
+  Letter,
 } from "./types";
 import { mockApi } from "./mock-api";
 
@@ -180,6 +181,29 @@ function buildHeaders(includeAuth = true): HeadersInit {
   return headers;
 }
 
+async function postForm(path: string, body: Record<string, string>, includeAuth = true): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+    };
+    if (includeAuth && boardToken) headers["X-Board-Token"] = boardToken;
+    const form = new URLSearchParams(body).toString();
+    const res = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers,
+      body: form,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`${res.status}`);
+  } catch (e) {
+    clearTimeout(timeout);
+    throw e;
+  }
+}
+
 async function postJson<T = unknown>(path: string, body?: unknown, includeAuth = true): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2000);
@@ -260,13 +284,31 @@ const realApi = {
     postJson("/board/pin", { currentPin, nextPin }),
 
   setBrightness: (value: number) =>
-    fetch(`${BASE}/brightness?value=${value}`, { method: "POST", headers: buildHeaders(true) }),
+    postForm("/brightness", { value: String(value) }),
+
+  setLedVibrance: (value: number) =>
+    postForm("/vibrance", { value: String(value) }),
 
   setTheme: (theme: number) =>
-    postJson("/theme", { theme }),
+    postForm("/theme", { id: String(theme) }),
 
   setColor: (hex: string) =>
-    postJson("/color", { hex: hex.replace("#", "") }),
+    postForm("/color", { hex: hex.replace("#", "") }),
+
+  setLedHeaderColor: (hex: string) =>
+    postForm("/letter-header-color", { hex: hex.replace("#", "") }),
+
+  setLedGameTypeColor: (hex: string) =>
+    postForm("/game-type-color", { hex: hex.replace("#", "") }),
+
+  setLedLetterColors: (colors: Record<Letter, string>) =>
+    postJson("/letter-colors", {
+      B: colors.B.replace("#", ""),
+      I: colors.I.replace("#", ""),
+      N: colors.N.replace("#", ""),
+      G: colors.G.replace("#", ""),
+      O: colors.O.replace("#", ""),
+    }),
 
   joinCard: (numbers: Array<number | null>, cardId?: string) =>
     wsCommand<CardJoinResponse>("join_card", { numbers, cardId }, false)
@@ -345,11 +387,23 @@ export const api = {
   setBrightness: async (v: number) =>
     useMock ? mockApi.setBrightness(v) : realApi.setBrightness(v),
 
+  setLedVibrance: async (v: number) =>
+    useMock ? mockApi.setLedVibrance(v) : realApi.setLedVibrance(v),
+
   setTheme: async (t: number) =>
     useMock ? mockApi.setTheme(t) : realApi.setTheme(t),
 
   setColor: async (hex: string) =>
     useMock ? mockApi.setColor(hex) : realApi.setColor(hex),
+
+  setLedHeaderColor: async (hex: string) =>
+    useMock ? mockApi.setLedHeaderColor(hex) : realApi.setLedHeaderColor(hex),
+
+  setLedGameTypeColor: async (hex: string) =>
+    useMock ? mockApi.setLedGameTypeColor(hex) : realApi.setLedGameTypeColor(hex),
+
+  setLedLetterColors: async (colors: Record<Letter, string>) =>
+    useMock ? mockApi.setLedLetterColors(colors) : realApi.setLedLetterColors(colors),
 
   unlockBoard: async (pin: string) => {
     const session = useMock ? await mockApi.unlockBoard(pin) : await realApi.unlockBoard(pin);

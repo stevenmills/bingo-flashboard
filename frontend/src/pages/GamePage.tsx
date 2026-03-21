@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Undo2 } from "lucide-react";
 import { api } from "@/api";
+import { cn } from "@/lib/utils";
 import type { GameState } from "@/types";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
 
@@ -17,13 +18,18 @@ interface Props {
   state: GameState;
   onRefresh: () => void;
   uiLetterColors: LetterColors;
+  stateHydrated: boolean;
 }
 
-export function GamePage({ state, onRefresh, uiLetterColors }: Props) {
+export function GamePage({ state, onRefresh, uiLetterColors, stateHydrated }: Props) {
   // Local flag to transition to the active view before the first number
   // is actually called (which sets gameEstablished on the backend).
   const [localStarted, setLocalStarted] = useState(false);
   const prevEstablished = useRef(state.gameEstablished);
+  const [isDesktop, setIsDesktop] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(min-width: 768px)").matches;
+  });
 
   const gameActive = state.gameEstablished || localStarted;
 
@@ -36,8 +42,25 @@ export function GamePage({ state, onRefresh, uiLetterColors }: Props) {
     prevEstablished.current = state.gameEstablished;
   }, [state.gameEstablished]);
 
-  const handleStartGame = () => {
-    setLocalStarted(true);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(min-width: 768px)");
+    const sync = () => setIsDesktop(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  const handleStartGame = async () => {
+    try {
+      // Ensure physical LEDs and backend call state are clean before a new round.
+      await api.reset();
+    } catch {
+      // Ignore reset failures here; board-auth/UI flow will handle recovery.
+    } finally {
+      onRefresh();
+      setLocalStarted(true);
+    }
   };
 
   const handleResetComplete = () => {
@@ -56,7 +79,7 @@ export function GamePage({ state, onRefresh, uiLetterColors }: Props) {
     <>
       {/* New game modal — shown when no active game */}
       <NewGameDialog
-        open={!gameActive}
+        open={stateHydrated && !gameActive}
         state={state}
         onStart={handleStartGame}
         onRefresh={onRefresh}
@@ -64,12 +87,48 @@ export function GamePage({ state, onRefresh, uiLetterColors }: Props) {
       />
 
       {/* Game layout — always rendered */}
-      <div className="space-y-6">
-        {/* Current number */}
-        <CurrentNumber current={state.current} remaining={state.remaining} letterColors={uiLetterColors} />
+      <div className="grid grid-cols-2 md:grid-cols-1 gap-4 md:gap-6">
+        {/* Mobile top row: current number (left), controls (right) */}
+        <div className="col-span-1 md:hidden">
+          <CurrentNumber
+            current={state.current}
+            remaining={state.remaining}
+            letterColors={uiLetterColors}
+            compact
+            className="h-full"
+          />
+        </div>
+        {!isDesktop && (
+        <div className="col-span-1">
+          <Card className="h-full">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Controls</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <GameControls
+                callingStyle={state.callingStyle}
+                gameType={state.gameType}
+                called={state.called}
+                remaining={state.remaining}
+                winnerDeclared={state.winnerDeclared}
+                winnerEventId={state.winnerEventId}
+                winnerCount={state.winnerCount}
+                onRefresh={onRefresh}
+                onResetComplete={handleResetComplete}
+                letterColors={uiLetterColors}
+              />
+            </CardContent>
+          </Card>
+        </div>
+        )}
 
-        {/* Flashboard + Game type indicator */}
-        <div className="flex flex-col md:flex-row gap-4 items-stretch">
+        {/* Desktop current number */}
+        <div className="hidden md:block md:order-1">
+          <CurrentNumber current={state.current} remaining={state.remaining} letterColors={uiLetterColors} />
+        </div>
+
+        {/* Full row board values */}
+        <div className="col-span-2 md:order-2 flex flex-col md:flex-row gap-4 items-stretch">
           <Card className="w-full md:flex-1 md:min-w-0">
             <CardHeader>
               <CardTitle>Board</CardTitle>
@@ -78,29 +137,50 @@ export function GamePage({ state, onRefresh, uiLetterColors }: Props) {
               <Flashboard called={state.called} current={state.current} letterColors={uiLetterColors} />
             </CardContent>
           </Card>
-          <Card className="w-full md:w-auto md:flex-shrink-0">
+          <Card className="w-full portrait:block landscape:hidden md:block md:w-auto md:flex-shrink-0">
             <CardContent className="pt-6 px-4 flex items-center justify-center md:justify-start">
               <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} />
             </CardContent>
           </Card>
         </div>
 
-        {/* Controls */}
-        <GameControls
-          callingStyle={state.callingStyle}
-          gameType={state.gameType}
-          called={state.called}
-          remaining={state.remaining}
-          winnerDeclared={state.winnerDeclared}
-          winnerEventId={state.winnerEventId}
-          winnerCount={state.winnerCount}
-          onRefresh={onRefresh}
-          onResetComplete={handleResetComplete}
-          letterColors={uiLetterColors}
-        />
+        {/* Desktop controls row */}
+        {isDesktop && (
+        <div className="md:order-3">
+          <GameControls
+            callingStyle={state.callingStyle}
+            gameType={state.gameType}
+            called={state.called}
+            remaining={state.remaining}
+            winnerDeclared={state.winnerDeclared}
+            winnerEventId={state.winnerEventId}
+            winnerCount={state.winnerCount}
+            onRefresh={onRefresh}
+            onResetComplete={handleResetComplete}
+            letterColors={uiLetterColors}
+          />
+        </div>
+        )}
+
+        {/* Mobile landscape only: game type + history split 1/2 : 1/2 */}
+        <div className="hidden landscape:grid md:hidden col-span-2 grid-cols-2 gap-4">
+          <Card className="col-span-1">
+            <CardContent className="pt-6 px-4 flex items-center justify-center">
+              <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} />
+            </CardContent>
+          </Card>
+          <Card className="col-span-1">
+            <CardHeader className="pb-1">
+              <CardTitle>Call history</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-1">
+              <CallHistory called={state.called} letterColors={uiLetterColors} />
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Manual call panel (during active game) + Call history */}
-        <div className={state.callingStyle === "manual" && gameActive ? "grid md:grid-cols-5 gap-4" : ""}>
+        <div className={cn("col-span-2 md:order-4", state.callingStyle === "manual" && gameActive ? "grid md:grid-cols-5 gap-4" : "")}>
           {state.callingStyle === "manual" && gameActive && (
             <Card className="md:col-span-3">
               <CardHeader className="pb-1">
@@ -133,7 +213,10 @@ export function GamePage({ state, onRefresh, uiLetterColors }: Props) {
             </Card>
           )}
 
-          <Card className={state.callingStyle === "manual" && gameActive ? "md:col-span-2" : ""}>
+          <Card className={cn(
+            state.callingStyle === "manual" && gameActive ? "md:col-span-2" : "",
+            "portrait:block landscape:hidden md:block"
+          )}>
             <CardHeader className="pb-1">
               <CardTitle>Call history</CardTitle>
             </CardHeader>

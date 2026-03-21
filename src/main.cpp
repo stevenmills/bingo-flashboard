@@ -23,6 +23,8 @@ CRGB statusLed[STATUS_LED_COUNT];
 #endif
 uint8_t brightness = 128;
 const uint8_t DEFAULT_BRIGHTNESS = 128;
+uint8_t ledVibrance = 70;  // 0..100
+const uint8_t DEFAULT_LED_VIBRANCE = 70;
 
 // --- Game state ---
 bool called[76];  // 1..75; [0] unused
@@ -46,6 +48,17 @@ int themeId = 0;  // 0..n
 static char colorModeBuf[8] = "theme";
 const char* colorMode = colorModeBuf;
 uint32_t staticColor = 0x00FF00;  // RGB for FastLED
+uint32_t letterHeaderColor = 0xFF0000;  // BINGO header LEDs default red
+uint32_t gameTypeLedColor = 0xFFD8A8;  // Warm white default for game type indicator LEDs
+unsigned long letterHeaderPreviewUntilMs = 0;
+// Custom hardware LED colors for B/I/N/G/O.
+uint32_t customLetterColors[5] = {
+  0x3B82F6, // B
+  0xEF4444, // I
+  0x10B981, // N
+  0xF59E0B, // G
+  0xA855F7, // O
+};
 static char boardPinBuf[12] = BOARD_DEFAULT_PIN;
 
 // --- Board auth ---
@@ -102,9 +115,6 @@ const unsigned long LED_TEST_FLASH_MS = 160;
 const unsigned long DEBOUNCE_MS = 50;
 uint8_t lastButtonState = HIGH;
 unsigned long lastDebounce = 0;
-
-// --- Winner sparkle ---
-unsigned long sparklePhase = 0;
 
 // --- Pattern cycling for game types with multiple winning orientations ---
 // Traditional: 12 orientations (5 rows, 5 columns, 2 diagonals), 5 cells each
@@ -170,6 +180,12 @@ bool requireBoardAuth(AsyncWebServerRequest* req);
 void issueBoardAuthToken();
 void syncWinnerDeclared();
 void recomputeCardWinners();
+int letterIndex(char letter);
+CRGB customLetterColorForLetter(char letter);
+CRGB boostVividForStrip(CRGB rgb);
+CRGB solidColorForStrip();
+CRGB headerLetterColorForStrip();
+CRGB gameTypeIndicatorColorForStrip();
 String normalizedPin(const char* raw);
 String buildStateJson();
 void broadcastStateWs(const char* type = "snapshot");
@@ -206,6 +222,64 @@ char numberToLetter(int n) {
   if (n >= 46 && n <= 60) return 'G';
   if (n >= 61 && n <= 75) return 'O';
   return '?';
+}
+
+int letterIndex(char letter) {
+  switch (letter) {
+    case 'B': return 0;
+    case 'I': return 1;
+    case 'N': return 2;
+    case 'G': return 3;
+    case 'O': return 4;
+    default: return -1;
+  }
+}
+
+CRGB customLetterColorForLetter(char letter) {
+  int idx = letterIndex(letter);
+  if (idx < 0 || idx >= 5) return CRGB::Black;
+  uint32_t c = customLetterColors[idx];
+  CRGB rgb((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+  return boostVividForStrip(rgb);
+}
+
+CRGB boostVividForStrip(CRGB rgb) {
+  if (ledVibrance == 0) return rgb;
+  // Increase saturation/brightness so selected colors read bolder on WS2811 strips.
+  CHSV hsv = rgb2hsv_approximate(rgb);
+  const uint8_t satBoost = (uint8_t)(((uint16_t)ledVibrance * 80u) / 100u);
+  const uint8_t minValue = (uint8_t)(128u + (((uint16_t)ledVibrance * 107u) / 100u)); // 128..235
+  const uint8_t topBoost = (uint8_t)(((uint16_t)ledVibrance * 24u) / 100u);
+  hsv.s = qadd8(hsv.s, satBoost);
+  hsv.v = hsv.v < minValue ? minValue : qadd8(hsv.v, topBoost);
+  CRGB out(hsv);
+
+  // Slight channel rebalance to counter common green-heavy perception.
+  const uint16_t rScale = 100u + (((uint16_t)ledVibrance * 14u) / 100u); // 100..114
+  const uint16_t gScale = 100u - (((uint16_t)ledVibrance * 12u) / 100u); // 100..88
+  const uint16_t bScale = 100u + (((uint16_t)ledVibrance * 18u) / 100u); // 100..118
+  uint16_t r = ((uint16_t)out.r * rScale) / 100u;
+  uint16_t g = ((uint16_t)out.g * gScale) / 100u;
+  uint16_t b = ((uint16_t)out.b * bScale) / 100u;
+  if (r > 255u) r = 255u;
+  if (g > 255u) g = 255u;
+  if (b > 255u) b = 255u;
+  return CRGB((uint8_t)r, (uint8_t)g, (uint8_t)b);
+}
+
+CRGB solidColorForStrip() {
+  CRGB rgb((staticColor >> 16) & 0xFF, (staticColor >> 8) & 0xFF, staticColor & 0xFF);
+  return boostVividForStrip(rgb);
+}
+
+CRGB headerLetterColorForStrip() {
+  CRGB rgb((letterHeaderColor >> 16) & 0xFF, (letterHeaderColor >> 8) & 0xFF, letterHeaderColor & 0xFF);
+  return boostVividForStrip(rgb);
+}
+
+CRGB gameTypeIndicatorColorForStrip() {
+  CRGB rgb((gameTypeLedColor >> 16) & 0xFF, (gameTypeLedColor >> 8) & 0xFF, gameTypeLedColor & 0xFF);
+  return boostVividForStrip(rgb);
 }
 
 bool isBoardAuthValid() {
@@ -653,10 +727,22 @@ uint8_t heartbeatWave(uint8_t phase) {
 }
 
 // ─── Color helpers ──────────────────────────────────────────────────
+CRGB goldShimmerColor(uint8_t salt) {
+  CRGB gold = CRGB(255, 200, 50);
+  const uint8_t twinkle = random8() + salt;
+  gold.nscale8(twinkle < 40 ? 255 : random8(150, 235));
+  return gold;
+}
 
 CRGB colorForCalledNumber(int n) {
+  if (winnerDeclared) {
+    return goldShimmerColor((uint8_t)(n * 7));
+  }
   if (strcmp(colorMode, "solid") == 0) {
-    return CRGB((staticColor >> 16) & 0xFF, (staticColor >> 8) & 0xFF, staticColor & 0xFF);
+    return solidColorForStrip();
+  }
+  if (strcmp(colorMode, "custom") == 0) {
+    return customLetterColorForLetter(numberToLetter(n));
   }
 
   int t = themeId % NUM_THEMES;
@@ -722,98 +808,36 @@ CRGB colorForCalledNumber(int n) {
 }
 
 CRGB colorForLetter(char letter) {
-  if (strcmp(colorMode, "solid") == 0) {
-    return CRGB((staticColor >> 16) & 0xFF, (staticColor >> 8) & 0xFF, staticColor & 0xFF);
+  if (winnerDeclared) {
+    return goldShimmerColor((uint8_t)letter);
   }
-
-  int pos = 0;
-  int col = 0;
-  switch (letter) {
-    case 'B': pos = 0;   col = 0; break;
-    case 'I': pos = 51;  col = 1; break;
-    case 'N': pos = 102; col = 2; break;
-    case 'G': pos = 153; col = 3; break;
-    case 'O': pos = 204; col = 4; break;
-  }
-
-  int t = themeId % NUM_THEMES;
-  uint8_t pal = THEME_PALETTE[t];
-  uint8_t anim = THEME_ANIM[t];
-
-  switch (anim) {
-    case ANIM_NONE:
-      return ColorFromPalette(themePalettes[pal], pos, 255, LINEARBLEND);
-
-    case ANIM_RAINBOW_CYCLE: {
-      uint8_t off = beat8(30);
-      return ColorFromPalette(themePalettes[pal], pos + off, 255, LINEARBLEND);
-    }
-    case ANIM_BREATHE: {
-      uint8_t bright = beatsin8(15, 80, 255);
-      return ColorFromPalette(themePalettes[pal], pos, bright, LINEARBLEND);
-    }
-    case ANIM_CANDY_CHASE: {
-      uint8_t chase = beat8(40) + pos;
-      return ColorFromPalette(themePalettes[pal], chase, 255, LINEARBLEND);
-    }
-    case ANIM_COLOR_WAVE: {
-      uint8_t wave = beatsin8(20, 0, 255, 0, col * 50);
-      return ColorFromPalette(themePalettes[pal], pos + wave, 255, LINEARBLEND);
-    }
-    case ANIM_FIRE: {
-      uint8_t flicker = random8(180, 255);
-      return ColorFromPalette(themePalettes[pal], pos, flicker, LINEARBLEND);
-    }
-    case ANIM_GOLD_SHIMMER: {
-      CRGB gold = CRGB(255, 200, 50);
-      gold.nscale8(random8() < 30 ? 255 : random8(120, 200));
-      return gold;
-    }
-    case ANIM_HEARTBEAT: {
-      uint8_t bright = heartbeatWave(beat8(72));
-      return ColorFromPalette(themePalettes[pal], pos, bright, LINEARBLEND);
-    }
-    case ANIM_ICE_SHIMMER: {
-      uint8_t shimmer = beatsin8(25, 140, 255, 0, col * 15);
-      return ColorFromPalette(themePalettes[pal], pos, shimmer, LINEARBLEND);
-    }
-    case ANIM_NORTHERN_LIGHTS: {
-      uint8_t drift = beat8(8);
-      uint8_t bright = beatsin8(12, 160, 255, 0, col * 10);
-      return ColorFromPalette(themePalettes[pal], pos + drift, bright, LINEARBLEND);
-    }
-    case ANIM_RETRO_ARCADE: {
-      uint8_t pulse = beat8(120);
-      uint8_t bright = pulse < 128 ? 255 : 100;
-      return ColorFromPalette(themePalettes[pal], pos + beat8(60), bright, LINEARBLEND);
-    }
-    case ANIM_SPARKLE: {
-      uint8_t bright = random8() < 40 ? 255 : random8(60, 160);
-      return ColorFromPalette(themePalettes[pal], pos, bright, LINEARBLEND);
-    }
-    default:
-      return ColorFromPalette(themePalettes[pal], pos, 255, LINEARBLEND);
-  }
+  // BINGO header LEDs use a dedicated color independent of active number theme.
+  return headerLetterColorForStrip();
 }
 
 void applyGameTypeToMatrix() {
   int indices[25];
   int n = 0;
   getGameTypePhysicalIndices(indices, &n);
-  CRGB dimWhite = CRGB(60, 60, 60);
-  for (int i = 80; i <= 104; i++) leds[i] = CRGB::Black;
-  for (int i = 0; i < n; i++) leds[indices[i]] = dimWhite;
+  CRGB indicatorColor = gameTypeIndicatorColorForStrip();
+  // Clear only the physical LEDs that belong to logical game-type cells.
+  // Mapping is no longer guaranteed to be a contiguous index range.
+  for (int cell = 1; cell <= 25; cell++) {
+    int p = gameTypeCellToPhysical(cell);
+    if (p >= 0 && p < NUM_LEDS) leds[p] = CRGB::Black;
+  }
+  for (int i = 0; i < n; i++) leds[indices[i]] = indicatorColor;
 }
 
 void initLedTestSequence() {
   ledTestSequenceLen = 0;
+  for (int n = 1; n <= 75; n++) {
+    int p = numberToPhysical(n);
+    if (p >= 0 && p < NUM_LEDS) ledTestSequence[ledTestSequenceLen++] = p;
+  }
   const char* letters = "BINGO";
   for (int i = 0; i < 5; i++) {
     int p = letterToPhysical(letters[i]);
-    if (p >= 0 && p < NUM_LEDS) ledTestSequence[ledTestSequenceLen++] = p;
-  }
-  for (int n = 1; n <= 75; n++) {
-    int p = numberToPhysical(n);
     if (p >= 0 && p < NUM_LEDS) ledTestSequence[ledTestSequenceLen++] = p;
   }
   // Logical 5x5 matrix order: left->right, top->bottom (cells 1..25)
@@ -879,37 +903,18 @@ void updateAllLeds() {
     return;
   }
 
-  if (winnerDeclared) {
-    sparklePhase++;
-    CRGB gold = CRGB::Gold;
-    for (int n = 1; n <= 75; n++) {
-      if (!called[n]) continue;
-      int p = numberToPhysical(n);
-      if (p >= 0) {
-        uint8_t b = (sparklePhase + n * 3) % 256;
-        leds[p] = gold;
-        leds[p].fadeToBlackBy(255 - b);
-      }
-    }
-    int letterIdx[] = { 0, 31, 32, 63, 64 };
-    for (int i = 0; i < 5; i++) {
-      uint8_t b = (sparklePhase + i * 20) % 256;
-      leds[letterIdx[i]] = gold;
-      leds[letterIdx[i]].fadeToBlackBy(255 - b);
-    }
-    applyGameTypeToMatrix();
-    return;
-  }
-
   for (int n = 1; n <= 75; n++) {
     if (!called[n]) continue;
     int p = numberToPhysical(n);
     if (p >= 0) {
-      leds[p] = colorForCalledNumber(n);
-      if (n == currentNumber) {
-        // Breathe/pulse effect for most recently called
-        uint8_t breathe = beatsin8(60, 160, 255);
-        leds[p].nscale8(breathe);
+      if (!winnerDeclared && n == currentNumber) {
+        // Current number should read as an obvious beacon.
+        // Use a high-contrast white flash with a dim hold between peaks.
+        uint8_t phase = beat8(96);
+        uint8_t flash = (phase < 128) ? 255 : 24;
+        leds[p] = CRGB(flash, flash, flash);
+      } else {
+        leds[p] = colorForCalledNumber(n);
       }
     }
   }
@@ -919,8 +924,9 @@ void updateAllLeds() {
     int low = col * 15 + 1, high = col * 15 + 15;
     bool any = false;
     for (int n = low; n <= high; n++) if (called[n]) { any = true; break; }
+    bool preview = millis() < letterHeaderPreviewUntilMs;
     int letterP = letterToPhysical(letters[col]);
-    if (letterP >= 0) leds[letterP] = any ? colorForLetter(letters[col]) : CRGB::Black;
+    if (letterP >= 0) leds[letterP] = (any || preview) ? colorForLetter(letters[col]) : CRGB::Black;
   }
   applyGameTypeToMatrix();
 }
@@ -1083,9 +1089,17 @@ void loadNvs() {
   if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return;
   uint8_t br;
   if (nvs_get_u8(nvs, NVS_BRIGHTNESS, &br) == ESP_OK) brightness = br;
+  uint8_t lv;
+  if (nvs_get_u8(nvs, NVS_LED_VIBRANCE, &lv) == ESP_OK) {
+    ledVibrance = (lv <= 100) ? lv : DEFAULT_LED_VIBRANCE;
+  }
   if (nvs_get_i32(nvs, NVS_THEME, (int32_t*)&themeId) == ESP_OK) {}
   uint32_t sc;
   if (nvs_get_u32(nvs, NVS_STATIC_COLOR, &sc) == ESP_OK) staticColor = sc;
+  uint32_t hc;
+  if (nvs_get_u32(nvs, NVS_LED_HEADER_COLOR, &hc) == ESP_OK) letterHeaderColor = hc;
+  uint32_t gc;
+  if (nvs_get_u32(nvs, NVS_GAME_TYPE_LED_COLOR, &gc) == ESP_OK) gameTypeLedColor = gc;
   size_t len = sizeof(gameTypeBuf);
   if (nvs_get_str(nvs, NVS_GAME_TYPE, gameTypeBuf, &len) == ESP_OK) {
     if (strcmp(gameTypeBuf, "four_corners") != 0 && strcmp(gameTypeBuf, "postage_stamp") != 0 &&
@@ -1103,8 +1117,21 @@ void loadNvs() {
       strcpy(callingStyleBuf, "automatic");
   }
   uint8_t cm;
-  if (nvs_get_u8(nvs, NVS_COLOR_MODE, &cm) == ESP_OK)
-    strcpy(colorModeBuf, (cm == 1) ? "solid" : "theme");
+  if (nvs_get_u8(nvs, NVS_COLOR_MODE, &cm) == ESP_OK) {
+    if (cm == 1) strcpy(colorModeBuf, "solid");
+    else if (cm == 2) strcpy(colorModeBuf, "custom");
+    else strcpy(colorModeBuf, "theme");
+  }
+  uint32_t customB;
+  if (nvs_get_u32(nvs, NVS_LED_COLOR_B, &customB) == ESP_OK) customLetterColors[0] = customB;
+  uint32_t customI;
+  if (nvs_get_u32(nvs, NVS_LED_COLOR_I, &customI) == ESP_OK) customLetterColors[1] = customI;
+  uint32_t customN;
+  if (nvs_get_u32(nvs, NVS_LED_COLOR_N, &customN) == ESP_OK) customLetterColors[2] = customN;
+  uint32_t customG;
+  if (nvs_get_u32(nvs, NVS_LED_COLOR_G, &customG) == ESP_OK) customLetterColors[3] = customG;
+  uint32_t customO;
+  if (nvs_get_u32(nvs, NVS_LED_COLOR_O, &customO) == ESP_OK) customLetterColors[4] = customO;
   size_t bpLen = sizeof(boardPinBuf);
   if (nvs_get_str(nvs, NVS_BOARD_PIN, boardPinBuf, &bpLen) != ESP_OK) {
     strncpy(boardPinBuf, BOARD_DEFAULT_PIN, sizeof(boardPinBuf) - 1);
@@ -1124,9 +1151,20 @@ void loadNvs() {
 void saveNvsSettings() {
   if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
   nvs_set_u8(nvs, NVS_BRIGHTNESS, brightness);
+  nvs_set_u8(nvs, NVS_LED_VIBRANCE, ledVibrance);
   nvs_set_i32(nvs, NVS_THEME, themeId);
   nvs_set_u32(nvs, NVS_STATIC_COLOR, staticColor);
-  nvs_set_u8(nvs, NVS_COLOR_MODE, strcmp(colorMode, "solid") == 0 ? 1 : 0);
+  nvs_set_u32(nvs, NVS_LED_HEADER_COLOR, letterHeaderColor);
+  nvs_set_u32(nvs, NVS_GAME_TYPE_LED_COLOR, gameTypeLedColor);
+  uint8_t mode = 0;
+  if (strcmp(colorMode, "solid") == 0) mode = 1;
+  else if (strcmp(colorMode, "custom") == 0) mode = 2;
+  nvs_set_u8(nvs, NVS_COLOR_MODE, mode);
+  nvs_set_u32(nvs, NVS_LED_COLOR_B, customLetterColors[0]);
+  nvs_set_u32(nvs, NVS_LED_COLOR_I, customLetterColors[1]);
+  nvs_set_u32(nvs, NVS_LED_COLOR_N, customLetterColors[2]);
+  nvs_set_u32(nvs, NVS_LED_COLOR_G, customLetterColors[3]);
+  nvs_set_u32(nvs, NVS_LED_COLOR_O, customLetterColors[4]);
   nvs_set_str(nvs, NVS_GAME_TYPE, gameType);
   nvs_set_str(nvs, NVS_CALLING_STYLE, callingStyle);
   nvs_set_str(nvs, NVS_BOARD_PIN, boardPinBuf);
@@ -1154,11 +1192,25 @@ String buildStateJson() {
   doc["boardAuthValid"] = isBoardAuthValid();
   doc["theme"] = themeId;
   doc["brightness"] = brightness;
+  doc["ledVibrance"] = ledVibrance;
   doc["colorMode"] = colorMode;
   doc["patternIndex"] = patternIdx;
   char hex[8];
   snprintf(hex, sizeof(hex), "#%06X", staticColor);
   doc["staticColor"] = hex;
+  char headerHex[8];
+  snprintf(headerHex, sizeof(headerHex), "#%06X", letterHeaderColor);
+  doc["ledHeaderColor"] = headerHex;
+  char gameTypeHex[8];
+  snprintf(gameTypeHex, sizeof(gameTypeHex), "#%06X", gameTypeLedColor);
+  doc["ledGameTypeColor"] = gameTypeHex;
+  JsonObject ledLetterObj = doc.createNestedObject("ledLetterColors");
+  char ledHex[8];
+  snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[0]); ledLetterObj["B"] = ledHex;
+  snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[1]); ledLetterObj["I"] = ledHex;
+  snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[2]); ledLetterObj["N"] = ledHex;
+  snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[3]); ledLetterObj["G"] = ledHex;
+  snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[4]); ledLetterObj["O"] = ledHex;
   JsonArray arr = doc.createNestedArray("called");
   for (int i = 0; i < callOrderCount; i++) {
     int n = callOrder[i];
@@ -1508,9 +1560,9 @@ void setup() {
 
   initThemePalettes();
   initLedTestSequence();
-  FastLED.addLeds<WS2811, DATA_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.addLeds<WS2811, DATA_PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
 #if STATUS_LED_ENABLED
-  FastLED.addLeds<WS2812B, STATUS_LED_PIN, GRB>(statusLed, STATUS_LED_COUNT);
+  FastLED.addLeds<WS2812B, STATUS_LED_PIN, STATUS_LED_COLOR_ORDER>(statusLed, STATUS_LED_COUNT);
 #endif
   FastLED.setBrightness(brightness);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -1780,6 +1832,34 @@ void setup() {
     req->send(200, "application/json", "{}");
   }));
 
+  server.on("/vibrance", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (req->hasParam("value", true)) {
+      int v = req->getParam("value", true)->value().toInt();
+      if (v < 0) v = 0;
+      if (v > 100) v = 100;
+      ledVibrance = (uint8_t)v;
+      updateAllLeds();
+      saveNvsSettings();
+      broadcastStateWs("vibrance_changed");
+    }
+    req->send(200, "application/json", "{}");
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/vibrance", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    if (obj.containsKey("value")) {
+      int v = obj["value"].as<int>();
+      if (v < 0) v = 0;
+      if (v > 100) v = 100;
+      ledVibrance = (uint8_t)v;
+      updateAllLeds();
+      saveNvsSettings();
+      broadcastStateWs("vibrance_changed");
+    }
+    req->send(200, "application/json", "{}");
+  }));
+
   server.on("/theme", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     if (req->hasParam("value", true)) themeId = req->getParam("value", true)->value().toInt();
@@ -1831,6 +1911,102 @@ void setup() {
       saveNvsSettings();
       broadcastStateWs("color_changed");
     }
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/letter-header-color", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    String hex;
+    if (req->hasParam("hex", true)) hex = req->getParam("hex", true)->value();
+    if (req->hasParam("color", true)) hex = req->getParam("color", true)->value();
+    if (hex.length() >= 6) {
+      if (hex.startsWith("#")) hex = hex.substring(1);
+      letterHeaderColor = (uint32_t)strtoul(hex.c_str(), nullptr, 16);
+      letterHeaderPreviewUntilMs = millis() + 1200;
+      updateAllLeds();
+      saveNvsSettings();
+      broadcastStateWs("letter_header_color_changed");
+    }
+    req->send(200, "application/json", "{}");
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/letter-header-color", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* hex = obj["hex"].as<const char*>();
+    if (!hex || !*hex) hex = obj["color"].as<const char*>();
+    if (hex && *hex) {
+      String s(hex);
+      if (s.startsWith("#")) s = s.substring(1);
+      letterHeaderColor = (uint32_t)strtoul(s.c_str(), nullptr, 16);
+      letterHeaderPreviewUntilMs = millis() + 1200;
+      updateAllLeds();
+      saveNvsSettings();
+      broadcastStateWs("letter_header_color_changed");
+    }
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/game-type-color", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    String hex;
+    if (req->hasParam("hex", true)) hex = req->getParam("hex", true)->value();
+    if (req->hasParam("color", true)) hex = req->getParam("color", true)->value();
+    if (hex.length() >= 6) {
+      if (hex.startsWith("#")) hex = hex.substring(1);
+      gameTypeLedColor = (uint32_t)strtoul(hex.c_str(), nullptr, 16);
+      updateAllLeds();
+      saveNvsSettings();
+      broadcastStateWs("game_type_color_changed");
+    }
+    req->send(200, "application/json", "{}");
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/game-type-color", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* hex = obj["hex"].as<const char*>();
+    if (!hex || !*hex) hex = obj["color"].as<const char*>();
+    if (hex && *hex) {
+      String s(hex);
+      if (s.startsWith("#")) s = s.substring(1);
+      gameTypeLedColor = (uint32_t)strtoul(s.c_str(), nullptr, 16);
+      updateAllLeds();
+      saveNvsSettings();
+      broadcastStateWs("game_type_color_changed");
+    }
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/letter-colors", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* keys[5] = {"B", "I", "N", "G", "O"};
+    uint32_t parsed[5];
+    for (int i = 0; i < 5; i++) {
+      const char* raw = obj[keys[i]].as<const char*>();
+      if (!raw || !*raw) {
+        req->send(400, "application/json", "{\"error\":\"B/I/N/G/O required\"}");
+        return;
+      }
+      String s(raw);
+      s.trim();
+      if (s.startsWith("#")) s = s.substring(1);
+      if (s.length() != 6) {
+        req->send(400, "application/json", "{\"error\":\"invalid hex\"}");
+        return;
+      }
+      char* endPtr = nullptr;
+      uint32_t value = (uint32_t)strtoul(s.c_str(), &endPtr, 16);
+      if (!endPtr || *endPtr != '\0') {
+        req->send(400, "application/json", "{\"error\":\"invalid hex\"}");
+        return;
+      }
+      parsed[i] = value;
+    }
+    for (int i = 0; i < 5; i++) customLetterColors[i] = parsed[i];
+    strcpy(colorModeBuf, "custom");
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("letter_colors_changed");
     req->send(200, "application/json", "{}");
   }));
 

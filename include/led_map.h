@@ -3,41 +3,46 @@
 
 #include "config.h"
 
-// Physical strip order: see plan. Logical number 1-75 -> physical index.
+// Physical strip order is defined by the 5x21 CSV provided by hardware layout.
+// This file maps logical IDs (numbers/letters/game cells) to physical LED index.
+
+// Logical number 1-75 -> physical index (derived from CSV physical order).
 inline int numberToPhysical(int n) {
-  if (n >= 1 && n <= 15) return 1 + (n - 1);           // B
-  if (n >= 16 && n <= 30) return 16 + (30 - n);         // I
-  if (n >= 31 && n <= 45) return 33 + (n - 31);         // N
-  if (n >= 46 && n <= 60) return 48 + (60 - n);        // G
-  if (n >= 61 && n <= 75) return 65 + (n - 61);         // O
-  return -1;
+  static const int numberMap[75] = {
+    98, 97, 96, 95, 94, 93, 92, 91, 90, 89, 88, 87, 86, 85, 84, // 1..15
+    69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, // 16..30
+    56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, // 31..45
+    27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, // 46..60
+    14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0            // 61..75
+  };
+  if (n < 1 || n > 75) return -1;
+  return numberMap[n - 1];
 }
 
 // Letters B,I,N,G,O -> physical index (single LED each)
 inline int letterToPhysical(char letter) {
   switch (letter) {
-    case 'B': return 0;
-    case 'I': return 31;
-    case 'N': return 32;
-    case 'G': return 63;
-    case 'O': return 64;
+    case 'B': return 99;
+    case 'I': return 68;
+    case 'N': return 57;
+    case 'G': return 26;
+    case 'O': return 15;
     default:  return -1;
   }
 }
 
 // Game-type matrix: logical cell 1-25 (row-major) -> physical index
-// Row 0: 1-5->80-84; Row 1: 10,9,8,7,6->85-89; Row 2: 11-15->90-94;
-// Row 3: 20,19,18,17,16->95-99; Row 4: 21-25->100-104
+// Derived from CSV physical order.
 inline int gameTypeCellToPhysical(int cell) {
+  static const int gameTypeMap[25] = {
+    104, 103, 102, 101, 100, // 1..5
+    63, 64, 65, 66, 67,       // 6..10
+    62, 61, 60, 59, 58,       // 11..15
+    21, 22, 23, 24, 25,       // 16..20
+    20, 19, 18, 17, 16        // 21..25
+  };
   if (cell < 1 || cell > 25) return -1;
-  int row = (cell - 1) / 5;
-  int col = (cell - 1) % 5;
-  static const int rowStart[5] = { 80, 85, 90, 95, 100 };
-  if (row == 0) return rowStart[0] + col;
-  if (row == 1) return rowStart[1] + (4 - col);  // reversed: 6,7,8,9,10 -> 89,88,87,86,85
-  if (row == 2) return rowStart[2] + col;
-  if (row == 3) return rowStart[3] + (4 - col);  // reversed
-  return rowStart[4] + col;
+  return gameTypeMap[cell - 1];
 }
 
 #endif
