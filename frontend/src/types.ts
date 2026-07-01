@@ -15,6 +15,12 @@ export interface GameState {
   ledTestMode: boolean;
   boardAccessRequired?: boolean;
   boardAuthValid?: boolean;
+  screensaverEnabled?: boolean;
+  screensaverText?: string;
+  screensaverSpeedMs?: number;
+  autoCallingEnabled?: boolean;
+  autoCallingSeconds?: number;
+  autoCallingRemainingMs?: number;
   theme: number;
   brightness: number;
   ledVibrance: number;
@@ -23,8 +29,27 @@ export interface GameState {
   ledHeaderColor: string;
   ledGameTypeColor: string;
   ledLetterColors: LedLetterColors;
+  ledBoardSectionOrder: LedBoardSection[];
+  wifiSsid?: string;
+  wifiConfigured?: boolean;
+  wifiConnected?: boolean;
+  wifiMode?: "sta" | "ap";
   patternIndex: number;
 }
+
+export type LedBoardSection = "game_type" | "letters" | "numbers";
+
+export const LED_BOARD_SECTION_LABELS: Record<LedBoardSection, string> = {
+  game_type: "Game Type Matrix (5×5)",
+  letters: "Letter Headers (1×5)",
+  numbers: "Number Board (15×5)",
+};
+
+export const DEFAULT_LED_BOARD_SECTION_ORDER: LedBoardSection[] = [
+  "game_type",
+  "letters",
+  "numbers",
+];
 
 export type AppMode = "board" | "card";
 
@@ -202,6 +227,12 @@ export const DEFAULT_STATE: GameState = {
   ledTestMode: false,
   boardAccessRequired: true,
   boardAuthValid: false,
+  screensaverEnabled: false,
+  screensaverText: "BINGO",
+  screensaverSpeedMs: 90,
+  autoCallingEnabled: false,
+  autoCallingSeconds: 30,
+  autoCallingRemainingMs: 0,
   theme: 0,
   brightness: 128,
   ledVibrance: 70,
@@ -210,5 +241,10 @@ export const DEFAULT_STATE: GameState = {
   ledHeaderColor: "#ff0000",
   ledGameTypeColor: "#ffd8a8",
   ledLetterColors: DEFAULT_LED_LETTER_COLORS,
+  ledBoardSectionOrder: DEFAULT_LED_BOARD_SECTION_ORDER,
+  wifiSsid: "",
+  wifiConfigured: false,
+  wifiConnected: false,
+  wifiMode: "ap",
   patternIndex: 0,
 };

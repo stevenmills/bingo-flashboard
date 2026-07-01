@@ -23,6 +23,7 @@ interface Props {
 export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, letterColors }: Props) {
   const [phase, setPhase] = useState<"winner" | "changeType">("winner");
   const [newType, setNewType] = useState<GameType | "">("");
+  const [actionBusy, setActionBusy] = useState(false);
 
   const fireConfetti = useCallback(() => {
     const duration = 3000;
@@ -69,26 +70,56 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
     }
   }, [open, phase, fireConfetti]);
 
+  const handleActionError = useCallback((error: unknown) => {
+    if (error instanceof Error && error.message.includes("401")) {
+      window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+    }
+  }, []);
+
   const handleKeepGoing = async () => {
-    await api.clearWinner();
-    onRefresh();
-    setPhase("changeType");
+    if (actionBusy) return;
+    setActionBusy(true);
+    try {
+      await api.clearWinner();
+      onRefresh();
+      setPhase("changeType");
+    } catch (error) {
+      handleActionError(error);
+    } finally {
+      setActionBusy(false);
+    }
   };
 
   const handleReset = async () => {
-    await api.reset();
-    onRefresh();
-    setPhase("winner");
-    onOpenChange(false);
+    if (actionBusy) return;
+    setActionBusy(true);
+    try {
+      await api.reset();
+      onRefresh();
+      setPhase("winner");
+      onOpenChange(false);
+    } catch (error) {
+      handleActionError(error);
+    } finally {
+      setActionBusy(false);
+    }
   };
 
   const handleChangeType = async () => {
-    if (newType) {
-      await api.setGameType(newType);
-      onRefresh();
+    if (actionBusy) return;
+    setActionBusy(true);
+    try {
+      if (newType) {
+        await api.setGameType(newType);
+        onRefresh();
+      }
+      setPhase("winner");
+      onOpenChange(false);
+    } catch (error) {
+      handleActionError(error);
+    } finally {
+      setActionBusy(false);
     }
-    setPhase("winner");
-    onOpenChange(false);
   };
 
   const handleSkip = () => {
@@ -126,10 +157,10 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
             ))}
           </RadioGroup>
           <div className="flex gap-3 mt-2">
-            <Button variant="outline" className="flex-1" onClick={handleChangeType} disabled={!newType}>
+            <Button variant="outline" className="flex-1" onClick={handleChangeType} disabled={!newType || actionBusy}>
               Change
             </Button>
-            <Button className="flex-1" onClick={handleSkip}>
+            <Button className="flex-1" onClick={handleSkip} disabled={actionBusy}>
               Keep current
             </Button>
           </div>
@@ -164,6 +195,7 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
           <Button
             size="lg"
             onClick={handleKeepGoing}
+            disabled={actionBusy}
             className="text-white"
             style={{ backgroundColor: letterColors.N }}
           >
@@ -172,6 +204,7 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
           <Button
             size="lg"
             onClick={handleReset}
+            disabled={actionBusy}
             className="text-white"
             style={{ backgroundColor: letterColors.B }}
           >

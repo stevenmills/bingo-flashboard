@@ -1,6 +1,6 @@
 # Bingo Flashboard
 
-ESP32-S3-driven **105-LED 12V WS2811** bingo flashboard with a WiFi AP and a modern React web UI.
+ESP32-WROOM-32D-driven **105-LED 12V WS2811** bingo flashboard with a WiFi AP and a modern React web UI.
 
 The device hosts the UI from SPIFFS, and players control games from a phone/tablet/laptop connected to the `BINGO` network.
 
@@ -15,14 +15,15 @@ The device hosts the UI from SPIFFS, and players control games from a phone/tabl
 
 ## Hardware
 
-- **ESP32-S3** (DevKit-compatible)
+- **ESP32-WROOM-32D** (DevKit-compatible)
 - **WS2811** strip, 105 LEDs, 12V supply, single data line
 - **Momentary button** between GPIO and GND (internal pull-up) for automatic draws
-- **Onboard RGB status LED** (GPIO 48 on ESP32-S3 DevKitC-1) cycles rainbow when firmware is running
+- **Status LED** on GPIO 2 cycles rainbow when firmware is running
 
 Core hardware/network config is in `include/config.h`:
 - `DATA_PIN`
-- `BUTTON_PIN`
+- `BUTTON1_PIN`
+- `BUTTON2_PIN`
 - `NUM_LEDS` (`105`)
 - `AP_SSID` (`BINGO`)
 - `AP_PASSWORD` (`washisnameo`)
@@ -191,9 +192,26 @@ npm run build   # outputs to ../data/
 Requires [PlatformIO](https://platformio.org/):
 
 ```bash
-pio run -e esp32s3
-pio run -e esp32s3 --target upload
-pio run -e esp32s3 --target uploadfs
+pio run -e esp32dev
+pio run -e esp32dev --target upload
+pio run -e esp32dev --target uploadfs
+```
+
+### One-command workflow (recommended)
+From repo root, use the included `Makefile` shortcuts:
+
+```bash
+make deploy      # build frontend + upload firmware + upload SPIFFS
+make fw-upload   # firmware only
+make fs-upload   # SPIFFS only
+make monitor     # serial monitor
+```
+
+Optional port/env overrides:
+
+```bash
+make deploy PIO_PORT=/dev/cu.usbserial-0001
+make fw-upload PIO_ENV=esp32dev PIO_PORT=/dev/cu.usbserial-0001
 ```
 
 ### Device usage

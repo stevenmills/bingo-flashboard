@@ -12,6 +12,9 @@ import {
   type GameType,
   type CallingStyle,
   type Letter,
+  type LedBoardSection,
+  DEFAULT_LED_BOARD_SECTION_ORDER,
+  LED_BOARD_SECTION_LABELS,
 } from "./types";
 
 // Deep clone initial state, restoring persisted game type and calling style
@@ -37,6 +40,44 @@ if (savedLedVibranceRaw !== null) {
   if (Number.isFinite(savedLedVibrance)) {
     state.ledVibrance = Math.max(0, Math.min(100, Math.round(savedLedVibrance)));
   }
+}
+const savedScreensaverEnabledRaw = localStorage.getItem("bingo-screensaver-enabled");
+if (savedScreensaverEnabledRaw !== null) {
+  state.screensaverEnabled = savedScreensaverEnabledRaw === "true";
+}
+const savedScreensaverText = localStorage.getItem("bingo-screensaver-text");
+if (savedScreensaverText && savedScreensaverText.trim().length > 0) {
+  state.screensaverText = savedScreensaverText.slice(0, 80);
+}
+const savedScreensaverSpeedRaw = localStorage.getItem("bingo-screensaver-speed");
+if (savedScreensaverSpeedRaw !== null) {
+  const value = Number(savedScreensaverSpeedRaw);
+  if (Number.isFinite(value)) {
+    state.screensaverSpeedMs = Math.max(20, Math.min(500, Math.round(value)));
+  }
+}
+const savedLedBoardOrder = localStorage.getItem("bingo-led-board-order");
+if (savedLedBoardOrder) {
+  try {
+    const parsed = JSON.parse(savedLedBoardOrder) as LedBoardSection[];
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 3 &&
+      new Set(parsed).size === 3 &&
+      parsed.every((section) => section in LED_BOARD_SECTION_LABELS)
+    ) {
+      state.ledBoardSectionOrder = parsed;
+    }
+  } catch {
+    // ignore invalid persisted order
+  }
+}
+const savedWifiSsid = localStorage.getItem("bingo-wifi-ssid");
+if (savedWifiSsid !== null) {
+  state.wifiSsid = savedWifiSsid;
+  state.wifiConfigured = savedWifiSsid.length > 0;
+  state.wifiMode = savedWifiSsid.length > 0 ? "sta" : "ap";
+  state.wifiConnected = savedWifiSsid.length > 0;
 }
 let pool: number[] = Array.from({ length: 75 }, (_, i) => i + 1);
 let callOrder: number[] = [];
@@ -73,6 +114,8 @@ function normalizePin(pin: string) {
 
 // Cycle patterns every 1.5s for game types that have cycling patterns (mirrors firmware)
 let patternTimer: ReturnType<typeof setInterval> | null = null;
+let autoCallingTimer: ReturnType<typeof setInterval> | null = null;
+let autoCallingNextAtMs = 0;
 function startPatternCycling() {
   if (patternTimer) return;
   patternTimer = setInterval(() => {
@@ -83,6 +126,39 @@ function startPatternCycling() {
   }, 1500);
 }
 startPatternCycling();
+
+function startAutoCallingLoop() {
+  if (autoCallingTimer) return;
+  autoCallingTimer = setInterval(() => {
+    if (!state.autoCallingEnabled) {
+      autoCallingNextAtMs = 0;
+      state.autoCallingRemainingMs = 0;
+      return;
+    }
+    if (state.callingStyle !== "automatic" || state.winnerDeclared || state.remaining <= 0) {
+      state.autoCallingRemainingMs = 0;
+      return;
+    }
+    const now = Date.now();
+    const intervalMs = Math.max(1000, (state.autoCallingSeconds ?? 30) * 1000);
+    if (autoCallingNextAtMs <= 0) {
+      autoCallingNextAtMs = now + intervalMs;
+    }
+    if (now >= autoCallingNextAtMs) {
+      const n = drawOne();
+      if (n === null) {
+        state.autoCallingEnabled = false;
+        autoCallingNextAtMs = 0;
+        state.autoCallingRemainingMs = 0;
+        return;
+      }
+      recomputeWinners();
+      autoCallingNextAtMs = now + intervalMs;
+    }
+    state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - now);
+  }, 200);
+}
+startAutoCallingLoop();
 
 function snapshot(): GameState {
   return JSON.parse(JSON.stringify(state));
@@ -328,6 +404,9 @@ export const mockApi = {
     await delay(30);
     assertBoardAuth();
     resetGame();
+  state.autoCallingEnabled = false;
+  state.autoCallingRemainingMs = 0;
+  autoCallingNextAtMs = 0;
     return {};
   },
 
@@ -354,6 +433,11 @@ export const mockApi = {
     assertBoardAuth();
     if (state.gameEstablished) throw new Error("game established");
     state.callingStyle = callingStyle;
+    if (callingStyle === "manual") {
+      state.autoCallingEnabled = false;
+      state.autoCallingRemainingMs = 0;
+      autoCallingNextAtMs = 0;
+    }
     localStorage.setItem("bingo-callingStyle", callingStyle);
     return {};
   },
@@ -411,6 +495,52 @@ export const mockApi = {
     await delay(10);
     assertBoardAuth();
     state.ledTestMode = enabled;
+    return {};
+  },
+
+  setScreensaverEnabled: async (enabled: boolean) => {
+    await delay(10);
+    assertBoardAuth();
+    state.screensaverEnabled = enabled;
+    localStorage.setItem("bingo-screensaver-enabled", String(enabled));
+    return {};
+  },
+
+  setScreensaverText: async (text: string) => {
+    await delay(10);
+    assertBoardAuth();
+    const normalized = text.trim().length ? text.trim() : "BINGO";
+    state.screensaverText = normalized.slice(0, 80);
+    localStorage.setItem("bingo-screensaver-text", state.screensaverText);
+    return {};
+  },
+
+  setScreensaverSpeed: async (value: number) => {
+    await delay(10);
+    assertBoardAuth();
+    state.screensaverSpeedMs = Math.max(20, Math.min(500, Math.round(value)));
+    localStorage.setItem("bingo-screensaver-speed", String(state.screensaverSpeedMs));
+    return {};
+  },
+
+  setAutoCallingEnabled: async (enabled: boolean) => {
+    await delay(10);
+    assertBoardAuth();
+    if (state.callingStyle !== "automatic") throw new Error("automatic mode required");
+    state.autoCallingEnabled = enabled;
+    autoCallingNextAtMs = enabled ? Date.now() + Math.max(1000, (state.autoCallingSeconds ?? 30) * 1000) : 0;
+    state.autoCallingRemainingMs = enabled ? Math.max(1000, (state.autoCallingSeconds ?? 30) * 1000) : 0;
+    return {};
+  },
+
+  setAutoCallingSeconds: async (value: number) => {
+    await delay(10);
+    assertBoardAuth();
+    state.autoCallingSeconds = Math.max(1, Math.min(600, Math.round(value)));
+    if (state.autoCallingEnabled) {
+      autoCallingNextAtMs = Date.now() + state.autoCallingSeconds * 1000;
+      state.autoCallingRemainingMs = state.autoCallingSeconds * 1000;
+    }
     return {};
   },
 
@@ -472,6 +602,34 @@ export const mockApi = {
     };
     state.colorMode = "custom";
     return {};
+  },
+
+  setLedBoardSectionOrder: async (order: LedBoardSection[]) => {
+    await delay(10);
+    assertBoardAuth();
+    if (order.length !== 3 || new Set(order).size !== 3) {
+      throw new Error("invalid order");
+    }
+    state.ledBoardSectionOrder = [...order];
+    localStorage.setItem("bingo-led-board-order", JSON.stringify(order));
+    return {};
+  },
+
+  setWifiCredentials: async (ssid: string, password?: string) => {
+    await delay(10);
+    assertBoardAuth();
+    const trimmed = ssid.trim();
+    state.wifiSsid = trimmed;
+    state.wifiConfigured = trimmed.length > 0;
+    state.wifiMode = trimmed.length > 0 ? "sta" : "ap";
+    state.wifiConnected = trimmed.length > 0;
+    localStorage.setItem("bingo-wifi-ssid", trimmed);
+    if (password !== undefined) {
+      localStorage.setItem("bingo-wifi-password", password);
+    } else if (trimmed.length === 0) {
+      localStorage.removeItem("bingo-wifi-password");
+    }
+    return { restartRequired: true };
   },
 
   unlockBoard: async (pin: string): Promise<BoardAuthSession> => {

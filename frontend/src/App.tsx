@@ -11,7 +11,6 @@ import { Dices, Lock, LogOut, Maximize2, Menu, Minimize2, Moon, Pause, PawPrint,
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/hooks/useTheme";
 import { useBingoUiColors } from "@/hooks/useBingoUiColors";
-import { useAutoCallingTimer } from "@/hooks/useAutoCallingTimer";
 import { api } from "@/api";
 import { Input } from "@/components/ui/input";
 import { rgbaFromHex } from "@/lib/bingo-ui-colors";
@@ -193,37 +192,61 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [modeInitialized, appMode, boardAuthActive, unlockOpen]);
 
-  const handleAutoElapsed = useCallback(async (): Promise<boolean> => {
-    if (!showAutoControls || state.remaining === 0 || !connected || state.winnerDeclared) return false;
-    try {
-      await api.draw();
-      const fresh = await api.getState();
-      await refresh();
-      return fresh.remaining > 0;
-    } catch {
-      await refresh();
-      return false;
-    }
-  }, [showAutoControls, state.remaining, connected, state.winnerDeclared, refresh]);
-
-  const {
-    isRunning: autoRunning,
-    seconds: autoSeconds,
-    progressRemaining,
-    setSeconds: setAutoSeconds,
-    pause: pauseAuto,
-    toggle: toggleAuto,
-  } = useAutoCallingTimer({ onElapsed: handleAutoElapsed });
+  const autoRunning = Boolean(state.autoCallingEnabled);
+  const autoSeconds = Math.max(1, Math.min(600, state.autoCallingSeconds ?? 30));
+  const progressRemaining = autoRunning
+    ? Math.max(
+      0,
+      Math.min(1, (state.autoCallingRemainingMs ?? 0) / Math.max(1, autoSeconds * 1000))
+    )
+    : 1;
+  const [smoothProgressRemaining, setSmoothProgressRemaining] = useState(progressRemaining);
+  const autoProgressAnchorRef = useRef<{ remainingMs: number; at: number }>({
+    remainingMs: Math.max(0, state.autoCallingRemainingMs ?? 0),
+    at: performance.now(),
+  });
+  const autoProgressRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     setSecondsDraft(String(autoSeconds));
   }, [autoSeconds]);
 
   useEffect(() => {
-    if (!showAutoControls || state.remaining === 0 || !connected || state.winnerDeclared) {
-      pauseAuto();
+    autoProgressAnchorRef.current = {
+      remainingMs: Math.max(0, state.autoCallingRemainingMs ?? 0),
+      at: performance.now(),
+    };
+    if (!autoRunning || !showAutoControls) {
+      setSmoothProgressRemaining(1);
+      return;
     }
-  }, [showAutoControls, state.remaining, connected, state.winnerDeclared, pauseAuto]);
+    setSmoothProgressRemaining(progressRemaining);
+  }, [autoRunning, showAutoControls, state.autoCallingRemainingMs, autoSeconds, progressRemaining]);
+
+  useEffect(() => {
+    if (autoProgressRafRef.current !== null) {
+      cancelAnimationFrame(autoProgressRafRef.current);
+      autoProgressRafRef.current = null;
+    }
+    if (!autoRunning || !showAutoControls) return;
+
+    const tick = () => {
+      const anchor = autoProgressAnchorRef.current;
+      const elapsed = Math.max(0, performance.now() - anchor.at);
+      const estimatedRemainingMs = Math.max(0, anchor.remainingMs - elapsed);
+      const ratio = Math.max(0, Math.min(1, estimatedRemainingMs / Math.max(1, autoSeconds * 1000)));
+      setSmoothProgressRemaining(ratio);
+      autoProgressRafRef.current = requestAnimationFrame(tick);
+    };
+
+    autoProgressRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (autoProgressRafRef.current !== null) {
+        cancelAnimationFrame(autoProgressRafRef.current);
+        autoProgressRafRef.current = null;
+      }
+    };
+  }, [autoRunning, showAutoControls, autoSeconds]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -266,19 +289,37 @@ export default function App() {
       setSecondsDraft(String(autoSeconds));
       return;
     }
-    setAutoSeconds(parsed);
+    const clamped = Math.max(1, Math.min(600, parsed));
+    setSecondsDraft(String(clamped));
+    void api.setAutoCallingSeconds(clamped)
+      .then(() => refresh())
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.message.includes("401")) {
+          window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        }
+      });
+  };
+
+  const toggleAuto = () => {
+    const next = !autoRunning;
+    void api.setAutoCallingEnabled(next)
+      .then(() => refresh())
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.message.includes("401")) {
+          window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        }
+      });
   };
 
   const toggleSettingsPanel = useCallback(() => {
     setSettingsOpen((open) => {
       const nextOpen = !open;
       if (nextOpen) {
-        pauseAuto();
         setOddsOpen(false);
       }
       return nextOpen;
     });
-  }, [pauseAuto]);
+  }, []);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -624,7 +665,7 @@ export default function App() {
             <div
               className="h-full ml-auto"
               style={{
-                width: `${Math.max(0, Math.min(1, progressRemaining)) * 100}%`,
+                width: `${Math.max(0, Math.min(1, smoothProgressRemaining)) * 100}%`,
                 backgroundColor: rgbaFromHex(uiLetterColors.N, 0.7),
               }}
             />
@@ -677,7 +718,15 @@ export default function App() {
                       staticColor={state.staticColor}
                       ledHeaderColor={state.ledHeaderColor}
                       ledGameTypeColor={state.ledGameTypeColor}
+                      screensaverEnabled={state.screensaverEnabled}
+                      screensaverText={state.screensaverText}
+                      screensaverSpeedMs={state.screensaverSpeedMs}
                       ledLetterColors={state.ledLetterColors}
+                      ledBoardSectionOrder={state.ledBoardSectionOrder}
+                      wifiSsid={state.wifiSsid}
+                      wifiConfigured={state.wifiConfigured}
+                      wifiConnected={state.wifiConnected}
+                      wifiMode={state.wifiMode}
                       ledTestMode={state.ledTestMode}
                       boardAuthGranted={boardAuthActive}
                       uiColorTheme={uiColorTheme}

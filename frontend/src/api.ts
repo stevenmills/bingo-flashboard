@@ -6,6 +6,7 @@ import type {
   GameType,
   CallingStyle,
   Letter,
+  LedBoardSection,
 } from "./types";
 import { mockApi } from "./mock-api";
 
@@ -277,6 +278,15 @@ const realApi = {
   declareWinner: () => wsCommand("declare_winner").catch(() => postJson("/declare-winner")),
   clearWinner: () => wsCommand("clear_winner").catch(() => postJson("/clear-winner")),
   setLedTestMode: (enabled: boolean) => postJson("/led-test", { enabled }),
+  setScreensaverEnabled: (enabled: boolean) =>
+    postForm("/screensaver", { enabled: enabled ? "1" : "0" }),
+  setScreensaverText: (text: string) => postForm("/screensaver-text", { text }),
+  setScreensaverSpeed: (value: number) =>
+    postForm("/screensaver-speed", { value: String(Math.round(value)) }),
+  setAutoCallingEnabled: (enabled: boolean) =>
+    postForm("/auto-calling", { enabled: enabled ? "1" : "0" }),
+  setAutoCallingSeconds: (value: number) =>
+    postForm("/auto-calling-seconds", { value: String(Math.round(value)) }),
   unlockBoard: (pin: string) => postJson<BoardAuthSession>("/auth/board/unlock", { pin }, false),
   lockBoard: () => postJson("/auth/board/lock", undefined, false),
   refreshBoardAuth: () => postJson<BoardAuthSession>("/auth/board/refresh"),
@@ -309,6 +319,12 @@ const realApi = {
       G: colors.G.replace("#", ""),
       O: colors.O.replace("#", ""),
     }),
+
+  setLedBoardSectionOrder: (order: LedBoardSection[]) =>
+    postJson("/led-board-order", { order }),
+
+  setWifiCredentials: (ssid: string, password?: string) =>
+    postJson("/wifi", { ssid, password }),
 
   joinCard: (numbers: Array<number | null>, cardId?: string) =>
     wsCommand<CardJoinResponse>("join_card", { numbers, cardId }, false)
@@ -384,6 +400,21 @@ export const api = {
   setLedTestMode: async (enabled: boolean) =>
     useMock ? mockApi.setLedTestMode(enabled) : realApi.setLedTestMode(enabled),
 
+  setScreensaverEnabled: async (enabled: boolean) =>
+    useMock ? mockApi.setScreensaverEnabled(enabled) : realApi.setScreensaverEnabled(enabled),
+
+  setScreensaverText: async (text: string) =>
+    useMock ? mockApi.setScreensaverText(text) : realApi.setScreensaverText(text),
+
+  setScreensaverSpeed: async (value: number) =>
+    useMock ? mockApi.setScreensaverSpeed(value) : realApi.setScreensaverSpeed(value),
+
+  setAutoCallingEnabled: async (enabled: boolean) =>
+    useMock ? mockApi.setAutoCallingEnabled(enabled) : realApi.setAutoCallingEnabled(enabled),
+
+  setAutoCallingSeconds: async (value: number) =>
+    useMock ? mockApi.setAutoCallingSeconds(value) : realApi.setAutoCallingSeconds(value),
+
   setBrightness: async (v: number) =>
     useMock ? mockApi.setBrightness(v) : realApi.setBrightness(v),
 
@@ -404,6 +435,12 @@ export const api = {
 
   setLedLetterColors: async (colors: Record<Letter, string>) =>
     useMock ? mockApi.setLedLetterColors(colors) : realApi.setLedLetterColors(colors),
+
+  setLedBoardSectionOrder: async (order: LedBoardSection[]) =>
+    useMock ? mockApi.setLedBoardSectionOrder(order) : realApi.setLedBoardSectionOrder(order),
+
+  setWifiCredentials: async (ssid: string, password?: string) =>
+    useMock ? mockApi.setWifiCredentials(ssid, password) : realApi.setWifiCredentials(ssid, password),
 
   unlockBoard: async (pin: string) => {
     const session = useMock ? await mockApi.unlockBoard(pin) : await realApi.unlockBoard(pin);

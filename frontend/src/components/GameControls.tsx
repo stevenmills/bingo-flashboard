@@ -85,6 +85,7 @@ export function GameControls({
   useEffect(() => {
     if (remaining > 0 || called.length === 0) {
       gameOverShownRef.current = false;
+      setGameOverOpen(false);
       return;
     }
     if (!gameOverShownRef.current) {
@@ -109,6 +110,12 @@ export function GameControls({
     lastWinnerFallbackKeyRef.current = fallbackKey;
     setWinnerOpen(true);
   }, [winnerDeclared, winnerCount, called.length]);
+
+  useEffect(() => {
+    if (!winnerDeclared) {
+      setWinnerOpen(false);
+    }
+  }, [winnerDeclared]);
 
   useEffect(() => {
     // Clear dedupe keys when winner state is inactive so next winner always re-opens modal.

@@ -26,7 +26,15 @@ export function SettingsPage({ state, onRefresh }: Props) {
           staticColor={state.staticColor}
           ledHeaderColor={state.ledHeaderColor}
           ledGameTypeColor={state.ledGameTypeColor}
+          screensaverEnabled={state.screensaverEnabled}
+          screensaverText={state.screensaverText}
+          screensaverSpeedMs={state.screensaverSpeedMs}
           ledLetterColors={state.ledLetterColors}
+          ledBoardSectionOrder={state.ledBoardSectionOrder}
+          wifiSsid={state.wifiSsid}
+          wifiConfigured={state.wifiConfigured}
+          wifiConnected={state.wifiConnected}
+          wifiMode={state.wifiMode}
           ledTestMode={state.ledTestMode}
           boardAuthGranted={false}
           uiColorTheme={defaultTheme}
