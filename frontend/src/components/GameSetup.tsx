@@ -7,6 +7,7 @@ import {
   GAME_TYPE_LABELS,
   LETTERS,
   LETTER_RANGES,
+  type GameState,
   type GameType,
   type CallingStyle,
 } from "@/types";
@@ -18,6 +19,7 @@ interface Props {
   called: number[];
   letterColors?: LetterColors;
   onRefresh: () => void;
+  onApplyOptimistic?: (updater: (prev: GameState) => GameState) => void;
 }
 
 export function GameSetup({
@@ -27,32 +29,28 @@ export function GameSetup({
   called,
   letterColors = DEFAULT_LETTER_COLORS,
   onRefresh,
+  onApplyOptimistic,
 }: Props) {
   const calledSet = new Set(called);
   const radioFocus = `0 0 0 2px ${rgbaFromHex(letterColors.N, 0.35)}`;
 
-  const handleGameType = async (v: string) => {
-    try {
-      await api.setGameType(v as GameType);
-    } finally {
-      onRefresh();
-    }
+  const handleGameType = (v: string) => {
+    void api.setGameType(v as GameType).catch(() => onRefresh());
   };
 
-  const handleCallingStyle = async (v: string) => {
-    try {
-      await api.setCallingStyle(v as CallingStyle);
-    } finally {
-      onRefresh();
-    }
+  const handleCallingStyle = (v: string) => {
+    void api.setCallingStyle(v as CallingStyle).catch(() => onRefresh());
   };
 
-  const handleCallNumber = async (n: number) => {
-    try {
-      await api.callNumber(n);
-    } finally {
-      onRefresh();
-    }
+  const handleCallNumber = (n: number) => {
+    onApplyOptimistic?.((prev) => ({
+      ...prev,
+      current: n,
+      called: [...prev.called, n],
+      remaining: Math.max(0, prev.remaining - 1),
+      gameEstablished: true,
+    }));
+    void api.callNumber(n).catch(() => onRefresh());
   };
 
   return (

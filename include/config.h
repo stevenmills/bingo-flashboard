@@ -28,6 +28,8 @@
 #define NVS_SCREENSAVER_ENABLED "se"
 #define NVS_SCREENSAVER_TEXT "st"
 #define NVS_SCREENSAVER_SPEED "ss"
+#define NVS_SCREENSAVER_TYPE "sy"
+#define NVS_SCREENSAVER_COLOR "sr"
 #define NVS_AUTO_CALL_SECONDS "ac"
 #define NVS_LED_COLOR_B "lb"
 #define NVS_LED_COLOR_I "li"

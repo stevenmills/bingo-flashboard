@@ -15,6 +15,8 @@ import {
   type LedBoardSection,
   DEFAULT_LED_BOARD_SECTION_ORDER,
   LED_BOARD_SECTION_LABELS,
+  SCREENSAVER_TYPE_LABELS,
+  type ScreensaverType,
 } from "./types";
 
 // Deep clone initial state, restoring persisted game type and calling style
@@ -55,6 +57,19 @@ if (savedScreensaverSpeedRaw !== null) {
   if (Number.isFinite(value)) {
     state.screensaverSpeedMs = Math.max(20, Math.min(500, Math.round(value)));
   }
+}
+const savedScreensaverType = localStorage.getItem("bingo-screensaver-type");
+if (
+  savedScreensaverType &&
+  savedScreensaverType in SCREENSAVER_TYPE_LABELS
+) {
+  state.screensaverType = savedScreensaverType as ScreensaverType;
+}
+const savedScreensaverColor = localStorage.getItem("bingo-screensaver-color");
+if (savedScreensaverColor && /^#?[0-9a-fA-F]{6}$/.test(savedScreensaverColor)) {
+  state.screensaverColor = savedScreensaverColor.startsWith("#")
+    ? savedScreensaverColor
+    : `#${savedScreensaverColor}`;
 }
 const savedLedBoardOrder = localStorage.getItem("bingo-led-board-order");
 if (savedLedBoardOrder) {
@@ -331,7 +346,7 @@ function recomputeWinners() {
     if (!wasWinner && s.winner) hasNewWinnerEvent = true;
     if (s.winner) winners++;
   }
-  if (winnerSuppressed && winners > 0) {
+  if (winnerSuppressed && hasNewWinnerEvent) {
     // New unclaimed winner appeared after keep-going.
     winnerSuppressed = false;
   }
@@ -523,6 +538,22 @@ export const mockApi = {
     return {};
   },
 
+  setScreensaverType: async (type: ScreensaverType) => {
+    await delay(10);
+    assertBoardAuth();
+    state.screensaverType = type;
+    localStorage.setItem("bingo-screensaver-type", type);
+    return {};
+  },
+
+  setScreensaverColor: async (hex: string) => {
+    await delay(10);
+    assertBoardAuth();
+    state.screensaverColor = hex.startsWith("#") ? hex : `#${hex}`;
+    localStorage.setItem("bingo-screensaver-color", state.screensaverColor);
+    return {};
+  },
+
   setAutoCallingEnabled: async (enabled: boolean) => {
     await delay(10);
     assertBoardAuth();
@@ -648,7 +679,7 @@ export const mockApi = {
   refreshBoardAuth: async (): Promise<BoardAuthSession> => {
     await delay(10);
     assertBoardAuth();
-    boardAuth = { token: genToken(), ttlMs: nowMs() + BOARD_AUTH_TTL_MS };
+    boardAuth = { token: boardAuth!.token, ttlMs: nowMs() + BOARD_AUTH_TTL_MS };
     return boardAuth;
   },
 
@@ -707,6 +738,18 @@ export const mockApi = {
     if (!session) throw new Error("card not found");
     if (cellIndex < 0 || cellIndex > 24 || cellIndex === 12) throw new Error("invalid cell");
     session.marks[cellIndex] = marked;
+    recomputeWinners();
+    return { cardId, winner: session.winner, winnerCount: state.winnerCount ?? 0, winnerEventId };
+  },
+
+  syncCardMarks: async (cardId: string, marks: boolean[]): Promise<CardJoinResponse> => {
+    await delay(10);
+    const session = cardSessions.get(cardId);
+    if (!session) throw new Error("card not found");
+    if (!Array.isArray(marks) || marks.length !== 25) throw new Error("invalid marks");
+    for (let i = 0; i < 25; i++) {
+      session.marks[i] = i === 12 ? true : Boolean(marks[i]);
+    }
     recomputeWinners();
     return { cardId, winner: session.winner, winnerCount: state.winnerCount ?? 0, winnerEventId };
   },

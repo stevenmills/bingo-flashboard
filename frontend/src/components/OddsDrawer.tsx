@@ -83,7 +83,7 @@ export function OddsDrawer({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="left-auto right-0 top-0 h-full w-full max-w-sm translate-x-0 translate-y-0 grid-rows-[auto,minmax(0,1fr)] content-start rounded-none border-l data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-right-full data-[state=closed]:slide-out-to-top-[0%] data-[state=open]:slide-in-from-top-[0%]">
+      <DialogContent variant="drawer" className="grid-rows-[auto,minmax(0,1fr)] content-start">
         <DialogHeader>
           <DialogTitle>Odds</DialogTitle>
           <DialogDescription>

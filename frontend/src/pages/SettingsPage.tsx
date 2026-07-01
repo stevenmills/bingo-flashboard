@@ -27,8 +27,10 @@ export function SettingsPage({ state, onRefresh }: Props) {
           ledHeaderColor={state.ledHeaderColor}
           ledGameTypeColor={state.ledGameTypeColor}
           screensaverEnabled={state.screensaverEnabled}
+          screensaverType={state.screensaverType}
           screensaverText={state.screensaverText}
           screensaverSpeedMs={state.screensaverSpeedMs}
+          screensaverColor={state.screensaverColor}
           ledLetterColors={state.ledLetterColors}
           ledBoardSectionOrder={state.ledBoardSectionOrder}
           wifiSsid={state.wifiSsid}

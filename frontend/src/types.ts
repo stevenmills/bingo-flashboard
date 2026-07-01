@@ -16,8 +16,10 @@ export interface GameState {
   boardAccessRequired?: boolean;
   boardAuthValid?: boolean;
   screensaverEnabled?: boolean;
+  screensaverType?: ScreensaverType;
   screensaverText?: string;
   screensaverSpeedMs?: number;
+  screensaverColor?: string;
   autoCallingEnabled?: boolean;
   autoCallingSeconds?: number;
   autoCallingRemainingMs?: number;
@@ -50,6 +52,14 @@ export const DEFAULT_LED_BOARD_SECTION_ORDER: LedBoardSection[] = [
   "letters",
   "numbers",
 ];
+
+export type ScreensaverType = "text" | "rainbow" | "solid";
+
+export const SCREENSAVER_TYPE_LABELS: Record<ScreensaverType, string> = {
+  text: "Scrolling Text",
+  rainbow: "Animated Rainbow",
+  solid: "Solid Color",
+};
 
 export type AppMode = "board" | "card";
 
@@ -228,8 +238,10 @@ export const DEFAULT_STATE: GameState = {
   boardAccessRequired: true,
   boardAuthValid: false,
   screensaverEnabled: false,
+  screensaverType: "text",
   screensaverText: "BINGO",
   screensaverSpeedMs: 90,
+  screensaverColor: "#00ff00",
   autoCallingEnabled: false,
   autoCallingSeconds: 30,
   autoCallingRemainingMs: 0,

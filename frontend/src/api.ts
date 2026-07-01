@@ -7,6 +7,7 @@ import type {
   CallingStyle,
   Letter,
   LedBoardSection,
+  ScreensaverType,
 } from "./types";
 import { mockApi } from "./mock-api";
 
@@ -182,6 +183,57 @@ function buildHeaders(includeAuth = true): HeadersInit {
   return headers;
 }
 
+async function fetchState(): Promise<GameState> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(`${BASE}/api/state`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.json();
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+async function fetchCardState(cardId: string): Promise<CardStateResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(`${BASE}/api/card-state?cardId=${encodeURIComponent(cardId)}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.json();
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+async function mutation<T>(wsAction: WsCommandAction, payload: Record<string, unknown> | undefined, http: () => Promise<T>): Promise<T> {
+  if (wsCommandsEnabled) {
+    try {
+      return await wsCommand<T>(wsAction, payload);
+    } catch {
+      return http();
+    }
+  }
+  return http();
+}
+
+async function mutationNoAuth<T>(wsAction: WsCommandAction, payload: Record<string, unknown> | undefined, http: () => Promise<T>): Promise<T> {
+  if (wsCommandsEnabled) {
+    try {
+      return await wsCommand<T>(wsAction, payload, false);
+    } catch {
+      return http();
+    }
+  }
+  return http();
+}
 async function postForm(path: string, body: Record<string, string>, includeAuth = true): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2000);
@@ -226,63 +278,33 @@ async function postJson<T = unknown>(path: string, body?: unknown, includeAuth =
 
 /** Real API that talks to the ESP32 over HTTP */
 const realApi = {
-  getState: async (): Promise<GameState> => {
-    try {
-      return await wsCommand<GameState>("get_state", {}, false);
-    } catch (e) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
-      try {
-        const res = await fetch(`${BASE}/api/state`, { signal: controller.signal });
-        clearTimeout(timeout);
-        if (!res.ok) throw new Error(`${res.status}`);
-        return res.json();
-      } catch (err) {
-        clearTimeout(timeout);
-        throw err;
-      }
-    }
-  },
+  getState: () => (wsCommandsEnabled ? mutationNoAuth("get_state", {}, fetchState) : fetchState()),
 
-  draw: async () => {
-    try {
-      return await wsCommand("draw");
-    } catch {
-      return postJson("/draw");
-    }
-  },
-  reset: async () => {
-    try {
-      return await wsCommand("reset");
-    } catch {
-      return postJson("/reset");
-    }
-  },
-  undo: async () => {
-    try {
-      return await wsCommand("undo");
-    } catch {
-      return postJson("/undo");
-    }
-  },
+  draw: () => mutation("draw", undefined, () => postJson("/draw")),
+  reset: () => mutation("reset", undefined, () => postJson("/reset")),
+  undo: () => mutation("undo", undefined, () => postJson("/undo")),
 
   setCallingStyle: (callingStyle: CallingStyle) =>
-    wsCommand("set_calling_style", { callingStyle }).catch(() => postJson("/calling-style", { callingStyle })),
+    mutation("set_calling_style", { callingStyle }, () => postJson("/calling-style", { callingStyle })),
 
   callNumber: (number: number) =>
-    wsCommand("call_number", { number }).catch(() => postJson("/call", { number })),
+    mutation("call_number", { number }, () => postJson("/call", { number })),
 
   setGameType: (gameType: GameType) =>
-    wsCommand("set_game_type", { gameType }).catch(() => postJson("/game-type", { gameType })),
+    mutation("set_game_type", { gameType }, () => postJson("/game-type", { gameType })),
 
-  declareWinner: () => wsCommand("declare_winner").catch(() => postJson("/declare-winner")),
-  clearWinner: () => wsCommand("clear_winner").catch(() => postJson("/clear-winner")),
+  declareWinner: () => mutation("declare_winner", undefined, () => postJson("/declare-winner")),
+  clearWinner: () => mutation("clear_winner", undefined, () => postJson("/clear-winner")),
   setLedTestMode: (enabled: boolean) => postJson("/led-test", { enabled }),
   setScreensaverEnabled: (enabled: boolean) =>
     postForm("/screensaver", { enabled: enabled ? "1" : "0" }),
   setScreensaverText: (text: string) => postForm("/screensaver-text", { text }),
   setScreensaverSpeed: (value: number) =>
     postForm("/screensaver-speed", { value: String(Math.round(value)) }),
+  setScreensaverType: (type: ScreensaverType) =>
+    postForm("/screensaver-type", { type }),
+  setScreensaverColor: (hex: string) =>
+    postForm("/screensaver-color", { hex: hex.replace("#", "") }),
   setAutoCallingEnabled: (enabled: boolean) =>
     postForm("/auto-calling", { enabled: enabled ? "1" : "0" }),
   setAutoCallingSeconds: (value: number) =>
@@ -327,32 +349,21 @@ const realApi = {
     postJson("/wifi", { ssid, password }),
 
   joinCard: (numbers: Array<number | null>, cardId?: string) =>
-    wsCommand<CardJoinResponse>("join_card", { numbers, cardId }, false)
-      .catch(() => postJson<CardJoinResponse>("/card/join", { numbers, cardId }, false)),
+    mutationNoAuth("join_card", { numbers, cardId }, () =>
+      postJson<CardJoinResponse>("/card/join", { numbers, cardId }, false)
+    ),
   markCardCell: (cardId: string, cellIndex: number, marked: boolean) =>
-    wsCommand<CardJoinResponse>("mark_card_cell", { cardId, cellIndex, marked }, false)
-      .catch(() => postJson<CardJoinResponse>("/card/mark", { cardId, cellIndex, marked }, false)),
+    mutationNoAuth("mark_card_cell", { cardId, cellIndex, marked }, () =>
+      postJson<CardJoinResponse>("/card/mark", { cardId, cellIndex, marked }, false)
+    ),
+  syncCardMarks: (cardId: string, marks: boolean[]) =>
+    postJson<CardJoinResponse>("/card/sync-marks", { cardId, marks }, false),
   leaveCard: (cardId: string) =>
-    wsCommand("leave_card", { cardId }, false).catch(() => postJson("/card/leave", { cardId }, false)),
-  getCardState: async (cardId: string): Promise<CardStateResponse> => {
-    try {
-      return await wsCommand<CardStateResponse>("get_card_state", { cardId }, false);
-    } catch (e) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
-      try {
-        const res = await fetch(`${BASE}/api/card-state?cardId=${encodeURIComponent(cardId)}`, {
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (!res.ok) throw new Error(`${res.status}`);
-        return res.json();
-      } catch (err) {
-        clearTimeout(timeout);
-        throw err;
-      }
-    }
-  },
+    mutationNoAuth("leave_card", { cardId }, () => postJson("/card/leave", { cardId }, false)),
+  getCardState: (cardId: string) =>
+    wsCommandsEnabled
+      ? mutationNoAuth("get_card_state", { cardId }, () => fetchCardState(cardId))
+      : fetchCardState(cardId),
 };
 
 /**
@@ -408,6 +419,12 @@ export const api = {
 
   setScreensaverSpeed: async (value: number) =>
     useMock ? mockApi.setScreensaverSpeed(value) : realApi.setScreensaverSpeed(value),
+
+  setScreensaverType: async (type: ScreensaverType) =>
+    useMock ? mockApi.setScreensaverType(type) : realApi.setScreensaverType(type),
+
+  setScreensaverColor: async (hex: string) =>
+    useMock ? mockApi.setScreensaverColor(hex) : realApi.setScreensaverColor(hex),
 
   setAutoCallingEnabled: async (enabled: boolean) =>
     useMock ? mockApi.setAutoCallingEnabled(enabled) : realApi.setAutoCallingEnabled(enabled),
@@ -467,6 +484,8 @@ export const api = {
     useMock ? mockApi.joinCard(numbers, cardId) : realApi.joinCard(numbers, cardId),
   markCardCell: async (cardId: string, cellIndex: number, marked: boolean) =>
     useMock ? mockApi.markCardCell(cardId, cellIndex, marked) : realApi.markCardCell(cardId, cellIndex, marked),
+  syncCardMarks: async (cardId: string, marks: boolean[]) =>
+    useMock ? mockApi.syncCardMarks(cardId, marks) : realApi.syncCardMarks(cardId, marks),
   leaveCard: async (cardId: string) =>
     useMock ? mockApi.leaveCard(cardId) : realApi.leaveCard(cardId),
   getCardState: async (cardId: string) =>

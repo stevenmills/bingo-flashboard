@@ -15,12 +15,20 @@ import type { LetterColors } from "@/lib/bingo-ui-colors";
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onRefresh: () => void;
+  onChangeTypeFlowChange?: (active: boolean) => void;
+  onSuppressAutoRestore?: () => void;
   winnerCount?: number;
   letterColors: LetterColors;
 }
 
-export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, letterColors }: Props) {
+export function WinnerDialog({
+  open,
+  onOpenChange,
+  onChangeTypeFlowChange,
+  onSuppressAutoRestore,
+  winnerCount,
+  letterColors,
+}: Props) {
   const [phase, setPhase] = useState<"winner" | "changeType">("winner");
   const [newType, setNewType] = useState<GameType | "">("");
   const [actionBusy, setActionBusy] = useState(false);
@@ -70,6 +78,15 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
     }
   }, [open, phase, fireConfetti]);
 
+  useEffect(() => {
+    if (!open) {
+      onChangeTypeFlowChange?.(false);
+      setPhase("winner");
+      setNewType("");
+      setActionBusy(false);
+    }
+  }, [open, onChangeTypeFlowChange]);
+
   const handleActionError = useCallback((error: unknown) => {
     if (error instanceof Error && error.message.includes("401")) {
       window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
@@ -78,12 +95,14 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
 
   const handleKeepGoing = async () => {
     if (actionBusy) return;
+    onChangeTypeFlowChange?.(true);
+    setPhase("changeType");
     setActionBusy(true);
     try {
       await api.clearWinner();
-      onRefresh();
-      setPhase("changeType");
     } catch (error) {
+      onChangeTypeFlowChange?.(false);
+      setPhase("winner");
       handleActionError(error);
     } finally {
       setActionBusy(false);
@@ -93,11 +112,10 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
   const handleReset = async () => {
     if (actionBusy) return;
     setActionBusy(true);
+    onSuppressAutoRestore?.();
     try {
       await api.reset();
-      onRefresh();
-      setPhase("winner");
-      onOpenChange(false);
+      closeDialog();
     } catch (error) {
       handleActionError(error);
     } finally {
@@ -111,10 +129,8 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
     try {
       if (newType) {
         await api.setGameType(newType);
-        onRefresh();
       }
-      setPhase("winner");
-      onOpenChange(false);
+      closeDialog();
     } catch (error) {
       handleActionError(error);
     } finally {
@@ -122,95 +138,95 @@ export function WinnerDialog({ open, onOpenChange, onRefresh, winnerCount, lette
     }
   };
 
-  const handleSkip = () => {
+  const closeDialog = () => {
+    onChangeTypeFlowChange?.(false);
     setPhase("winner");
+    setNewType("");
     onOpenChange(false);
   };
 
-  if (phase === "changeType") {
-    return (
-      <Dialog open={open} onOpenChange={(o) => { if (!o) handleSkip(); }}>
-        <DialogContent
-          hideClose
-          onPointerDownOutside={(e) => e.preventDefault()}
-          onEscapeKeyDown={(e) => e.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle>Change game type?</DialogTitle>
-            <DialogDescription>
-              Pick a type for the next round, or keep the current one.
-            </DialogDescription>
-          </DialogHeader>
-          <RadioGroup value={newType} onValueChange={(v) => setNewType(v as GameType)} className="grid grid-cols-2 gap-2">
-            {(Object.keys(GAME_TYPE_LABELS) as GameType[]).map((gt) => (
-              <Label
-                key={gt}
-                htmlFor={`wgt-${gt}`}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                  newType === gt ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
-                )}
-              >
-                <RadioGroupItem value={gt} id={`wgt-${gt}`} />
-                {GAME_TYPE_LABELS[gt]}
-              </Label>
-            ))}
-          </RadioGroup>
-          <div className="flex gap-3 mt-2">
-            <Button variant="outline" className="flex-1" onClick={handleChangeType} disabled={!newType || actionBusy}>
-              Change
-            </Button>
-            <Button className="flex-1" onClick={handleSkip} disabled={actionBusy}>
-              Keep current
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    );
-  }
+  const handleSkip = () => {
+    closeDialog();
+  };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) closeDialog(); }}>
       <DialogContent
-        className="text-center"
+        className={phase === "winner" ? "text-center" : undefined}
         hideClose
         onPointerDownOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
-        <div className="flex justify-center">
-          <PartyPopper className="h-12 w-12" style={{ color: letterColors.G }} />
-        </div>
-        <DialogHeader className="text-center">
-          <DialogTitle className="text-center text-2xl">Winner!</DialogTitle>
-          {typeof winnerCount === "number" && winnerCount > 0 && (
-            <p className="text-center text-sm font-medium" style={{ color: letterColors.G }}>
-              Winners identified: {winnerCount}
-            </p>
-          )}
-          <DialogDescription className="text-center">
-            What would you like to do?
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-2 mt-2">
-          <Button
-            size="lg"
-            onClick={handleKeepGoing}
-            disabled={actionBusy}
-            className="text-white"
-            style={{ backgroundColor: letterColors.N }}
-          >
-            Keep going
-          </Button>
-          <Button
-            size="lg"
-            onClick={handleReset}
-            disabled={actionBusy}
-            className="text-white"
-            style={{ backgroundColor: letterColors.B }}
-          >
-            Reset / New game
-          </Button>
-        </div>
+        {phase === "changeType" ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Change game type?</DialogTitle>
+              <DialogDescription>
+                Pick a type for the next round, or keep the current one.
+              </DialogDescription>
+            </DialogHeader>
+            <RadioGroup value={newType} onValueChange={(v) => setNewType(v as GameType)} className="grid grid-cols-2 gap-2">
+              {(Object.keys(GAME_TYPE_LABELS) as GameType[]).map((gt) => (
+                <Label
+                  key={gt}
+                  htmlFor={`wgt-${gt}`}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
+                    newType === gt ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                  )}
+                >
+                  <RadioGroupItem value={gt} id={`wgt-${gt}`} />
+                  {GAME_TYPE_LABELS[gt]}
+                </Label>
+              ))}
+            </RadioGroup>
+            <div className="flex gap-3 mt-2">
+              <Button variant="outline" className="flex-1" onClick={handleChangeType} disabled={!newType || actionBusy}>
+                Change
+              </Button>
+              <Button className="flex-1" onClick={handleSkip} disabled={actionBusy}>
+                Keep current
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex justify-center">
+              <PartyPopper className="h-12 w-12" style={{ color: letterColors.G }} />
+            </div>
+            <DialogHeader className="text-center">
+              <DialogTitle className="text-center text-2xl">Winner!</DialogTitle>
+              {typeof winnerCount === "number" && winnerCount > 0 && (
+                <p className="text-center text-sm font-medium" style={{ color: letterColors.G }}>
+                  Winners identified: {winnerCount}
+                </p>
+              )}
+              <DialogDescription className="text-center">
+                What would you like to do?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-2 mt-2">
+              <Button
+                size="lg"
+                onClick={handleKeepGoing}
+                disabled={actionBusy}
+                className="text-white"
+                style={{ backgroundColor: letterColors.N }}
+              >
+                Keep going
+              </Button>
+              <Button
+                size="lg"
+                onClick={handleReset}
+                disabled={actionBusy}
+                className="text-white"
+                style={{ backgroundColor: letterColors.B }}
+              >
+                Reset / New game
+              </Button>
+            </div>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

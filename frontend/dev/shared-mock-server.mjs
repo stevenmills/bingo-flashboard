@@ -215,7 +215,7 @@ function recomputeWinners() {
     if (!wasWinner && session.winner) hasNewWinnerEvent = true;
     if (session.winner) winners++;
   }
-  if (winnerSuppressed && winners > 0) {
+  if (winnerSuppressed && hasNewWinnerEvent) {
     // New unclaimed winner appeared after keep-going.
     winnerSuppressed = false;
   }
@@ -546,6 +546,21 @@ const server = http.createServer(async (req, res) => {
     if (!session) return json(res, 404, { error: "card not found" });
     if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex > 24 || cellIndex === 12) return badRequest(res, "invalid cell");
     session.marks[cellIndex] = marked;
+    recomputeWinners();
+    broadcastState("card_mark_changed");
+    broadcastCardState(cardId, "card_state");
+    return json(res, 200, { cardId, winner: session.winner, winnerCount: state.winnerCount, winnerEventId });
+  }
+  if (method === "POST" && path === "/card/sync-marks") {
+    const body = await parseBody(req);
+    const cardId = String(body.cardId ?? "");
+    const marks = body.marks;
+    const session = cardSessions.get(cardId);
+    if (!session) return json(res, 404, { error: "card not found" });
+    if (!Array.isArray(marks) || marks.length !== 25) return badRequest(res, "marks[25] required");
+    for (let i = 0; i < 25; i++) {
+      session.marks[i] = i === 12 ? true : Boolean(marks[i]);
+    }
     recomputeWinners();
     broadcastState("card_mark_changed");
     broadcastCardState(cardId, "card_state");

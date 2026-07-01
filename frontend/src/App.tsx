@@ -51,6 +51,12 @@ const APP_MODE_STORAGE_KEY = "bingo-app-mode";
 const BOARD_TOKEN_STORAGE_KEY = "bingo-board-token";
 const BOARD_TOKEN_EXPIRY_STORAGE_KEY = "bingo-board-token-expiry";
 
+function hasStoredBoardToken(): boolean {
+  const token = localStorage.getItem(BOARD_TOKEN_STORAGE_KEY);
+  const expiry = Number.parseInt(localStorage.getItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY) ?? "0", 10);
+  return Boolean(token && !Number.isNaN(expiry) && expiry > Date.now());
+}
+
 export default function App() {
   const readStoredAutoSync = () => {
     try {
@@ -68,8 +74,8 @@ export default function App() {
   const [appMode, setAppMode] = useState<AppMode>("board");
   const [pendingMode, setPendingMode] = useState<AppMode | null>(null);
   // Keep state highly responsive during active board/card play even if websocket hiccups.
-  const gameStatePollMs = modeInitialized ? 250 : 1500;
-  const { state, connected, refresh, hydrated } = useGameState(gameStatePollMs);
+  const gameStatePollMs = modeInitialized ? 500 : 1500;
+  const { state, connected, refresh, applyOptimistic, hydrated } = useGameState(gameStatePollMs);
   const {
     activeTheme: uiColorTheme,
     customColors: uiCustomColors,
@@ -79,6 +85,8 @@ export default function App() {
   } = useBingoUiColors();
   const [boardToken, setBoardToken] = useState<string | null>(null);
   const [boardTokenExpiry, setBoardTokenExpiry] = useState<number>(0);
+  const [boardAuthVerified, setBoardAuthVerified] = useState(false);
+  const [boardAuthChecking, setBoardAuthChecking] = useState(hasStoredBoardToken);
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [unlockPin, setUnlockPin] = useState("");
   const [unlockError, setUnlockError] = useState<string | null>(null);
@@ -89,8 +97,14 @@ export default function App() {
   const [secondsDraft, setSecondsDraft] = useState<string>("30");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
+  const boardAuthRestoreEpochRef = useRef(0);
+  const autoCallingBeforeWinnerRef = useRef<boolean | null>(null);
+  const suppressAutoRestoreRef = useRef(false);
+  const autoRunningRef = useRef(false);
+  const [winnerDialogActive, setWinnerDialogActive] = useState(false);
   const { theme, setTheme } = useTheme();
-  const boardAuthActive = Boolean(boardToken && boardTokenExpiry > Date.now());
+  const boardAuthActive = Boolean(boardToken && boardTokenExpiry > Date.now() && boardAuthVerified);
+  const canOpenSettings = appMode !== "board" || (boardAuthActive && !boardAuthChecking);
   const cardJoined = Boolean(localStorage.getItem("bingo-card-id"));
   const allowOddsGameTypeSelect = modeInitialized && appMode === "card" && (!cardJoined || !connected);
   const oddsGameType = allowOddsGameTypeSelect ? cardOddsGameType : state.gameType;
@@ -123,17 +137,61 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem(BOARD_TOKEN_STORAGE_KEY);
-    const expiry = Number.parseInt(localStorage.getItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY) ?? "0", 10);
-    if (!token || Number.isNaN(expiry) || expiry <= Date.now()) {
-      api.setBoardToken(null);
-      localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
-      localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
-      return;
+    let cancelled = false;
+
+    async function restoreBoardAuth() {
+      const restoreEpoch = boardAuthRestoreEpochRef.current;
+      const token = localStorage.getItem(BOARD_TOKEN_STORAGE_KEY);
+      const expiry = Number.parseInt(localStorage.getItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY) ?? "0", 10);
+      if (!token || Number.isNaN(expiry) || expiry <= Date.now()) {
+        api.setBoardToken(null);
+        localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
+        localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
+        if (!cancelled && restoreEpoch === boardAuthRestoreEpochRef.current) {
+          setBoardToken(null);
+          setBoardTokenExpiry(0);
+          setBoardAuthVerified(false);
+          setBoardAuthChecking(false);
+        }
+        return;
+      }
+
+      setBoardAuthChecking(true);
+      if (restoreEpoch === boardAuthRestoreEpochRef.current) {
+        setBoardToken(token);
+        setBoardTokenExpiry(expiry);
+      }
+      api.setBoardToken(token);
+
+      try {
+        const session = await api.refreshBoardAuth();
+        if (cancelled || restoreEpoch !== boardAuthRestoreEpochRef.current) return;
+        const nextExpiry = Date.now() + session.ttlMs;
+        setBoardToken(session.token);
+        setBoardTokenExpiry(nextExpiry);
+        setBoardAuthVerified(true);
+        api.setBoardToken(session.token);
+        localStorage.setItem(BOARD_TOKEN_STORAGE_KEY, session.token);
+        localStorage.setItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY, String(nextExpiry));
+      } catch {
+        if (cancelled || restoreEpoch !== boardAuthRestoreEpochRef.current) return;
+        setBoardToken(null);
+        setBoardTokenExpiry(0);
+        setBoardAuthVerified(false);
+        api.setBoardToken(null);
+        localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
+        localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
+      } finally {
+        if (!cancelled && restoreEpoch === boardAuthRestoreEpochRef.current) {
+          setBoardAuthChecking(false);
+        }
+      }
     }
-    setBoardToken(token);
-    setBoardTokenExpiry(expiry);
-    api.setBoardToken(token);
+
+    void restoreBoardAuth();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -142,9 +200,11 @@ export default function App() {
       if (Date.now() < boardTokenExpiry) return;
       setBoardToken(null);
       setBoardTokenExpiry(0);
+      setBoardAuthVerified(false);
       api.setBoardToken(null);
       localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
       localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
+      setSettingsOpen(false);
       if (appMode === "board") {
         setPendingMode("board");
         setUnlockError(null);
@@ -157,11 +217,14 @@ export default function App() {
 
   useEffect(() => {
     const clearBoardAuth = () => {
+      boardAuthRestoreEpochRef.current += 1;
       setBoardToken(null);
       setBoardTokenExpiry(0);
+      setBoardAuthVerified(false);
       api.setBoardToken(null);
       localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
       localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
+      setSettingsOpen(false);
       if (appMode === "board") {
         setPendingMode("board");
         setUnlockError(null);
@@ -174,14 +237,24 @@ export default function App() {
   }, [appMode]);
 
   useEffect(() => {
+    if (appMode !== "board") return;
+    if (boardAuthChecking) return;
+    if (settingsOpen && !boardAuthActive) {
+      setSettingsOpen(false);
+    }
+  }, [appMode, boardAuthChecking, settingsOpen, boardAuthActive]);
+
+  useEffect(() => {
     if (!modeInitialized) return;
     if (appMode !== "board") return;
+    if (boardAuthChecking) return;
     if (boardAuthActive) return;
     if (unlockOpen) return;
     const id = window.setTimeout(() => {
       // Debounce board->card ejection so transient auth/state blips don't flip mode.
       if (!modeInitialized) return;
       if (appMode !== "board") return;
+      if (boardAuthChecking) return;
       if (boardAuthActive) return;
       if (unlockOpen) return;
       setPendingMode("board");
@@ -190,10 +263,47 @@ export default function App() {
       setUnlockOpen(true);
     }, 1500);
     return () => window.clearTimeout(id);
-  }, [modeInitialized, appMode, boardAuthActive, unlockOpen]);
+  }, [modeInitialized, appMode, boardAuthActive, boardAuthChecking, unlockOpen]);
 
   const autoRunning = Boolean(state.autoCallingEnabled);
   const autoSeconds = Math.max(1, Math.min(600, state.autoCallingSeconds ?? 30));
+
+  useEffect(() => {
+    autoRunningRef.current = autoRunning;
+  }, [autoRunning]);
+
+  const handleWinnerDialogActiveChange = useCallback((active: boolean) => {
+    setWinnerDialogActive(active);
+    if (active) {
+      suppressAutoRestoreRef.current = false;
+      if (autoCallingBeforeWinnerRef.current !== null) return;
+      const wasRunning = autoRunningRef.current;
+      autoCallingBeforeWinnerRef.current = wasRunning;
+      if (wasRunning) {
+        void api.setAutoCallingEnabled(false).catch((e: unknown) => {
+          if (e instanceof Error && e.message.includes("401")) {
+            window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+          }
+        });
+      }
+      return;
+    }
+
+    const shouldRestore = autoCallingBeforeWinnerRef.current === true;
+    autoCallingBeforeWinnerRef.current = null;
+    if (shouldRestore && !suppressAutoRestoreRef.current) {
+      void api.setAutoCallingEnabled(true).catch((e: unknown) => {
+        if (e instanceof Error && e.message.includes("401")) {
+          window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        }
+      });
+    }
+    suppressAutoRestoreRef.current = false;
+  }, []);
+
+  const handleSuppressAutoRestore = useCallback(() => {
+    suppressAutoRestoreRef.current = true;
+  }, []);
   const progressRemaining = autoRunning
     ? Math.max(
       0,
@@ -312,6 +422,17 @@ export default function App() {
   };
 
   const toggleSettingsPanel = useCallback(() => {
+    if (appMode === "board") {
+      if (boardAuthChecking) return;
+      if (!boardAuthActive) {
+        setSettingsOpen(false);
+        setPendingMode("board");
+        setUnlockError(null);
+        setUnlockPin("");
+        setUnlockOpen(true);
+        return;
+      }
+    }
     setSettingsOpen((open) => {
       const nextOpen = !open;
       if (nextOpen) {
@@ -319,7 +440,7 @@ export default function App() {
       }
       return nextOpen;
     });
-  }, []);
+  }, [appMode, boardAuthActive, boardAuthChecking]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -383,6 +504,7 @@ export default function App() {
       setMode("card");
       return;
     }
+    if (boardAuthChecking) return;
     if (boardAuthActive) {
       setMode("board");
       return;
@@ -402,11 +524,14 @@ export default function App() {
 
   const handleUnlockBoard = async () => {
     try {
+      boardAuthRestoreEpochRef.current += 1;
       const session = await api.unlockBoard(unlockPin.trim());
+      api.setBoardToken(session.token);
       await refresh();
       const expiry = Date.now() + session.ttlMs;
       setBoardToken(session.token);
       setBoardTokenExpiry(expiry);
+      setBoardAuthVerified(true);
       localStorage.setItem(BOARD_TOKEN_STORAGE_KEY, session.token);
       localStorage.setItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY, String(expiry));
       setUnlockOpen(false);
@@ -422,6 +547,7 @@ export default function App() {
     await api.lockBoard();
     setBoardToken(null);
     setBoardTokenExpiry(0);
+    setBoardAuthVerified(false);
     api.setBoardToken(null);
     localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
     localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
@@ -482,7 +608,7 @@ export default function App() {
                   <LogOut className="h-4 w-4" />
                 </button>
               )}
-              {modeInitialized && (appMode !== "board" || boardAuthActive) && (
+              {modeInitialized && canOpenSettings && (
                 <button
                   type="button"
                   className={cn(
@@ -548,7 +674,7 @@ export default function App() {
                       Exit to mode selection
                     </button>
                   )}
-                  {modeInitialized && (appMode !== "board" || boardAuthActive) && (
+                  {modeInitialized && canOpenSettings && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
@@ -601,13 +727,14 @@ export default function App() {
                 <button
                   type="button"
                   onClick={toggleAuto}
-                  disabled={state.remaining === 0 || !connected || state.winnerDeclared}
+                  disabled={state.remaining === 0 || !connected || state.winnerDeclared || winnerDialogActive}
                   className={cn(
                     "h-8 px-2 rounded-md border text-xs font-medium inline-flex items-center gap-1.5 transition-colors",
                     autoRunning
                       ? "text-primary-foreground"
                       : "bg-background hover:bg-accent",
-                    (state.remaining === 0 || !connected || state.winnerDeclared) && "opacity-50 cursor-not-allowed"
+                    (state.remaining === 0 || !connected || state.winnerDeclared || winnerDialogActive) &&
+                      "opacity-50 cursor-not-allowed"
                   )}
                   style={{
                     borderColor: uiLetterColors.N,
@@ -690,6 +817,9 @@ export default function App() {
                   <GamePage
                     state={state}
                     onRefresh={refresh}
+                    onApplyOptimistic={applyOptimistic}
+                    onWinnerDialogActiveChange={handleWinnerDialogActiveChange}
+                    onSuppressAutoRestore={handleSuppressAutoRestore}
                     uiLetterColors={uiLetterColors}
                     stateHydrated={hydrated}
                   />
@@ -710,6 +840,7 @@ export default function App() {
                   </CardHeader>
                   <CardContent>
                     <Settings
+                      settingsOpen={settingsOpen}
                       settingsMode={appMode}
                       brightness={state.brightness}
                       ledVibrance={state.ledVibrance}
@@ -719,8 +850,10 @@ export default function App() {
                       ledHeaderColor={state.ledHeaderColor}
                       ledGameTypeColor={state.ledGameTypeColor}
                       screensaverEnabled={state.screensaverEnabled}
+                      screensaverType={state.screensaverType}
                       screensaverText={state.screensaverText}
                       screensaverSpeedMs={state.screensaverSpeedMs}
+                      screensaverColor={state.screensaverColor}
                       ledLetterColors={state.ledLetterColors}
                       ledBoardSectionOrder={state.ledBoardSectionOrder}
                       wifiSsid={state.wifiSsid}

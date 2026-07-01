@@ -7,9 +7,13 @@ import type { LetterColors } from "@/lib/bingo-ui-colors";
 import {
   CARD_STATE_STORAGE_VERSION,
   generateBingoCard,
+  gameTypeUsesFreeSpace,
+  gridHasWinningPattern,
+  buildAutoSyncedGrid,
   gridToStoredCardState,
   isCellClickableInManual,
   storedCardStateToGrid,
+  winningPatterns,
   type CardCell,
   type CardGrid,
   type StoredCardState,
@@ -18,7 +22,6 @@ import { cn } from "@/lib/utils";
 import { api } from "@/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import confetti from "canvas-confetti";
-import type { GameType } from "@/types";
 
 interface Props {
   state: GameState;
@@ -40,17 +43,6 @@ interface WsCardStateData {
 interface WsMessageEnvelope {
   type?: string;
   data?: unknown;
-}
-
-function gameTypeUsesFreeSpace(gameType: GameType): boolean {
-  return (
-    gameType === "traditional" ||
-    gameType === "cover_all" ||
-    gameType === "x" ||
-    gameType === "y" ||
-    gameType === "plus_sign" ||
-    gameType === "field_goal"
-  );
 }
 
 function loadStoredCardState(): { card: CardGrid; autoSync: boolean } {
@@ -109,60 +101,6 @@ function loadInitialCardState(): { card: CardGrid; autoSync: boolean } {
   return { card: applySelectionsToCard(stored.card, selections), autoSync: stored.autoSync };
 }
 
-function winningPatterns(card: CardGrid, gameType: GameType, calledSet: Set<number>): number[][] {
-  const flat = card.flat();
-  const isSatisfied = (idx: number): boolean => {
-    const cell = flat[idx];
-    if (!cell) return false;
-    if (cell.isFree) return true;
-    if (!cell.marked) return false;
-    if (cell.value === null) return false;
-    return calledSet.has(cell.value);
-  };
-
-  const findSatisfiedPatterns = (patterns: number[][]): number[][] =>
-    patterns.filter((pattern) => pattern.every((idx) => isSatisfied(idx)));
-
-  if (gameType === "four_corners") {
-    return findSatisfiedPatterns([[0, 4, 20, 24]]);
-  }
-  if (gameType === "postage_stamp") {
-    return findSatisfiedPatterns([
-      [0, 1, 5, 6],
-      [3, 4, 8, 9],
-      [15, 16, 20, 21],
-      [18, 19, 23, 24],
-    ]);
-  }
-  if (gameType === "cover_all") {
-    return [Array.from({ length: 25 }, (_, i) => i)];
-  }
-  if (gameType === "x") {
-    return findSatisfiedPatterns([[0, 4, 6, 8, 12, 16, 18, 20, 24]]);
-  }
-  if (gameType === "y") {
-    return findSatisfiedPatterns([[0, 4, 6, 8, 12, 17, 22]]);
-  }
-  if (gameType === "frame_outside") {
-    return findSatisfiedPatterns([[0, 1, 2, 3, 4, 5, 9, 10, 14, 15, 19, 20, 21, 22, 23, 24]]);
-  }
-  if (gameType === "frame_inside") {
-    return findSatisfiedPatterns([[6, 7, 8, 11, 13, 16, 17, 18]]);
-  }
-  if (gameType === "plus_sign") {
-    return findSatisfiedPatterns([[2, 7, 10, 11, 12, 13, 14, 17, 22]]);
-  }
-  if (gameType === "field_goal") {
-    return findSatisfiedPatterns([[0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22]]);
-  }
-  // traditional
-  const patterns: number[][] = [];
-  for (let r = 0; r < 5; r++) patterns.push([r * 5, r * 5 + 1, r * 5 + 2, r * 5 + 3, r * 5 + 4]);
-  for (let c = 0; c < 5; c++) patterns.push([c, c + 5, c + 10, c + 15, c + 20]);
-  patterns.push([0, 6, 12, 18, 24], [4, 8, 12, 16, 20]);
-  return findSatisfiedPatterns(patterns);
-}
-
 export function CardPage({ state, letterColors, connected }: Props) {
   const initialStoredState = useMemo(() => loadInitialCardState(), []);
   const [card, setCard] = useState<CardGrid>(initialStoredState.card);
@@ -181,6 +119,9 @@ export function CardPage({ state, letterColors, connected }: Props) {
   const latestCardRef = useRef<CardGrid>(initialStoredState.card);
   const latestCardWinnerRef = useRef(false);
   const pendingMarksRef = useRef<Map<number, boolean>>(new Map());
+  const prevAutoSyncRef = useRef(initialStoredState.autoSync);
+  const syncMarksInFlightRef = useRef(false);
+  const pendingSyncMarksRef = useRef<boolean[] | null>(null);
   const calledSet = useMemo(() => new Set(state.called), [state.called]);
   const freeSpaceActive = useMemo(() => gameTypeUsesFreeSpace(state.gameType), [state.gameType]);
   const joinedToBoard = Boolean(cardId);
@@ -306,7 +247,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, []);
 
   const flushPendingMarks = useCallback(() => {
-    if (!joinedToBoard || !connected || !cardId) return;
+    if (!joinedToBoard || !connected || !cardId || autoSync) return;
     if (pendingMarksRef.current.size === 0) return;
     const entries = Array.from(pendingMarksRef.current.entries());
     pendingMarksRef.current.clear();
@@ -315,7 +256,41 @@ export function CardPage({ state, letterColors, connected }: Props) {
         pendingMarksRef.current.set(idx, marked);
       });
     });
-  }, [joinedToBoard, connected, cardId]);
+  }, [joinedToBoard, connected, cardId, autoSync]);
+
+  const resolveCardWinner = useCallback(
+    (grid: CardGrid, serverWinner: boolean) => {
+      if (!autoSync) return serverWinner;
+      return serverWinner || gridHasWinningPattern(grid, state.gameType, calledSet);
+    },
+    [autoSync, state.gameType, calledSet]
+  );
+
+  const pushAutoSyncToServer = useCallback(
+    async (marks: boolean[]) => {
+      if (!cardId || !connected) return;
+      if (syncMarksInFlightRef.current) {
+        pendingSyncMarksRef.current = marks;
+        return;
+      }
+      syncMarksInFlightRef.current = true;
+      try {
+        const result = await api.syncCardMarks(cardId, marks);
+        const grid = latestCardRef.current;
+        applyWinnerState(resolveCardWinner(grid, Boolean(result.winner)), grid);
+      } catch {
+        pendingSyncMarksRef.current = marks;
+      } finally {
+        syncMarksInFlightRef.current = false;
+        const pending = pendingSyncMarksRef.current;
+        if (pending) {
+          pendingSyncMarksRef.current = null;
+          void pushAutoSyncToServer(pending);
+        }
+      }
+    },
+    [cardId, connected, applyWinnerState, resolveCardWinner]
+  );
 
   useEffect(() => {
     const stored = gridToStoredCardState(card, autoSync);
@@ -357,7 +332,8 @@ export function CardPage({ state, letterColors, connected }: Props) {
             return nextGrid;
           });
         }
-        applyWinnerState(Boolean(cardState.winner), nextGrid ?? latestCardRef.current);
+        const grid = nextGrid ?? latestCardRef.current;
+        applyWinnerState(resolveCardWinner(grid, Boolean(cardState.winner)), grid);
       } catch (e: unknown) {
         // If the card session is gone, fall back to local/unjoined mode.
         if (e instanceof Error && (e.message.includes("404") || e.message.includes("400"))) {
@@ -373,7 +349,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
       void pollCardState();
     }, 1500);
     return () => clearInterval(id);
-  }, [cardId, connected, autoSync, state.current, applyWinnerState, clearJoinedCardSession]);
+  }, [cardId, connected, autoSync, state.current, applyWinnerState, clearJoinedCardSession, resolveCardWinner]);
 
   useEffect(() => {
     if (!cardId) return;
@@ -398,11 +374,12 @@ export function CardPage({ state, letterColors, connected }: Props) {
           return nextGrid;
         });
       }
-      applyWinnerState(Boolean(payload.winner), nextGrid ?? latestCardRef.current);
+      const grid = nextGrid ?? latestCardRef.current;
+      applyWinnerState(resolveCardWinner(grid, Boolean(payload.winner)), grid);
     };
     window.addEventListener("bingo:ws-message", onWsMessage as EventListener);
     return () => window.removeEventListener("bingo:ws-message", onWsMessage as EventListener);
-  }, [cardId, autoSync, applyWinnerState]);
+  }, [cardId, autoSync, applyWinnerState, resolveCardWinner]);
 
   const handleJoin = useCallback(async () => {
     try {
@@ -520,30 +497,36 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, [cardWinnerActive, winnerFlashCells.size]);
 
   useEffect(() => {
-    if (!autoSync) return;
-    if (!joinedToBoard) return;
-    setCard((prev) => {
-      const changedMarks: Array<{ idx: number; marked: boolean }> = [];
-      const next = prev.map((row, rowIdx) =>
-        row.map((cell, colIdx) => {
-          if (cell.isFree) return { ...cell, marked: true };
-          if (cell.value === null) return cell;
-          const marked = calledSet.has(cell.value);
-          if (cell.marked !== marked) {
-            changedMarks.push({ idx: rowIdx * 5 + colIdx, marked });
-          }
-          return { ...cell, marked, letter: cell.letter };
-        })
-      );
-      if (joinedToBoard && cardId && changedMarks.length > 0) {
-        changedMarks.forEach(({ idx, marked }) => {
-          queueMarkUpdate(idx, marked);
-        });
-        flushPendingMarks();
-      }
-      return next;
-    });
-  }, [autoSync, calledSet, joinedToBoard, cardId, queueMarkUpdate, flushPendingMarks]);
+    if (!autoSync || !joinedToBoard) return;
+
+    const justEnabled = autoSync && !prevAutoSyncRef.current;
+    prevAutoSyncRef.current = autoSync;
+
+    const { grid, changed, marks } = buildAutoSyncedGrid(latestCardRef.current, calledSet);
+    latestCardRef.current = grid;
+    setCard(grid);
+
+    const localWinner = gridHasWinningPattern(grid, state.gameType, calledSet);
+    applyWinnerState(localWinner, grid);
+
+    if (cardId && connected && (changed || justEnabled)) {
+      void pushAutoSyncToServer(marks);
+    }
+  }, [
+    autoSync,
+    calledSet,
+    joinedToBoard,
+    cardId,
+    connected,
+    state.gameType,
+    applyWinnerState,
+    pushAutoSyncToServer,
+  ]);
+
+  useEffect(() => {
+    if (autoSync) return;
+    prevAutoSyncRef.current = false;
+  }, [autoSync]);
 
   useEffect(() => {
     // When a joined board resets, immediately clear local marks to FREE-only.

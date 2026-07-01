@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ResetDialog } from "@/components/ResetDialog";
 import { WinnerDialog } from "@/components/WinnerDialog";
@@ -20,6 +20,8 @@ interface Props {
   winnerCount?: number;
   onRefresh: () => void;
   onResetComplete?: () => void;
+  onWinnerDialogActiveChange?: (active: boolean) => void;
+  onSuppressAutoRestore?: () => void;
   letterColors: LetterColors;
 }
 
@@ -33,10 +35,13 @@ export function GameControls({
   winnerCount,
   onRefresh,
   onResetComplete,
+  onWinnerDialogActiveChange,
+  onSuppressAutoRestore,
   letterColors,
 }: Props) {
   const [resetOpen, setResetOpen] = useState(false);
   const [winnerOpen, setWinnerOpen] = useState(false);
+  const winnerChangeTypeFlowRef = useRef(false);
   const [gameOverOpen, setGameOverOpen] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const drawingRef = useRef(false);
@@ -112,10 +117,14 @@ export function GameControls({
   }, [winnerDeclared, winnerCount, called.length]);
 
   useEffect(() => {
-    if (!winnerDeclared) {
+    if (!winnerDeclared && !winnerChangeTypeFlowRef.current) {
       setWinnerOpen(false);
     }
   }, [winnerDeclared]);
+
+  const handleWinnerChangeTypeFlowChange = useCallback((active: boolean) => {
+    winnerChangeTypeFlowRef.current = active;
+  }, []);
 
   useEffect(() => {
     // Clear dedupe keys when winner state is inactive so next winner always re-opens modal.
@@ -127,18 +136,16 @@ export function GameControls({
     }
   }, [winnerCount, winnerDeclared, called.length]);
 
+  useEffect(() => {
+    onWinnerDialogActiveChange?.(winnerOpen);
+  }, [winnerOpen, onWinnerDialogActiveChange]);
+
   const handleDraw = async () => {
     if (drawingRef.current) return;
     drawingRef.current = true;
     setDrawing(true);
     try {
       await api.draw();
-      onRefresh();
-      const freshState = await api.getState();
-      if (freshState.remaining === 0 && !gameOverShownRef.current) {
-        gameOverShownRef.current = true;
-        setGameOverOpen(true);
-      }
     } catch (e: unknown) {
       if (e instanceof Error && e.message.includes("pool empty") && !gameOverShownRef.current) {
         gameOverShownRef.current = true;
@@ -167,7 +174,6 @@ export function GameControls({
       if (e instanceof Error && e.message.includes("401")) {
         window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
       }
-    } finally {
       onRefresh();
     }
   };
@@ -180,7 +186,6 @@ export function GameControls({
       if (e instanceof Error && e.message.includes("401")) {
         window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
       }
-    } finally {
       onRefresh();
     }
   };
@@ -250,7 +255,8 @@ export function GameControls({
       <WinnerDialog
         open={winnerOpen}
         onOpenChange={setWinnerOpen}
-        onRefresh={onRefresh}
+        onChangeTypeFlowChange={handleWinnerChangeTypeFlowChange}
+        onSuppressAutoRestore={onSuppressAutoRestore}
         winnerCount={winnerCount}
         letterColors={letterColors}
       />

@@ -28,7 +28,9 @@ const uint8_t DEFAULT_BRIGHTNESS = 128;
 uint8_t ledVibrance = 70;  // 0..100
 const uint8_t DEFAULT_LED_VIBRANCE = 70;
 bool screensaverEnabled = false;
+uint8_t screensaverType = 0;  // 0=text, 1=rainbow, 2=solid
 char screensaverText[81] = "BINGO";
+uint32_t screensaverColor = 0x00FF00;
 uint16_t screensaverSpeedMs = 90;
 unsigned long screensaverLastStepMs = 0;
 int screensaverOffsetCols = 0;
@@ -234,7 +236,12 @@ CRGB colorForCalledNumber(int n);
 CRGB colorForLetter(char letter);
 CRGB goldShimmerColor(uint8_t salt);
 CRGB screensaverPixelColor(int x, int y);
+void resetScreensaverAnim();
+void renderTextScreensaver();
+void renderRainbowScreensaver();
+void renderSolidScreensaver();
 void renderScreensaverFrame();
+void renderWinnerShimmerAll();
 void renderGameBoardFrame();
 bool renderWinnerScrollFrame(const char* text);
 String normalizedPin(const char* raw);
@@ -395,7 +402,35 @@ CRGB screensaverPixelColor(int x, int y) {
   return c;
 }
 
-void renderScreensaverFrame() {
+void resetScreensaverAnim() {
+  screensaverOffsetCols = 0;
+  screensaverLastStepMs = millis();
+}
+
+// Lower screensaverSpeedMs => faster animation (matches text scroll semantics).
+uint8_t screensaverAnimRate() {
+  uint16_t ms = screensaverSpeedMs;
+  if (ms < 20) ms = 20;
+  if (ms > 500) ms = 500;
+  return (uint8_t)map(ms, 20, 500, 96, 8);
+}
+
+const char* screensaverTypeToString(uint8_t type) {
+  switch (type) {
+    case 1: return "rainbow";
+    case 2: return "solid";
+    default: return "text";
+  }
+}
+
+int screensaverTypeFromString(const char* value) {
+  if (!value) return 0;
+  if (strcmp(value, "rainbow") == 0) return 1;
+  if (strcmp(value, "solid") == 0) return 2;
+  return 0;
+}
+
+void renderTextScreensaver() {
   const int width = 21;
   const int height = 5;
   const int glyphWidth = 5;
@@ -434,7 +469,60 @@ void renderScreensaverFrame() {
   }
 }
 
+void renderRainbowScreensaver() {
+  const int width = 21;
+  const int height = 5;
+  const uint8_t timeOffset = beat8(screensaverAnimRate());
+  for (int row = 0; row < height; row++) {
+    for (int col = 0; col < width; col++) {
+      int p = matrix21x5ToPhysical(row, col);
+      if (p < 0 || p >= NUM_LEDS) continue;
+      uint8_t hue = timeOffset + (uint8_t)(col * 12) + (uint8_t)(row * 24);
+      leds[p] = CHSV(hue, 255, 200);
+    }
+  }
+}
+
+void renderSolidScreensaver() {
+  const int width = 21;
+  const int height = 5;
+  CRGB base(
+    (uint8_t)((screensaverColor >> 16) & 0xFF),
+    (uint8_t)((screensaverColor >> 8) & 0xFF),
+    (uint8_t)(screensaverColor & 0xFF)
+  );
+  const uint8_t pulse = beatsin8(screensaverAnimRate(), 160, 255);
+  base.nscale8_video(pulse);
+  const CRGB color = base;
+  for (int row = 0; row < height; row++) {
+    for (int col = 0; col < width; col++) {
+      int p = matrix21x5ToPhysical(row, col);
+      if (p < 0 || p >= NUM_LEDS) continue;
+      leds[p] = color;
+    }
+  }
+}
+
+void renderScreensaverFrame() {
+  switch (screensaverType) {
+    case 1: renderRainbowScreensaver(); return;
+    case 2: renderSolidScreensaver(); return;
+    default: renderTextScreensaver(); return;
+  }
+}
+
+void renderWinnerShimmerAll() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = goldShimmerColor((uint8_t)(i * 13));
+  }
+}
+
 void renderGameBoardFrame() {
+  if (winnerDeclared) {
+    renderWinnerShimmerAll();
+    return;
+  }
+
   for (int n = 1; n <= 75; n++) {
     if (!called[n]) continue;
     int p = numberToPhysical(n);
@@ -480,25 +568,21 @@ bool renderWinnerScrollFrame(const char* text) {
     winnerScrollOffsetCols++;
   }
 
+  renderWinnerShimmerAll();
+
   for (int row = 0; row < height; row++) {
     for (int col = 0; col < width; col++) {
       int p = matrix21x5ToPhysical(row, col);
       if (p < 0 || p >= NUM_LEDS) continue;
       int msgCol = col + winnerScrollOffsetCols - width;
-      if (msgCol < 0 || msgCol >= contentWidth) {
-        leds[p] = CRGB::Black;
-        continue;
-      }
+      if (msgCol < 0 || msgCol >= contentWidth) continue;
       int charIndex = msgCol / advance;
       int glyphCol = msgCol % advance;
-      if (charIndex < 0 || charIndex >= textLen || glyphCol >= glyphWidth) {
-        leds[p] = CRGB::Black;
-        continue;
-      }
+      if (charIndex < 0 || charIndex >= textLen || glyphCol >= glyphWidth) continue;
       uint8_t rows[5];
       glyph5x5(text[charIndex], rows);
       bool on = ((rows[row] >> (glyphWidth - 1 - glyphCol)) & 0x01) != 0;
-      leds[p] = on ? goldShimmerColor((uint8_t)(row * 23 + col * 11)) : CRGB::Black;
+      if (on) leds[p] = goldShimmerColor((uint8_t)(row * 23 + col * 11 + 200));
     }
   }
 
@@ -824,7 +908,7 @@ void recomputeCardWinners() {
     if (!wasWinner && cardSessions[i].winner) hasNewWinnerEvent = true;
     if (cardSessions[i].winner) winnerCount++;
   }
-  if (winnerSuppressed && winnerCount > 0) {
+  if (winnerSuppressed && hasNewWinnerEvent) {
     // A new unclaimed winner emerged after "keep going"; lift suppression.
     winnerSuppressed = false;
   }
@@ -1246,8 +1330,7 @@ void doReset() {
   // Reset should always return the board to normal game rendering.
   if (screensaverEnabled) {
     screensaverEnabled = false;
-    screensaverOffsetCols = 0;
-    screensaverLastStepMs = millis();
+    resetScreensaverAnim();
     persistedSettingsChanged = true;
   }
   if (ledTestMode) {
@@ -1439,6 +1522,12 @@ void loadNvs() {
   }
   uint8_t se;
   if (nvs_get_u8(nvs, NVS_SCREENSAVER_ENABLED, &se) == ESP_OK) screensaverEnabled = (se != 0);
+  uint8_t sty;
+  if (nvs_get_u8(nvs, NVS_SCREENSAVER_TYPE, &sty) == ESP_OK) {
+    if (sty <= 2) screensaverType = sty;
+  }
+  uint32_t scr;
+  if (nvs_get_u32(nvs, NVS_SCREENSAVER_COLOR, &scr) == ESP_OK) screensaverColor = scr;
   uint16_t ss;
   if (nvs_get_u16(nvs, NVS_SCREENSAVER_SPEED, &ss) == ESP_OK) {
     if (ss < 20) ss = 20;
@@ -1531,6 +1620,8 @@ void saveNvsSettings() {
   nvs_set_u8(nvs, NVS_BRIGHTNESS, brightness);
   nvs_set_u8(nvs, NVS_LED_VIBRANCE, ledVibrance);
   nvs_set_u8(nvs, NVS_SCREENSAVER_ENABLED, screensaverEnabled ? 1 : 0);
+  nvs_set_u8(nvs, NVS_SCREENSAVER_TYPE, screensaverType);
+  nvs_set_u32(nvs, NVS_SCREENSAVER_COLOR, screensaverColor);
   nvs_set_u16(nvs, NVS_SCREENSAVER_SPEED, screensaverSpeedMs);
   nvs_set_u16(nvs, NVS_AUTO_CALL_SECONDS, autoCallingSeconds);
   nvs_set_i32(nvs, NVS_THEME, themeId);
@@ -1576,8 +1667,12 @@ String buildStateJson() {
   doc["boardAccessRequired"] = true;
   doc["boardAuthValid"] = isBoardAuthValid();
   doc["screensaverEnabled"] = screensaverEnabled;
+  doc["screensaverType"] = screensaverTypeToString(screensaverType);
   doc["screensaverText"] = screensaverText;
   doc["screensaverSpeedMs"] = screensaverSpeedMs;
+  char screensaverHex[8];
+  snprintf(screensaverHex, sizeof(screensaverHex), "#%06X", screensaverColor);
+  doc["screensaverColor"] = screensaverHex;
   doc["autoCallingEnabled"] = autoCallingEnabled;
   doc["autoCallingSeconds"] = autoCallingSeconds;
   doc["autoCallingRemainingMs"] = autoCallingRemainingMsNow();
@@ -2125,8 +2220,7 @@ void setup() {
       String value = req->getParam("enabled", true)->value();
       value.toLowerCase();
       screensaverEnabled = (value == "1" || value == "true" || value == "on");
-      screensaverOffsetCols = 0;
-      screensaverLastStepMs = millis();
+      resetScreensaverAnim();
       updateAllLeds();
       saveNvsSettings();
       broadcastStateWs("screensaver_changed");
@@ -2138,8 +2232,7 @@ void setup() {
     JsonObject obj = json.as<JsonObject>();
     if (obj.containsKey("enabled")) {
       screensaverEnabled = obj["enabled"].as<bool>();
-      screensaverOffsetCols = 0;
-      screensaverLastStepMs = millis();
+      resetScreensaverAnim();
       updateAllLeds();
       saveNvsSettings();
       broadcastStateWs("screensaver_changed");
@@ -2155,8 +2248,7 @@ void setup() {
     if (text.length() == 0) text = "BINGO";
     if (text.length() >= (int)sizeof(screensaverText)) text = text.substring(0, sizeof(screensaverText) - 1);
     text.toCharArray(screensaverText, sizeof(screensaverText));
-    screensaverOffsetCols = 0;
-    screensaverLastStepMs = millis();
+    resetScreensaverAnim();
     updateAllLeds();
     saveNvsSettings();
     broadcastStateWs("screensaver_text_changed");
@@ -2170,8 +2262,7 @@ void setup() {
     if (text.length() == 0) text = "BINGO";
     if (text.length() >= (int)sizeof(screensaverText)) text = text.substring(0, sizeof(screensaverText) - 1);
     text.toCharArray(screensaverText, sizeof(screensaverText));
-    screensaverOffsetCols = 0;
-    screensaverLastStepMs = millis();
+    resetScreensaverAnim();
     updateAllLeds();
     saveNvsSettings();
     broadcastStateWs("screensaver_text_changed");
@@ -2203,6 +2294,69 @@ void setup() {
     }
     req->send(200, "application/json", "{}");
   }));
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/screensaver-type", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    if (!obj.containsKey("type")) {
+      req->send(400, "application/json", "{\"error\":\"type required\"}");
+      return;
+    }
+    int nextType = screensaverTypeFromString(obj["type"].as<const char*>());
+    screensaverType = (uint8_t)nextType;
+    resetScreensaverAnim();
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("screensaver_type_changed");
+    req->send(200, "application/json", "{}");
+  }));
+  server.on("/screensaver-type", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    String typeValue;
+    if (req->hasParam("type", true)) typeValue = req->getParam("type", true)->value();
+    else if (req->hasParam("type", false)) typeValue = req->getParam("type", false)->value();
+    if (typeValue.length() == 0) {
+      req->send(400, "application/json", "{\"error\":\"type required\"}");
+      return;
+    }
+    int nextType = screensaverTypeFromString(typeValue.c_str());
+    screensaverType = (uint8_t)nextType;
+    resetScreensaverAnim();
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("screensaver_type_changed");
+    req->send(200, "application/json", "{}");
+  });
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/screensaver-color", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    if (!obj.containsKey("hex")) {
+      req->send(400, "application/json", "{\"error\":\"hex required\"}");
+      return;
+    }
+    String hex = obj["hex"].as<const char*>() ? String(obj["hex"].as<const char*>()) : String("");
+    hex.replace("#", "");
+    screensaverColor = (uint32_t)strtoul(hex.c_str(), nullptr, 16);
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("screensaver_color_changed");
+    req->send(200, "application/json", "{}");
+  }));
+  server.on("/screensaver-color", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!req->hasParam("hex", true)) {
+      req->send(400, "application/json", "{\"error\":\"hex required\"}");
+      return;
+    }
+    String hex = req->getParam("hex", true)->value();
+    hex.replace("#", "");
+    screensaverColor = (uint32_t)strtoul(hex.c_str(), nullptr, 16);
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("screensaver_color_changed");
+    req->send(200, "application/json", "{}");
+  });
 
   server.on("/auto-calling", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
@@ -2592,7 +2746,7 @@ void setup() {
 
   server.addHandler(new AsyncCallbackJsonWebHandler("/auth/board/refresh", [](AsyncWebServerRequest* req, JsonVariant& json) {
     if (!requireBoardAuth(req)) return;
-    issueBoardAuthToken();
+    boardAuthExpiryMs = millis() + BOARD_AUTH_TTL_MS;
     broadcastStateWs("board_auth_changed");
     StaticJsonDocument<160> doc;
     doc["token"] = boardAuthToken;
@@ -2739,6 +2893,35 @@ void setup() {
     broadcastStateWs("card_mark_changed");
     broadcastCardStateWs(*s, "card_state");
     StaticJsonDocument<128> doc;
+    doc["winner"] = s->winner;
+    doc["winnerCount"] = winnerCount;
+    doc["winnerEventId"] = winnerEventId;
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  }));
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/card/sync-marks", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    JsonObject obj = json.as<JsonObject>();
+    const char* cardId = obj["cardId"].as<const char*>();
+    JsonArray marks = obj["marks"].as<JsonArray>();
+    CardSession* s = findCardSessionById(cardId);
+    if (!s) {
+      req->send(404, "application/json", "{\"error\":\"card not found\"}");
+      return;
+    }
+    if (!marks || marks.size() != 25) {
+      req->send(400, "application/json", "{\"error\":\"marks[25] required\"}");
+      return;
+    }
+    for (int i = 0; i < 25; i++) {
+      s->marks[i] = (i == 12) ? true : marks[i].as<bool>();
+    }
+    recomputeCardWinners();
+    broadcastStateWs("card_mark_changed");
+    broadcastCardStateWs(*s, "card_state");
+    StaticJsonDocument<128> doc;
+    doc["cardId"] = s->cardId;
     doc["winner"] = s->winner;
     doc["winnerCount"] = winnerCount;
     doc["winnerEventId"] = winnerEventId;

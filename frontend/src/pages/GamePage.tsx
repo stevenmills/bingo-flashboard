@@ -17,11 +17,22 @@ import type { LetterColors } from "@/lib/bingo-ui-colors";
 interface Props {
   state: GameState;
   onRefresh: () => void;
+  onApplyOptimistic?: (updater: (prev: GameState) => GameState) => void;
+  onWinnerDialogActiveChange?: (active: boolean) => void;
+  onSuppressAutoRestore?: () => void;
   uiLetterColors: LetterColors;
   stateHydrated: boolean;
 }
 
-export function GamePage({ state, onRefresh, uiLetterColors, stateHydrated }: Props) {
+export function GamePage({
+  state,
+  onRefresh,
+  onApplyOptimistic,
+  onWinnerDialogActiveChange,
+  onSuppressAutoRestore,
+  uiLetterColors,
+  stateHydrated,
+}: Props) {
   // Local flag to transition to the active view before the first number
   // is actually called (which sets gameEstablished on the backend).
   const [localStarted, setLocalStarted] = useState(false);
@@ -51,28 +62,34 @@ export function GamePage({ state, onRefresh, uiLetterColors, stateHydrated }: Pr
     return () => media.removeEventListener("change", sync);
   }, []);
 
-  const handleStartGame = async () => {
-    try {
-      // Ensure physical LEDs and backend call state are clean before a new round.
-      await api.reset();
-    } catch {
-      // Ignore reset failures here; board-auth/UI flow will handle recovery.
-    } finally {
-      onRefresh();
-      setLocalStarted(true);
-    }
+  const handleStartGame = () => {
+    void api
+      .reset()
+      .catch(() => {
+        // Ignore reset failures here; board-auth/UI flow will handle recovery.
+      })
+      .finally(() => {
+        onRefresh();
+        setLocalStarted(true);
+      });
   };
 
   const handleResetComplete = () => {
     setLocalStarted(false);
   };
 
-  const handleUndo = async () => {
-    try {
-      await api.undo();
-    } finally {
-      onRefresh();
-    }
+  const handleUndo = () => {
+    onApplyOptimistic?.((prev) => {
+      if (prev.called.length === 0) return prev;
+      const nextCalled = prev.called.slice(0, -1);
+      return {
+        ...prev,
+        called: nextCalled,
+        current: nextCalled[nextCalled.length - 1] ?? 0,
+        remaining: Math.min(75, prev.remaining + 1),
+      };
+    });
+    void api.undo().catch(() => onRefresh());
   };
 
   return (
@@ -115,6 +132,8 @@ export function GamePage({ state, onRefresh, uiLetterColors, stateHydrated }: Pr
                 winnerCount={state.winnerCount}
                 onRefresh={onRefresh}
                 onResetComplete={handleResetComplete}
+                onWinnerDialogActiveChange={onWinnerDialogActiveChange}
+                onSuppressAutoRestore={onSuppressAutoRestore}
                 letterColors={uiLetterColors}
               />
             </CardContent>
@@ -157,6 +176,8 @@ export function GamePage({ state, onRefresh, uiLetterColors, stateHydrated }: Pr
             winnerCount={state.winnerCount}
             onRefresh={onRefresh}
             onResetComplete={handleResetComplete}
+            onWinnerDialogActiveChange={onWinnerDialogActiveChange}
+            onSuppressAutoRestore={onSuppressAutoRestore}
             letterColors={uiLetterColors}
           />
         </div>
@@ -194,6 +215,7 @@ export function GamePage({ state, onRefresh, uiLetterColors, stateHydrated }: Pr
                   called={state.called}
                   letterColors={uiLetterColors}
                   onRefresh={onRefresh}
+                  onApplyOptimistic={onApplyOptimistic}
                 />
                 <div className="mt-4 flex justify-end">
                   <Button

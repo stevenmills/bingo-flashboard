@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FocusEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FocusEvent } from "react";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
@@ -11,6 +11,8 @@ import {
   DEFAULT_LED_LETTER_COLORS,
   DEFAULT_LED_BOARD_SECTION_ORDER,
   LED_BOARD_SECTION_LABELS,
+  SCREENSAVER_TYPE_LABELS,
+  type ScreensaverType,
   type AppMode,
   type ColorMode,
   type Letter,
@@ -38,6 +40,10 @@ function percentToRaw(percent: number): number {
   return Math.round((percent / 100) * MAX_BRIGHTNESS);
 }
 
+function normalizeLedBoardSectionOrder(order?: LedBoardSection[]): LedBoardSection[] {
+  return order?.length === 3 ? order : DEFAULT_LED_BOARD_SECTION_ORDER;
+}
+
 function focusWithLetterN(e: FocusEvent<HTMLInputElement>, color: string) {
   e.currentTarget.style.borderColor = color;
   e.currentTarget.style.boxShadow = `0 0 0 2px ${rgbaFromHex(color, 0.35)}`;
@@ -60,6 +66,7 @@ function blurSelectWithLetterN(e: FocusEvent<HTMLButtonElement>, color: string) 
 
 interface Props {
   settingsMode: AppMode;
+  settingsOpen?: boolean;
   brightness: number;
   ledVibrance: number;
   theme: number;
@@ -68,8 +75,10 @@ interface Props {
   ledHeaderColor: string;
   ledGameTypeColor: string;
   screensaverEnabled?: boolean;
+  screensaverType?: ScreensaverType;
   screensaverText?: string;
   screensaverSpeedMs?: number;
+  screensaverColor?: string;
   ledLetterColors: LedLetterColors;
   ledBoardSectionOrder: LedBoardSection[];
   wifiSsid?: string;
@@ -88,6 +97,7 @@ interface Props {
 
 export function Settings({
   settingsMode,
+  settingsOpen = true,
   brightness,
   ledVibrance,
   theme,
@@ -96,8 +106,10 @@ export function Settings({
   ledHeaderColor,
   ledGameTypeColor,
   screensaverEnabled = false,
+  screensaverType = "text",
   screensaverText = "BINGO",
   screensaverSpeedMs = 90,
+  screensaverColor = "#00ff00",
   ledLetterColors,
   ledBoardSectionOrder,
   wifiSsid = "",
@@ -114,18 +126,17 @@ export function Settings({
   onRefresh,
 }: Props) {
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
-  const [isAdjustingBrightness, setIsAdjustingBrightness] = useState(false);
   const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
-  const [isAdjustingLedVibrance, setIsAdjustingLedVibrance] = useState(false);
   const [localTheme, setLocalTheme] = useState(theme);
   const [localColorMode, setLocalColorMode] = useState<ColorMode>(colorMode);
   const [localColor, setLocalColor] = useState(staticColor);
   const [localLedHeaderColor, setLocalLedHeaderColor] = useState(ledHeaderColor);
   const [localLedGameTypeColor, setLocalLedGameTypeColor] = useState(ledGameTypeColor);
   const [localScreensaverEnabled, setLocalScreensaverEnabled] = useState(screensaverEnabled);
+  const [localScreensaverType, setLocalScreensaverType] = useState<ScreensaverType>(screensaverType);
   const [localScreensaverText, setLocalScreensaverText] = useState(screensaverText);
   const [localScreensaverSpeedMs, setLocalScreensaverSpeedMs] = useState(screensaverSpeedMs);
-  const [isAdjustingScreensaverSpeed, setIsAdjustingScreensaverSpeed] = useState(false);
+  const [localScreensaverColor, setLocalScreensaverColor] = useState(screensaverColor);
   const [isEditingScreensaverText, setIsEditingScreensaverText] = useState(false);
   const [localLedLetterColors, setLocalLedLetterColors] = useState<LedLetterColors>(ledLetterColors);
   const [localLedBoardSectionOrder, setLocalLedBoardSectionOrder] = useState<LedBoardSection[]>(
@@ -138,46 +149,9 @@ export function Settings({
   const [nextBoardPin, setNextBoardPin] = useState("");
   const [pinMessage, setPinMessage] = useState<string | null>(null);
   const [editingHexField, setEditingHexField] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isAdjustingBrightness) {
-      setLocalBrightnessPercent(rawToPercent(brightness));
-    }
-    if (!isAdjustingLedVibrance) {
-      setLocalLedVibrance(ledVibrance);
-    }
-    setLocalTheme(theme);
-    setLocalColorMode(colorMode);
-    if (editingHexField !== "static") {
-      setLocalColor(staticColor);
-    }
-    if (editingHexField !== "header") {
-      setLocalLedHeaderColor(ledHeaderColor);
-    }
-    if (editingHexField !== "gameType") {
-      setLocalLedGameTypeColor(ledGameTypeColor);
-    }
-    setLocalScreensaverEnabled(screensaverEnabled);
-    if (!isEditingScreensaverText) {
-      setLocalScreensaverText(screensaverText);
-    }
-    if (!isAdjustingScreensaverSpeed) {
-      setLocalScreensaverSpeedMs(screensaverSpeedMs);
-    }
-    setLocalLedLetterColors((prev) => {
-      const next = { ...ledLetterColors };
-      for (const letter of LETTERS) {
-        if (editingHexField === `led-${letter}`) {
-          next[letter] = prev[letter];
-        }
-      }
-      return next;
-    });
-    setLocalLedBoardSectionOrder(
-      ledBoardSectionOrder.length === 3 ? ledBoardSectionOrder : DEFAULT_LED_BOARD_SECTION_ORDER
-    );
-    setLocalWifiSsid(wifiSsid);
-  }, [
+  const [localUiCustomColors, setLocalUiCustomColors] = useState(uiCustomColors);
+  const wasSettingsOpenRef = useRef(settingsOpen);
+  const serverStateRef = useRef({
     brightness,
     ledVibrance,
     theme,
@@ -186,17 +160,62 @@ export function Settings({
     ledHeaderColor,
     ledGameTypeColor,
     screensaverEnabled,
+    screensaverType,
     screensaverText,
     screensaverSpeedMs,
+    screensaverColor,
     ledLetterColors,
     ledBoardSectionOrder,
     wifiSsid,
-    isAdjustingBrightness,
-    isAdjustingLedVibrance,
-    isAdjustingScreensaverSpeed,
-    isEditingScreensaverText,
-    editingHexField,
-  ]);
+  });
+
+  serverStateRef.current = {
+    brightness,
+    ledVibrance,
+    theme,
+    colorMode,
+    staticColor,
+    ledHeaderColor,
+    ledGameTypeColor,
+    screensaverEnabled,
+    screensaverType,
+    screensaverText,
+    screensaverSpeedMs,
+    screensaverColor,
+    ledLetterColors,
+    ledBoardSectionOrder,
+    wifiSsid,
+  };
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      wasSettingsOpenRef.current = false;
+      setEditingHexField(null);
+      setIsEditingScreensaverText(false);
+      return;
+    }
+    if (wasSettingsOpenRef.current) return;
+
+    const s = serverStateRef.current;
+    setLocalBrightnessPercent(rawToPercent(s.brightness));
+    setLocalLedVibrance(s.ledVibrance);
+    setLocalTheme(s.theme);
+    setLocalColorMode(s.colorMode);
+    setLocalColor(s.staticColor);
+    setLocalLedHeaderColor(s.ledHeaderColor);
+    setLocalLedGameTypeColor(s.ledGameTypeColor);
+    setLocalScreensaverEnabled(s.screensaverEnabled ?? false);
+    setLocalScreensaverType(s.screensaverType ?? "text");
+    setLocalScreensaverText(s.screensaverText ?? "BINGO");
+    setLocalScreensaverSpeedMs(s.screensaverSpeedMs ?? 90);
+    setLocalScreensaverColor(s.screensaverColor ?? "#00ff00");
+    setLocalLedLetterColors(s.ledLetterColors);
+    setLocalLedBoardSectionOrder(normalizeLedBoardSectionOrder(s.ledBoardSectionOrder));
+    setLocalWifiSsid(s.wifiSsid ?? "");
+    setLocalWifiPassword("");
+    setLocalUiCustomColors(uiCustomColors);
+    wasSettingsOpenRef.current = true;
+  }, [settingsOpen, uiCustomColors]);
 
   // The select value: "0"–"7" for palettes, "static" for solid color
   const selectValue = localColorMode === "solid"
@@ -211,44 +230,43 @@ export function Settings({
     }
   };
 
-  const handleThemeChange = async (value: string) => {
-    try {
-      if (value === STATIC_VALUE) {
-        setLocalColorMode("solid");
-        await api.setColor(localColor);
-      } else if (value === CUSTOM_LETTERS_VALUE) {
-        setLocalColorMode("custom");
-        await api.setLedLetterColors(localLedLetterColors);
-      } else {
-        const nextTheme = parseInt(value, 10);
-        setLocalColorMode("theme");
-        setLocalTheme(nextTheme);
-        await api.setTheme(nextTheme);
-      }
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+  const persistSetting = (fn: () => Promise<unknown>, onError?: (error: unknown) => void) => {
+    void fn().catch((error) => {
+      if (onError) onError(error);
+      else handleBoardAuthFailure(error);
+    });
   };
 
-  const updateLedLetterColor = async (letter: Letter, colorValue: string) => {
+  const handleThemeChange = (value: string) => {
+    if (value === STATIC_VALUE) {
+      setLocalColorMode("solid");
+      persistSetting(() => api.setColor(localColor));
+      return;
+    }
+    if (value === CUSTOM_LETTERS_VALUE) {
+      setLocalColorMode("custom");
+      persistSetting(() => api.setLedLetterColors(localLedLetterColors));
+      return;
+    }
+    const nextTheme = parseInt(value, 10);
+    setLocalColorMode("theme");
+    setLocalTheme(nextTheme);
+    persistSetting(() => api.setTheme(nextTheme));
+  };
+
+  const updateLedLetterColor = (letter: Letter, colorValue: string) => {
     const normalized = colorValue.startsWith("#") ? colorValue : `#${colorValue}`;
     const next = {
       ...localLedLetterColors,
       [letter]: normalized,
     };
     setLocalLedLetterColors(next);
-    try {
-      await api.setLedLetterColors(next);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+    persistSetting(() => api.setLedLetterColors(next));
   };
 
   const handleLedCustomColorPicker =
-    (letter: Letter) => async (e: ChangeEvent<HTMLInputElement>) => {
-      await updateLedLetterColor(letter, e.target.value);
+    (letter: Letter) => (e: ChangeEvent<HTMLInputElement>) => {
+      void updateLedLetterColor(letter, e.target.value);
     };
 
   const handleLedCustomColorHex =
@@ -259,7 +277,7 @@ export function Settings({
       }));
     };
 
-  const commitLedLetterColorHex = async (letter: Letter, value: string) => {
+  const commitLedLetterColorHex = (letter: Letter, value: string) => {
     if (!isValidHexColor(value)) {
       setLocalLedLetterColors((prev) => ({
         ...prev,
@@ -268,151 +286,93 @@ export function Settings({
       setEditingHexField(null);
       return;
     }
-    try {
-      await updateLedLetterColor(letter, value);
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    } finally {
-      setEditingHexField(null);
-    }
+    updateLedLetterColor(letter, value);
+    setEditingHexField(null);
   };
 
-  const handleResetLedLetterColors = async () => {
+  const handleResetLedLetterColors = () => {
     setLocalLedLetterColors(DEFAULT_LED_LETTER_COLORS);
-    try {
-      await api.setLedLetterColors(DEFAULT_LED_LETTER_COLORS);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+    persistSetting(() => api.setLedLetterColors(DEFAULT_LED_LETTER_COLORS));
   };
 
   const handleBrightness = (value: number[]) => {
-    const percent = value[0];
-    setIsAdjustingBrightness(true);
-    setLocalBrightnessPercent(percent);
+    setLocalBrightnessPercent(value[0]);
   };
 
-  const handleBrightnessCommit = async (value: number[]) => {
+  const handleBrightnessCommit = (value: number[]) => {
     const percent = value[0];
     setLocalBrightnessPercent(percent);
-    try {
-      await api.setBrightness(percentToRaw(percent));
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    } finally {
-      setIsAdjustingBrightness(false);
-    }
+    persistSetting(() => api.setBrightness(percentToRaw(percent)));
   };
 
   const handleLedVibrance = (value: number[]) => {
-    const next = value[0];
-    setIsAdjustingLedVibrance(true);
-    setLocalLedVibrance(next);
+    setLocalLedVibrance(value[0]);
   };
 
-  const handleLedVibranceCommit = async (value: number[]) => {
+  const handleLedVibranceCommit = (value: number[]) => {
     const next = value[0];
     setLocalLedVibrance(next);
-    try {
-      await api.setLedVibrance(next);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    } finally {
-      setIsAdjustingLedVibrance(false);
-    }
+    persistSetting(() => api.setLedVibrance(next));
   };
 
-  const handleColorPicker = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleColorPicker = (e: ChangeEvent<HTMLInputElement>) => {
     setLocalColor(e.target.value);
-    try {
-      await api.setColor(e.target.value);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+    persistSetting(() => api.setColor(e.target.value));
   };
 
   const handleColorHex = (e: ChangeEvent<HTMLInputElement>) => {
     setLocalColor(e.target.value);
   };
 
-  const commitColorHex = async (value: string) => {
+  const commitColorHex = (value: string) => {
     if (!isValidHexColor(value)) {
       setLocalColor(staticColor);
       setEditingHexField(null);
       return;
     }
-    try {
-      await api.setColor(value);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    } finally {
-      setEditingHexField(null);
-    }
+    setLocalColor(value);
+    persistSetting(() => api.setColor(value));
+    setEditingHexField(null);
   };
 
-  const handleLedHeaderColorPicker = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleLedHeaderColorPicker = (e: ChangeEvent<HTMLInputElement>) => {
     setLocalLedHeaderColor(e.target.value);
-    try {
-      await api.setLedHeaderColor(e.target.value);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+    persistSetting(() => api.setLedHeaderColor(e.target.value));
   };
 
   const handleLedHeaderColorHex = (e: ChangeEvent<HTMLInputElement>) => {
     setLocalLedHeaderColor(e.target.value);
   };
 
-  const commitLedHeaderColorHex = async (value: string) => {
+  const commitLedHeaderColorHex = (value: string) => {
     if (!isValidHexColor(value)) {
       setLocalLedHeaderColor(ledHeaderColor);
       setEditingHexField(null);
       return;
     }
-    try {
-      await api.setLedHeaderColor(value);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    } finally {
-      setEditingHexField(null);
-    }
+    setLocalLedHeaderColor(value);
+    persistSetting(() => api.setLedHeaderColor(value));
+    setEditingHexField(null);
   };
 
-  const handleLedGameTypeColorPicker = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleLedGameTypeColorPicker = (e: ChangeEvent<HTMLInputElement>) => {
     setLocalLedGameTypeColor(e.target.value);
-    try {
-      await api.setLedGameTypeColor(e.target.value);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+    persistSetting(() => api.setLedGameTypeColor(e.target.value));
   };
 
   const handleLedGameTypeColorHex = (e: ChangeEvent<HTMLInputElement>) => {
     setLocalLedGameTypeColor(e.target.value);
   };
 
-  const commitLedGameTypeColorHex = async (value: string) => {
+  const commitLedGameTypeColorHex = (value: string) => {
     if (!isValidHexColor(value)) {
       setLocalLedGameTypeColor(ledGameTypeColor);
       setEditingHexField(null);
       return;
     }
-    try {
-      await api.setLedGameTypeColor(value);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    } finally {
-      setEditingHexField(null);
-    }
+    setLocalLedGameTypeColor(value);
+    persistSetting(() => api.setLedGameTypeColor(value));
+    setEditingHexField(null);
   };
 
   const handleUiThemeChange = (value: string) => {
@@ -421,67 +381,93 @@ export function Settings({
 
   const handleUiCustomColorPicker =
     (letter: (typeof LETTERS)[number]) => (e: ChangeEvent<HTMLInputElement>) => {
-      onUiCustomColorChange(letter, e.target.value);
+      const next = e.target.value;
+      setLocalUiCustomColors((prev) => ({ ...prev, [letter]: next }));
+      onUiCustomColorChange(letter, next);
     };
 
   const handleUiCustomColorHex =
     (letter: (typeof LETTERS)[number]) => (e: ChangeEvent<HTMLInputElement>) => {
-      const next = e.target.value;
-      if (isValidHexColor(next)) {
-        onUiCustomColorChange(letter, next);
-      }
+      setLocalUiCustomColors((prev) => ({ ...prev, [letter]: e.target.value }));
     };
 
-  const handleLedTestToggle = async () => {
-    try {
-      await api.setLedTestMode(!ledTestMode);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
+  const commitUiCustomColorHex = (letter: (typeof LETTERS)[number], value: string) => {
+    if (!isValidHexColor(value)) {
+      setLocalUiCustomColors((prev) => ({ ...prev, [letter]: uiCustomColors[letter] }));
+      setEditingHexField(null);
+      return;
     }
+    onUiCustomColorChange(letter, value);
+    setEditingHexField(null);
   };
 
-  const handleScreensaverToggle = async () => {
+  const handleLedTestToggle = () => {
+    persistSetting(() => api.setLedTestMode(!ledTestMode));
+  };
+
+  const handleScreensaverToggle = () => {
     const next = !localScreensaverEnabled;
     setLocalScreensaverEnabled(next);
-    try {
-      await api.setScreensaverEnabled(next);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+    persistSetting(() => api.setScreensaverEnabled(next));
   };
 
   const handleScreensaverTextChange = (e: ChangeEvent<HTMLInputElement>) => {
     setLocalScreensaverText(e.target.value);
   };
 
-  const commitScreensaverText = async () => {
-    try {
-      await api.setScreensaverText(localScreensaverText);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    }
+  const commitScreensaverText = () => {
+    persistSetting(() => api.setScreensaverText(localScreensaverText));
   };
 
   const handleScreensaverSpeed = (value: number[]) => {
-    setIsAdjustingScreensaverSpeed(true);
     setLocalScreensaverSpeedMs(value[0]);
   };
 
-  const handleScreensaverSpeedCommit = async (value: number[]) => {
+  const handleScreensaverSpeedCommit = (value: number[]) => {
     const next = value[0];
     setLocalScreensaverSpeedMs(next);
-    try {
-      await api.setScreensaverSpeed(next);
-      onRefresh();
-    } catch (error) {
-      handleBoardAuthFailure(error);
-    } finally {
-      setIsAdjustingScreensaverSpeed(false);
-    }
+    persistSetting(() => api.setScreensaverSpeed(next));
   };
+
+  const handleScreensaverTypeChange = (value: ScreensaverType) => {
+    const previous = localScreensaverType;
+    setLocalScreensaverType(value);
+    persistSetting(() => api.setScreensaverType(value), (error) => {
+      setLocalScreensaverType(previous);
+      handleBoardAuthFailure(error);
+    });
+  };
+
+  const handleScreensaverColorPicker = (e: ChangeEvent<HTMLInputElement>) => {
+    setLocalScreensaverColor(e.target.value);
+    persistSetting(() => api.setScreensaverColor(e.target.value));
+  };
+
+  const handleScreensaverColorHex = (e: ChangeEvent<HTMLInputElement>) => {
+    setLocalScreensaverColor(e.target.value);
+  };
+
+  const commitScreensaverColorHex = (value: string) => {
+    if (!isValidHexColor(value)) {
+      setLocalScreensaverColor(screensaverColor);
+      setEditingHexField(null);
+      return;
+    }
+    const normalized = value.startsWith("#") ? value : `#${value}`;
+    setLocalScreensaverColor(normalized);
+    setEditingHexField(null);
+    persistSetting(() => api.setScreensaverColor(normalized));
+  };
+
+  const screensaverDescription =
+    localScreensaverType === "text"
+      ? "Always overrides board LEDs and scrolls text on the full 21x5 matrix."
+      : localScreensaverType === "rainbow"
+        ? "Animated rainbow effect across the full 21x5 matrix."
+        : "Solid color fill across the full 21x5 matrix.";
+
+  const screensaverSpeedLabel =
+    localScreensaverType === "text" ? "Scroll Speed" : "Animation Speed";
 
   const handleBoardPinChange = async () => {
     setPinMessage(null);
@@ -495,52 +481,53 @@ export function Settings({
     }
   };
 
-  const handleLedBoardSectionAtPosition = async (position: 0 | 1 | 2, section: LedBoardSection) => {
-    const next = [...localLedBoardSectionOrder];
+  const handleLedBoardSectionAtPosition = (position: 0 | 1 | 2, section: LedBoardSection) => {
+    if (localLedBoardSectionOrder[position] === section) return;
+
+    const previous = localLedBoardSectionOrder;
+    const next = [...previous];
     const existingIdx = next.indexOf(section);
     if (existingIdx >= 0) {
       next[existingIdx] = next[position];
     }
     next[position] = section;
+
     setLocalLedBoardSectionOrder(next);
-    try {
-      await api.setLedBoardSectionOrder(next);
-      onRefresh();
-    } catch (error) {
+    persistSetting(() => api.setLedBoardSectionOrder(next), (error) => {
+      setLocalLedBoardSectionOrder(previous);
       handleBoardAuthFailure(error);
-    }
+    });
   };
 
-  const handleWifiSave = async () => {
+  const handleWifiSave = () => {
     setWifiMessage(null);
-    try {
-      const result = await api.setWifiCredentials(
-        localWifiSsid,
-        localWifiPassword.length > 0 ? localWifiPassword : undefined
-      );
-      setLocalWifiPassword("");
-      setWifiMessage(
-        result && typeof result === "object" && "restartRequired" in result
-          ? "WiFi saved. Power-cycle the board to apply."
-          : "WiFi saved."
-      );
-      onRefresh();
-    } catch {
-      setWifiMessage("Unable to save WiFi settings.");
-    }
+    void api
+      .setWifiCredentials(localWifiSsid, localWifiPassword.length > 0 ? localWifiPassword : undefined)
+      .then((result) => {
+        setLocalWifiPassword("");
+        setWifiMessage(
+          result && typeof result === "object" && "restartRequired" in result
+            ? "WiFi saved. Power-cycle the board to apply."
+            : "WiFi saved."
+        );
+      })
+      .catch(() => {
+        setWifiMessage("Unable to save WiFi settings.");
+      });
   };
 
-  const handleWifiClear = async () => {
+  const handleWifiClear = () => {
     setWifiMessage(null);
     setLocalWifiSsid("");
     setLocalWifiPassword("");
-    try {
-      await api.setWifiCredentials("");
-      setWifiMessage("WiFi cleared. Power-cycle the board to use device AP mode.");
-      onRefresh();
-    } catch {
-      setWifiMessage("Unable to clear WiFi settings.");
-    }
+    void api
+      .setWifiCredentials("")
+      .then(() => {
+        setWifiMessage("WiFi cleared. Power-cycle the board to use device AP mode.");
+      })
+      .catch(() => {
+        setWifiMessage("Unable to clear WiFi settings.");
+      });
   };
 
   const boardSectionPositions: Array<{ label: string; index: 0 | 1 | 2 }> = [
@@ -804,7 +791,7 @@ export function Settings({
               <div>
                 <Label className="block">Screensaver Mode</Label>
                 <p className="text-xs text-muted-foreground">
-                  Always overrides board LEDs and scrolls text on the full 21x5 matrix.
+                  {screensaverDescription}
                 </p>
               </div>
               <Button
@@ -820,6 +807,29 @@ export function Settings({
                 {localScreensaverEnabled ? "Disable Screensaver" : "Enable Screensaver"}
               </Button>
             </div>
+            <div>
+              <Label className="mb-2 block">Screensaver Type</Label>
+              <Select value={localScreensaverType} onValueChange={handleScreensaverTypeChange}>
+                <SelectTrigger
+                  className="w-full"
+                  style={{ borderColor: letterColors.N }}
+                  onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                  onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.entries(SCREENSAVER_TYPE_LABELS) as [ScreensaverType, string][]).map(
+                    ([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            {localScreensaverType === "text" && (
             <div>
               <Label className="mb-2 block">Screensaver Text</Label>
               <Input
@@ -839,9 +849,39 @@ export function Settings({
                 }}
               />
             </div>
+            )}
+            {localScreensaverType === "solid" && (
+            <div>
+              <Label className="mb-2 block">Screensaver Color</Label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={localScreensaverColor.startsWith("#") ? localScreensaverColor : `#${localScreensaverColor}`}
+                  onChange={handleScreensaverColorPicker}
+                  className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                />
+                <Input
+                  value={localScreensaverColor}
+                  onChange={handleScreensaverColorHex}
+                  maxLength={7}
+                  className="w-28"
+                  placeholder="#00ff00"
+                  style={{ borderColor: letterColors.N }}
+                  onFocus={(e) => {
+                    setEditingHexField("screensaver");
+                    focusWithLetterN(e, letterColors.N);
+                  }}
+                  onBlur={(e) => {
+                    blurWithLetterN(e, letterColors.N);
+                    void commitScreensaverColorHex(e.target.value);
+                  }}
+                />
+              </div>
+            </div>
+            )}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <Label>Scroll Speed</Label>
+                <Label>{screensaverSpeedLabel}</Label>
                 <span className="text-sm text-muted-foreground tabular-nums">
                   {localScreensaverSpeedMs} ms
                 </span>
@@ -896,19 +936,25 @@ export function Settings({
                     <span className="w-5 text-sm font-semibold text-muted-foreground">{letter}</span>
                     <input
                       type="color"
-                      value={uiCustomColors[letter]}
+                      value={localUiCustomColors[letter]}
                       onChange={handleUiCustomColorPicker(letter)}
                       className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
                     />
                     <Input
-                      value={uiCustomColors[letter]}
+                      value={localUiCustomColors[letter]}
                       onChange={handleUiCustomColorHex(letter)}
                       maxLength={7}
                       className="w-28"
                       placeholder="#3b82f6"
                       style={{ borderColor: letterColors.N }}
-                      onFocus={(e) => focusWithLetterN(e, letterColors.N)}
-                      onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                      onFocus={(e) => {
+                        setEditingHexField(`ui-${letter}`);
+                        focusWithLetterN(e, letterColors.N);
+                      }}
+                      onBlur={(e) => {
+                        blurWithLetterN(e, letterColors.N);
+                        commitUiCustomColorHex(letter, e.target.value);
+                      }}
                     />
                   </div>
                 ))}
