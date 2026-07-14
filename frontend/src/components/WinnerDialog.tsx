@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { api } from "@/api";
+import { isBoardAuthHttpError } from "@/lib/board-auth";
+import type { RefreshOptions } from "@/hooks/useGameState";
 import { GAME_TYPE_LABELS, type GameType } from "@/types";
 import { cn } from "@/lib/utils";
 import { PartyPopper } from "lucide-react";
@@ -17,8 +19,11 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   onChangeTypeFlowChange?: (active: boolean) => void;
   onSuppressAutoRestore?: () => void;
+  onRefresh?: (options?: RefreshOptions) => void;
   winnerCount?: number;
   letterColors: LetterColors;
+  /** Bumps whenever a new winner announcement should start (force winner phase). */
+  announcementKey?: number;
 }
 
 export function WinnerDialog({
@@ -26,8 +31,10 @@ export function WinnerDialog({
   onOpenChange,
   onChangeTypeFlowChange,
   onSuppressAutoRestore,
+  onRefresh,
   winnerCount,
   letterColors,
+  announcementKey = 0,
 }: Props) {
   const [phase, setPhase] = useState<"winner" | "changeType">("winner");
   const [newType, setNewType] = useState<GameType | "">("");
@@ -38,7 +45,6 @@ export function WinnerDialog({
     const end = Date.now() + duration;
 
     const frame = () => {
-      // Left side burst
       confetti({
         particleCount: 3,
         angle: 60,
@@ -46,7 +52,6 @@ export function WinnerDialog({
         origin: { x: 0, y: 0.6 },
         colors: ["#f59e0b", "#ef4444", "#3b82f6", "#22c55e", "#a855f7"],
       });
-      // Right side burst
       confetti({
         particleCount: 3,
         angle: 120,
@@ -60,7 +65,6 @@ export function WinnerDialog({
       }
     };
 
-    // Initial big burst from center
     confetti({
       particleCount: 100,
       spread: 70,
@@ -68,42 +72,49 @@ export function WinnerDialog({
       colors: ["#f59e0b", "#ef4444", "#3b82f6", "#22c55e", "#a855f7"],
     });
 
-    // Then continuous side bursts
     frame();
   }, []);
 
-  useEffect(() => {
-    if (open && phase === "winner") {
-      fireConfetti();
-    }
-  }, [open, phase, fireConfetti]);
-
+  // Every winner activation starts on the announcement screen (never the change-type screen).
   useEffect(() => {
     if (!open) {
       onChangeTypeFlowChange?.(false);
       setPhase("winner");
       setNewType("");
       setActionBusy(false);
+      return;
     }
-  }, [open, onChangeTypeFlowChange]);
+    setPhase("winner");
+    setNewType("");
+    setActionBusy(false);
+    onChangeTypeFlowChange?.(false);
+  }, [open, announcementKey, onChangeTypeFlowChange]);
+
+  useEffect(() => {
+    if (open && phase === "winner") {
+      fireConfetti();
+    }
+  }, [open, phase, announcementKey, fireConfetti]);
 
   const handleActionError = useCallback((error: unknown) => {
-    if (error instanceof Error && error.message.includes("401")) {
+    if (isBoardAuthHttpError(error)) {
       window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
     }
   }, []);
 
   const handleKeepGoing = async () => {
     if (actionBusy) return;
+    setActionBusy(true);
+    // Mark keep-going before clearing so WS winner events don't reopen the announce screen.
     onChangeTypeFlowChange?.(true);
     setPhase("changeType");
-    setActionBusy(true);
     try {
       await api.clearWinner();
     } catch (error) {
+      handleActionError(error);
       onChangeTypeFlowChange?.(false);
       setPhase("winner");
-      handleActionError(error);
+      onRefresh?.({ force: true });
     } finally {
       setActionBusy(false);
     }
@@ -118,21 +129,21 @@ export function WinnerDialog({
       closeDialog();
     } catch (error) {
       handleActionError(error);
+      onRefresh?.({ force: true });
     } finally {
       setActionBusy(false);
     }
   };
 
   const handleChangeType = async () => {
-    if (actionBusy) return;
+    if (actionBusy || !newType) return;
     setActionBusy(true);
     try {
-      if (newType) {
-        await api.setGameType(newType);
-      }
+      await api.setGameType(newType);
       closeDialog();
     } catch (error) {
       handleActionError(error);
+      onRefresh?.({ force: true });
     } finally {
       setActionBusy(false);
     }

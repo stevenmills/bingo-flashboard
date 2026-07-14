@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:shared-mock": "VITE_SHARED_MOCK=true node ./dev/shared-mock-server.mjs & VITE_SHARED_MOCK=true vite --host",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && node ../scripts/prune-spiffs-data.mjs && vite build && node ../scripts/prune-spiffs-data.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -21,6 +21,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

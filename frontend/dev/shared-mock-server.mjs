@@ -4,6 +4,8 @@ import { WebSocketServer } from "ws";
 
 const PORT = Number.parseInt(process.env.SHARED_MOCK_PORT ?? "8787", 10);
 const BOARD_AUTH_TTL_MS = 30 * 60 * 1000;
+const BOARD_UNLOCK_MAX_FAILURES = 5;
+const BOARD_UNLOCK_LOCKOUT_MS = 30_000;
 const DEFAULT_BOARD_PIN = "1975";
 const PATTERN_CYCLE_MS = 1500;
 const CYCLING_PATTERN_COUNTS = {
@@ -28,9 +30,9 @@ const state = {
   boardAccessRequired: true,
   boardAuthValid: false,
   theme: 0,
-  brightness: 128,
+  brightness: 255,
   colorMode: "theme",
-  staticColor: "#22c55e",
+  staticColor: "#00ff00",
   patternIndex: 0,
 };
 
@@ -38,6 +40,8 @@ let pool = Array.from({ length: 75 }, (_, i) => i + 1);
 let callOrder = [];
 let boardPin = DEFAULT_BOARD_PIN;
 let boardAuth = null;
+let boardUnlockFailCount = 0;
+let boardUnlockLockoutUntilMs = 0;
 let manualWinnerDeclared = false;
 let winnerSuppressed = false;
 let winnerEventId = 0;
@@ -352,13 +356,30 @@ const server = http.createServer(async (req, res) => {
   if (method === "GET" && path === "/api/state") return json(res, 200, snapshot());
 
   if (method === "POST" && path === "/auth/board/unlock") {
+    const now = Date.now();
+    if (boardUnlockLockoutUntilMs > now) return json(res, 429, { error: "too many attempts" });
+    if (boardUnlockLockoutUntilMs > 0 && boardUnlockLockoutUntilMs <= now) {
+      boardUnlockLockoutUntilMs = 0;
+      boardUnlockFailCount = 0;
+    }
     const body = await parseBody(req);
-    if (normalizePin(body.pin) !== normalizePin(boardPin)) return json(res, 401, { error: "invalid pin" });
+    if (normalizePin(body.pin) !== normalizePin(boardPin)) {
+      boardUnlockFailCount += 1;
+      if (boardUnlockFailCount >= BOARD_UNLOCK_MAX_FAILURES) {
+        boardUnlockLockoutUntilMs = now + BOARD_UNLOCK_LOCKOUT_MS;
+        boardUnlockFailCount = 0;
+        return json(res, 429, { error: "too many attempts" });
+      }
+      return json(res, 401, { error: "invalid pin" });
+    }
+    boardUnlockFailCount = 0;
+    boardUnlockLockoutUntilMs = 0;
     boardAuth = { token: genToken(), expiresAt: Date.now() + BOARD_AUTH_TTL_MS };
     broadcastState("board_auth_changed");
     return json(res, 200, { token: boardAuth.token, ttlMs: BOARD_AUTH_TTL_MS });
   }
   if (method === "POST" && path === "/auth/board/lock") {
+    if (!requireBoardAuth(req, res)) return;
     boardAuth = null;
     broadcastState("board_auth_changed");
     return json(res, 200, {});

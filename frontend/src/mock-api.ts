@@ -6,17 +6,19 @@ import {
   DEFAULT_STATE,
   CYCLING_PATTERNS,
   type BoardAuthSession,
+  type CardClaimResponse,
   type CardJoinResponse,
   type CardStateResponse,
   type GameState,
   type GameType,
   type CallingStyle,
   type Letter,
-  type LedBoardSection,
-  DEFAULT_LED_BOARD_SECTION_ORDER,
-  LED_BOARD_SECTION_LABELS,
+  type LetterFullMode,
+  type CurrentNumberEffect,
   SCREENSAVER_TYPE_LABELS,
   type ScreensaverType,
+  LETTER_FULL_MODE_LABELS,
+  CURRENT_NUMBER_EFFECT_LABELS,
 } from "./types";
 
 // Deep clone initial state, restoring persisted game type and calling style
@@ -71,21 +73,25 @@ if (savedScreensaverColor && /^#?[0-9a-fA-F]{6}$/.test(savedScreensaverColor)) {
     ? savedScreensaverColor
     : `#${savedScreensaverColor}`;
 }
-const savedLedBoardOrder = localStorage.getItem("bingo-led-board-order");
-if (savedLedBoardOrder) {
-  try {
-    const parsed = JSON.parse(savedLedBoardOrder) as LedBoardSection[];
-    if (
-      Array.isArray(parsed) &&
-      parsed.length === 3 &&
-      new Set(parsed).size === 3 &&
-      parsed.every((section) => section in LED_BOARD_SECTION_LABELS)
-    ) {
-      state.ledBoardSectionOrder = parsed;
-    }
-  } catch {
-    // ignore invalid persisted order
-  }
+const savedLetterFullMode = localStorage.getItem("bingo-letter-full-mode");
+if (savedLetterFullMode && savedLetterFullMode in LETTER_FULL_MODE_LABELS) {
+  state.letterFullMode = savedLetterFullMode as LetterFullMode;
+}
+const savedCurrentNumberEffect = localStorage.getItem("bingo-current-number-effect");
+if (savedCurrentNumberEffect && savedCurrentNumberEffect in CURRENT_NUMBER_EFFECT_LABELS) {
+  state.currentNumberEffect = savedCurrentNumberEffect as CurrentNumberEffect;
+}
+const savedCurrentNumberColor = localStorage.getItem("bingo-current-number-color");
+if (savedCurrentNumberColor && /^#?[0-9a-fA-F]{6}$/.test(savedCurrentNumberColor)) {
+  state.currentNumberColor = savedCurrentNumberColor.startsWith("#")
+    ? savedCurrentNumberColor
+    : `#${savedCurrentNumberColor}`;
+}
+const savedCalledNumberBanner = localStorage.getItem("bingo-called-number-banner");
+if (savedCalledNumberBanner === "1" || savedCalledNumberBanner === "true") {
+  state.calledNumberBanner = true;
+} else if (savedCalledNumberBanner === "0" || savedCalledNumberBanner === "false") {
+  state.calledNumberBanner = false;
 }
 const savedWifiSsid = localStorage.getItem("bingo-wifi-ssid");
 if (savedWifiSsid !== null) {
@@ -98,9 +104,13 @@ let pool: number[] = Array.from({ length: 75 }, (_, i) => i + 1);
 let callOrder: number[] = [];
 let boardSeed = Math.floor(1000 + Math.random() * 9000);
 const BOARD_PIN_DEFAULT = "1975";
-const BOARD_AUTH_TTL_MS = 30 * 60 * 1000;
+const BOARD_AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const BOARD_UNLOCK_MAX_FAILURES = 5;
+const BOARD_UNLOCK_LOCKOUT_MS = 30_000;
 let boardPin = BOARD_PIN_DEFAULT;
-let boardAuth: BoardAuthSession | null = null;
+let boardAuth: { token: string; expiryMs: number } | null = null;
+let boardUnlockFailCount = 0;
+let boardUnlockLockoutUntilMs = 0;
 let manualWinnerDeclared = false;
 let winnerSuppressed = false;
 let winnerEventId = 0;
@@ -129,8 +139,17 @@ function normalizePin(pin: string) {
 
 // Cycle patterns every 1.5s for game types that have cycling patterns (mirrors firmware)
 let patternTimer: ReturnType<typeof setInterval> | null = null;
+let mockDeviceId =
+  localStorage.getItem("bingo-mock-device-id") ||
+  Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+localStorage.setItem("bingo-mock-device-id", mockDeviceId);
 let autoCallingTimer: ReturnType<typeof setInterval> | null = null;
 let autoCallingNextAtMs = 0;
+let autoCallingHold = false;
+let autoCallingWaitForAudio = false;
+let autoCallingHoldSinceMs = 0;
+let pendingWinnerActivation = false;
+let pendingWinnerEventBump = false;
 function startPatternCycling() {
   if (patternTimer) return;
   patternTimer = setInterval(() => {
@@ -147,15 +166,34 @@ function startAutoCallingLoop() {
   autoCallingTimer = setInterval(() => {
     if (!state.autoCallingEnabled) {
       autoCallingNextAtMs = 0;
+      autoCallingHold = false;
+      state.autoCallingHold = false;
       state.autoCallingRemainingMs = 0;
       return;
     }
     if (state.callingStyle !== "automatic" || state.winnerDeclared || state.remaining <= 0) {
-      state.autoCallingRemainingMs = 0;
+      if (!autoCallingHold) {
+        autoCallingNextAtMs = 0;
+        state.autoCallingRemainingMs = 0;
+      } else if (autoCallingNextAtMs > 0) {
+        state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - Date.now());
+      }
       return;
     }
     const now = Date.now();
-    const intervalMs = Math.max(1000, (state.autoCallingSeconds ?? 30) * 1000);
+    const intervalMs = Math.max(1000, (state.autoCallingSeconds ?? 10) * 1000);
+    if (autoCallingHold) {
+      if (autoCallingHoldSinceMs > 0 && now - autoCallingHoldSinceMs > 8000) {
+        autoCallingHold = false;
+        state.autoCallingHold = false;
+        autoCallingHoldSinceMs = 0;
+      } else {
+        // Countdown keeps running while audio plays.
+        if (autoCallingNextAtMs <= 0) autoCallingNextAtMs = now + intervalMs;
+        state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - now);
+        return;
+      }
+    }
     if (autoCallingNextAtMs <= 0) {
       autoCallingNextAtMs = now + intervalMs;
     }
@@ -164,18 +202,30 @@ function startAutoCallingLoop() {
       if (n === null) {
         state.autoCallingEnabled = false;
         autoCallingNextAtMs = 0;
+        autoCallingHold = false;
+        state.autoCallingHold = false;
         state.autoCallingRemainingMs = 0;
         return;
       }
       recomputeWinners();
       autoCallingNextAtMs = now + intervalMs;
+      if (autoCallingWaitForAudio) {
+        autoCallingHold = true;
+        state.autoCallingHold = true;
+        autoCallingHoldSinceMs = now;
+      }
     }
     state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - now);
   }, 200);
 }
 startAutoCallingLoop();
 
+function syncScreensaverActive() {
+  state.screensaverActive = Boolean(state.screensaverEnabled && !state.ledTestMode);
+}
+
 function snapshot(): GameState {
+  syncScreensaverActive();
   return JSON.parse(JSON.stringify(state));
 }
 
@@ -200,9 +250,20 @@ function genToken() {
   return Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
 }
 
+/** Content-addressed id — matches firmware cardIdFromCardNumbers (QR == identity). */
+function contentCardId(numbers: Array<number | null>): string {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < 25; i++) {
+    if (i === 12) continue;
+    h ^= (typeof numbers[i] === "number" ? numbers[i]! : 0) & 0xff;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return `c${h.toString(16).padStart(8, "0")}`;
+}
+
 function hasBoardAuth() {
   if (!boardAuth) return false;
-  return boardAuth.ttlMs > nowMs();
+  return boardAuth.expiryMs > nowMs();
 }
 
 function assertBoardAuth() {
@@ -337,6 +398,23 @@ function claimCurrentWinningPatterns(session: MockCardSession) {
   else if (state.gameType === "field_goal") session.claimedFieldGoalMask |= satisfied;
 }
 
+function flushPendingWinnerActivation() {
+  if (!pendingWinnerActivation) return;
+  pendingWinnerActivation = false;
+  const want = !winnerSuppressed && ((state.winnerCount ?? 0) > 0 || manualWinnerDeclared);
+  if (!want) {
+    pendingWinnerEventBump = false;
+    state.winnerDeclared = false;
+    return;
+  }
+  if (pendingWinnerEventBump) {
+    winnerEventId++;
+    pendingWinnerEventBump = false;
+  }
+  state.winnerDeclared = true;
+  state.winnerEventId = winnerEventId;
+}
+
 function recomputeWinners() {
   let winners = 0;
   let hasNewWinnerEvent = false;
@@ -350,13 +428,45 @@ function recomputeWinners() {
     // New unclaimed winner appeared after keep-going.
     winnerSuppressed = false;
   }
-  if (hasNewWinnerEvent) winnerEventId++;
   state.winnerCount = winners;
-  state.winnerDeclared = !winnerSuppressed && (winners > 0 || manualWinnerDeclared);
   state.manualWinnerDeclared = manualWinnerDeclared;
-  state.winnerEventId = winnerEventId;
   state.cardCount = cardSessions.size;
   state.playerCount = cardSessions.size;
+
+  const wantDeclare = !winnerSuppressed && (winners > 0 || manualWinnerDeclared);
+  if (!wantDeclare) {
+    state.winnerDeclared = false;
+    pendingWinnerActivation = false;
+    pendingWinnerEventBump = false;
+    state.winnerEventId = winnerEventId;
+    return;
+  }
+
+  if (hasNewWinnerEvent) {
+    if (autoCallingWaitForAudio && autoCallingHold && !state.winnerDeclared) {
+      pendingWinnerEventBump = true;
+    } else {
+      winnerEventId++;
+    }
+  }
+
+  if (autoCallingWaitForAudio && autoCallingHold && !state.winnerDeclared) {
+    pendingWinnerActivation = true;
+    state.winnerDeclared = false;
+    // Hide pending winners from board UI until call-out audio finishes.
+    state.winnerCount = 0;
+    state.winnerEventId = winnerEventId;
+    return;
+  }
+
+  pendingWinnerActivation = false;
+  if (pendingWinnerEventBump) {
+    winnerEventId++;
+    pendingWinnerEventBump = false;
+  }
+  state.winnerDeclared = true;
+  state.winnerCount = winners;
+  state.winnerEventId = winnerEventId;
 }
 
 function resetGame() {
@@ -371,6 +481,8 @@ function resetGame() {
   manualWinnerDeclared = false;
   winnerSuppressed = false;
   winnerEventId = 0;
+  pendingWinnerActivation = false;
+  pendingWinnerEventBump = false;
   state.manualWinnerDeclared = false;
   state.winnerDeclared = false;
   state.winnerEventId = winnerEventId;
@@ -409,6 +521,9 @@ export const mockApi = {
     await delay(30);
     assertBoardAuth();
     if (state.callingStyle === "manual") throw new Error("manual mode");
+    state.screensaverEnabled = false;
+    localStorage.setItem("bingo-screensaver-enabled", "false");
+    syncScreensaverActive();
     const n = drawOne();
     if (n === null) throw new Error("pool empty");
     recomputeWinners();
@@ -477,6 +592,9 @@ export const mockApi = {
   setGameType: async (gameType: GameType) => {
     await delay(20);
     assertBoardAuth();
+    if (state.gameEstablished && !state.winnerDeclared) {
+      throw new Error("409");
+    }
     state.gameType = gameType;
     state.patternIndex = 0;
     localStorage.setItem("bingo-gameType", gameType);
@@ -517,8 +635,10 @@ export const mockApi = {
     await delay(10);
     assertBoardAuth();
     state.screensaverEnabled = enabled;
+    if (enabled && state.ledTestMode) state.ledTestMode = false;
     localStorage.setItem("bingo-screensaver-enabled", String(enabled));
-    return {};
+    syncScreensaverActive();
+    return { ...state };
   },
 
   setScreensaverText: async (text: string) => {
@@ -559,18 +679,84 @@ export const mockApi = {
     assertBoardAuth();
     if (state.callingStyle !== "automatic") throw new Error("automatic mode required");
     state.autoCallingEnabled = enabled;
-    autoCallingNextAtMs = enabled ? Date.now() + Math.max(1000, (state.autoCallingSeconds ?? 30) * 1000) : 0;
-    state.autoCallingRemainingMs = enabled ? Math.max(1000, (state.autoCallingSeconds ?? 30) * 1000) : 0;
-    return {};
+    autoCallingHold = false;
+    state.autoCallingHold = false;
+    autoCallingHoldSinceMs = 0;
+    if (!enabled) {
+      autoCallingNextAtMs = 0;
+      state.autoCallingRemainingMs = 0;
+      return snapshot();
+    }
+    const intervalMs = Math.max(1000, (state.autoCallingSeconds ?? 10) * 1000);
+    // Play = immediate draw, then arm countdown for the next call.
+    if (!state.winnerDeclared && state.remaining > 0) {
+      const n = drawOne();
+      if (n === null) {
+        state.autoCallingEnabled = false;
+        autoCallingNextAtMs = 0;
+        state.autoCallingRemainingMs = 0;
+        return snapshot();
+      }
+      recomputeWinners();
+      autoCallingNextAtMs = Date.now() + intervalMs;
+      if (autoCallingWaitForAudio) {
+        autoCallingHold = true;
+        state.autoCallingHold = true;
+        autoCallingHoldSinceMs = Date.now();
+      }
+      state.autoCallingRemainingMs = intervalMs;
+    } else {
+      autoCallingNextAtMs = Date.now() + intervalMs;
+      state.autoCallingRemainingMs = intervalMs;
+    }
+    return snapshot();
   },
 
   setAutoCallingSeconds: async (value: number) => {
     await delay(10);
     assertBoardAuth();
     state.autoCallingSeconds = Math.max(1, Math.min(600, Math.round(value)));
-    if (state.autoCallingEnabled) {
+    if (state.autoCallingEnabled && !autoCallingHold) {
       autoCallingNextAtMs = Date.now() + state.autoCallingSeconds * 1000;
       state.autoCallingRemainingMs = state.autoCallingSeconds * 1000;
+    }
+    return {};
+  },
+
+  setAutoCallingHold: async (hold: boolean) => {
+    await delay(5);
+    assertBoardAuth();
+    autoCallingHold = hold;
+    state.autoCallingHold = hold;
+    if (hold) {
+      autoCallingHoldSinceMs = Date.now();
+    } else {
+      // Do not reschedule — overdue deadlines draw on the next loop tick.
+      autoCallingHoldSinceMs = 0;
+      if (pendingWinnerActivation) {
+        // Restore real winner count before flush (hidden while pending).
+        let winners = 0;
+        for (const s of cardSessions.values()) {
+          if (s.winner) winners++;
+        }
+        state.winnerCount = winners;
+        flushPendingWinnerActivation();
+      }
+    }
+    if (autoCallingNextAtMs > 0) {
+      state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - Date.now());
+    }
+    return {};
+  },
+
+  setAutoCallingWaitForAudio: async (enabled: boolean) => {
+    await delay(5);
+    assertBoardAuth();
+    autoCallingWaitForAudio = enabled;
+    if (!enabled && autoCallingHold) {
+      autoCallingHold = false;
+      state.autoCallingHold = false;
+      autoCallingHoldSinceMs = 0;
     }
     return {};
   },
@@ -635,14 +821,38 @@ export const mockApi = {
     return {};
   },
 
-  setLedBoardSectionOrder: async (order: LedBoardSection[]) => {
+  setLetterFullMode: async (mode: LetterFullMode) => {
     await delay(10);
     assertBoardAuth();
-    if (order.length !== 3 || new Set(order).size !== 3) {
-      throw new Error("invalid order");
-    }
-    state.ledBoardSectionOrder = [...order];
-    localStorage.setItem("bingo-led-board-order", JSON.stringify(order));
+    if (!(mode in LETTER_FULL_MODE_LABELS)) throw new Error("invalid mode");
+    state.letterFullMode = mode;
+    localStorage.setItem("bingo-letter-full-mode", mode);
+    return {};
+  },
+
+  setCurrentNumberEffect: async (effect: CurrentNumberEffect) => {
+    await delay(10);
+    assertBoardAuth();
+    if (!(effect in CURRENT_NUMBER_EFFECT_LABELS)) throw new Error("invalid effect");
+    state.currentNumberEffect = effect;
+    localStorage.setItem("bingo-current-number-effect", effect);
+    return {};
+  },
+
+  setCurrentNumberColor: async (hex: string) => {
+    await delay(10);
+    assertBoardAuth();
+    const normalized = hex.startsWith("#") ? hex : `#${hex}`;
+    state.currentNumberColor = normalized;
+    localStorage.setItem("bingo-current-number-color", normalized);
+    return {};
+  },
+
+  setCalledNumberBanner: async (enabled: boolean) => {
+    await delay(10);
+    assertBoardAuth();
+    state.calledNumberBanner = Boolean(enabled);
+    localStorage.setItem("bingo-called-number-banner", enabled ? "1" : "0");
     return {};
   },
 
@@ -665,9 +875,25 @@ export const mockApi = {
 
   unlockBoard: async (pin: string): Promise<BoardAuthSession> => {
     await delay(10);
-    if (normalizePin(pin) !== normalizePin(boardPin)) throw new Error("401");
-    boardAuth = { token: genToken(), ttlMs: nowMs() + BOARD_AUTH_TTL_MS };
-    return boardAuth;
+    const now = nowMs();
+    if (boardUnlockLockoutUntilMs > now) throw new Error("429");
+    if (boardUnlockLockoutUntilMs > 0 && boardUnlockLockoutUntilMs <= now) {
+      boardUnlockLockoutUntilMs = 0;
+      boardUnlockFailCount = 0;
+    }
+    if (normalizePin(pin) !== normalizePin(boardPin)) {
+      boardUnlockFailCount += 1;
+      if (boardUnlockFailCount >= BOARD_UNLOCK_MAX_FAILURES) {
+        boardUnlockLockoutUntilMs = now + BOARD_UNLOCK_LOCKOUT_MS;
+        boardUnlockFailCount = 0;
+        throw new Error("429");
+      }
+      throw new Error("401");
+    }
+    boardUnlockFailCount = 0;
+    boardUnlockLockoutUntilMs = 0;
+    boardAuth = { token: genToken(), expiryMs: now + BOARD_AUTH_TTL_MS };
+    return { token: boardAuth.token, ttlMs: BOARD_AUTH_TTL_MS };
   },
 
   lockBoard: async () => {
@@ -679,8 +905,8 @@ export const mockApi = {
   refreshBoardAuth: async (): Promise<BoardAuthSession> => {
     await delay(10);
     assertBoardAuth();
-    boardAuth = { token: boardAuth!.token, ttlMs: nowMs() + BOARD_AUTH_TTL_MS };
-    return boardAuth;
+    boardAuth = { token: boardAuth!.token, expiryMs: nowMs() + BOARD_AUTH_TTL_MS };
+    return { token: boardAuth.token, ttlMs: BOARD_AUTH_TTL_MS };
   },
 
   changeBoardPin: async (currentPin: string, nextPin: string) => {
@@ -730,6 +956,65 @@ export const mockApi = {
     cardSessions.set(id, session);
     recomputeWinners();
     return { cardId: id, winner: session.winner, winnerCount: state.winnerCount ?? 0, winnerEventId };
+  },
+
+  claimPrintedCard: async (
+    numbers: Array<number | null>,
+    sig?: string | null
+  ): Promise<CardClaimResponse> => {
+    await delay(15);
+    if (numbers.length !== 25) throw new Error("numbers[25] required");
+    const { signCardWithDeviceId } = await import("@/lib/bingo-card-codec");
+    const expected = await signCardWithDeviceId(numbers, mockDeviceId);
+    const authentic = Boolean(sig && sig === expected);
+    const id = contentCardId(numbers);
+    const calledSet = new Set(state.called);
+    const marks = numbers.map((n, i) => i === 12 || (typeof n === "number" && calledSet.has(n)));
+    const existing = cardSessions.get(id);
+    const session: MockCardSession = existing ?? {
+      cardId: id,
+      numbers: [...numbers],
+      marks: [...marks],
+      winner: false,
+      claimedTraditionalMask: 0,
+      claimedFourCornersMask: 0,
+      claimedPostageMask: 0,
+      claimedCoverAllMask: 0,
+      claimedXMask: 0,
+      claimedYMask: 0,
+      claimedFrameOutsideMask: 0,
+      claimedFrameInsideMask: 0,
+      claimedPlusSignMask: 0,
+      claimedFieldGoalMask: 0,
+    };
+    session.numbers = [...numbers];
+    session.marks = [...marks];
+    session.claimedTraditionalMask = 0;
+    session.claimedFourCornersMask = 0;
+    session.claimedPostageMask = 0;
+    session.claimedCoverAllMask = 0;
+    session.claimedXMask = 0;
+    session.claimedYMask = 0;
+    session.claimedFrameOutsideMask = 0;
+    session.claimedFrameInsideMask = 0;
+    session.claimedPlusSignMask = 0;
+    session.claimedFieldGoalMask = 0;
+    cardSessions.set(id, session);
+    recomputeWinners();
+    return {
+      cardId: id,
+      winner: session.winner,
+      winnerCount: state.winnerCount ?? 0,
+      winnerEventId,
+      marks: [...session.marks],
+      authentic,
+    };
+  },
+
+  getDeviceId: async () => {
+    await delay(5);
+    assertBoardAuth();
+    return { deviceId: mockDeviceId };
   },
 
   markCardCell: async (cardId: string, cellIndex: number, marked: boolean): Promise<CardJoinResponse> => {

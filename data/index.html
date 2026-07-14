@@ -8,15 +8,24 @@
     />
     <link rel="icon" type="image/svg+xml" href="/paw.svg" />
     <title>Bingo Flashboard</title>
-    <script type="module" crossorigin src="/index-D-kYvK1P.js"></script>
-    <link rel="stylesheet" crossorigin href="/index-C2FVVaJS.css">
+    <script type="module" crossorigin src="/index-PUa1RkgQ.js"></script>
+    <link rel="stylesheet" crossorigin href="/index-CJGW6CEC.css">
   </head>
   <body>
     <script>
-      // Apply saved theme immediately to prevent flash of wrong theme
-      if (localStorage.getItem('bingo-theme') === 'dark') {
-        document.documentElement.classList.add('dark');
-      }
+      // Apply theme before paint to avoid flash. Card mode defaults to dark.
+      (function () {
+        var mode = sessionStorage.getItem('bingo-app-mode');
+        var theme;
+        if (mode === 'card') {
+          theme = localStorage.getItem('bingo-theme-card') || 'dark';
+        } else if (mode === 'board') {
+          theme = localStorage.getItem('bingo-theme-board') || localStorage.getItem('bingo-theme') || 'light';
+        } else {
+          theme = localStorage.getItem('bingo-theme') || 'light';
+        }
+        if (theme === 'dark') document.documentElement.classList.add('dark');
+      })();
     </script>
     <div id="root"></div>
   </body>

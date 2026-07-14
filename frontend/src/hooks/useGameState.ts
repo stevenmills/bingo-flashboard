@@ -1,45 +1,76 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api } from "@/api";
-import { DEFAULT_STATE, type GameState } from "@/types";
+import { api, isOnBoardHost } from "@/api";
+import {
+  APP_MODE_CHANGED_EVENT,
+  BOARD_AUTH_CHANGED_EVENT,
+  CARD_SESSION_CHANGED_EVENT,
+} from "@/lib/card-session-events";
+import {
+  initialGameState,
+  isValidSnapshot,
+  mergePartialState,
+  mergeServerSnapshot,
+} from "@/lib/game-state-merge";
+import type { GameState } from "@/types";
 
-const WS_FRESH_MS = 900;
-
-function isValidSnapshot(state: GameState): boolean {
-  if (!Array.isArray(state.called)) return false;
-  if (typeof state.remaining !== "number") return false;
-  const expectedCalledCount = 75 - state.remaining;
-  if (expectedCalledCount < 0 || expectedCalledCount > 75) return false;
-  return state.called.length === expectedCalledCount;
-}
+const WS_FRESH_MS = 2000;
 
 export type RefreshOptions = { force?: boolean };
 
-export function useGameState(pollMs = 1500) {
-  const [state, setState] = useState<GameState>(DEFAULT_STATE);
+export function useGameState(pollMs = isOnBoardHost() ? 4000 : 1500) {
+  const [state, setState] = useState<GameState>(initialGameState);
   const [connected, setConnected] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const mountedRef = useRef(true);
   const inFlightRef = useRef(false);
   const pendingRefreshRef = useRef(false);
+  const pendingForceRef = useRef(false);
   const reconnectTimeoutRef = useRef<number | null>(null);
-  const refreshSoonTimeoutRef = useRef<number | null>(null);
   const lastWsSnapshotAtRef = useRef(0);
+  const lastLocalMutationAtRef = useRef(0);
+  const lastWsSeqRef = useRef(0);
   const wsLiveRef = useRef(false);
+  const sendSubscriptionRef = useRef<() => void>(() => {});
 
   const applyOptimistic = useCallback((updater: (prev: GameState) => GameState) => {
+    lastLocalMutationAtRef.current = Date.now();
     setState((prev) => {
       const next = updater(prev);
-      return isValidSnapshot(next) ? next : prev;
+      return isValidSnapshot(next) ? mergeServerSnapshot(prev, next) : prev;
     });
+  }, []);
+
+  /** Replace state from a server draw/call/undo response — bypasses WS seq merge guards. */
+  const applyServerState = useCallback((incoming: GameState) => {
+    if (!isValidSnapshot(incoming)) return;
+    lastLocalMutationAtRef.current = Date.now();
+    // Do not reset lastWsSeq — resetting to 0 lets older WS envelopes replay and flicker UI.
+    setState((prev) => mergeServerSnapshot(prev, incoming, { allowCallRegression: true }));
+    setHydrated(true);
+    setConnected(true);
+  }, []);
+
+  const commitSnapshot = useCallback((prev: GameState, incoming: GameState, wsSeq?: number): GameState => {
+    if (typeof wsSeq === "number" && wsSeq > 0 && wsSeq < lastWsSeqRef.current) {
+      return prev;
+    }
+    if (typeof wsSeq === "number" && wsSeq > lastWsSeqRef.current) {
+      lastWsSeqRef.current = wsSeq;
+    }
+    return mergeServerSnapshot(prev, incoming);
   }, []);
 
   const refresh = useCallback(async (options?: RefreshOptions) => {
     const force = options?.force ?? false;
-    if (!force && Date.now() - lastWsSnapshotAtRef.current < WS_FRESH_MS) {
+    const recentlyLive =
+      Date.now() - lastWsSnapshotAtRef.current < WS_FRESH_MS ||
+      Date.now() - lastLocalMutationAtRef.current < WS_FRESH_MS;
+    if (!force && recentlyLive) {
       return;
     }
     if (inFlightRef.current) {
       pendingRefreshRef.current = true;
+      pendingForceRef.current = pendingForceRef.current || force;
       return;
     }
     inFlightRef.current = true;
@@ -48,9 +79,15 @@ export function useGameState(pollMs = 1500) {
       if (mountedRef.current) {
         if (!isValidSnapshot(s)) return;
         setHydrated(true);
-        const wsRecentlyUpdated = Date.now() - lastWsSnapshotAtRef.current < WS_FRESH_MS;
-        if (!wsRecentlyUpdated || force) {
-          setState(s);
+        const recentlyLiveAfterFetch =
+          Date.now() - lastWsSnapshotAtRef.current < WS_FRESH_MS ||
+          Date.now() - lastLocalMutationAtRef.current < WS_FRESH_MS;
+        if (!recentlyLiveAfterFetch || force) {
+          setState((prev) =>
+            force
+              ? mergeServerSnapshot(prev, s, { allowCallRegression: true })
+              : commitSnapshot(prev, s)
+          );
         }
         setConnected(true);
       }
@@ -59,29 +96,27 @@ export function useGameState(pollMs = 1500) {
     } finally {
       inFlightRef.current = false;
       if (pendingRefreshRef.current) {
+        const pendingForce = pendingForceRef.current;
         pendingRefreshRef.current = false;
-        void refresh({ force });
+        pendingForceRef.current = false;
+        void refresh({ force: pendingForce });
       }
     }
-  }, []);
-
-  const refreshSoon = useCallback(
-    (delayMs = 1200) => {
-      if (refreshSoonTimeoutRef.current !== null) {
-        window.clearTimeout(refreshSoonTimeoutRef.current);
-      }
-      refreshSoonTimeoutRef.current = window.setTimeout(() => {
-        refreshSoonTimeoutRef.current = null;
-        void refresh({ force: true });
-      }, delayMs);
-    },
-    [refresh]
-  );
+  }, [commitSnapshot]);
 
   useEffect(() => {
     mountedRef.current = true;
+    // Drop legacy cached UI state that could desync from firmware LEDs.
+    try {
+      sessionStorage.removeItem("bingo-last-state");
+    } catch {
+      // ignore
+    }
     void refresh({ force: true });
     const id = window.setInterval(() => {
+      if (isOnBoardHost() && wsLiveRef.current) {
+        return;
+      }
       if (wsLiveRef.current && Date.now() - lastWsSnapshotAtRef.current < 5000) {
         return;
       }
@@ -90,9 +125,6 @@ export function useGameState(pollMs = 1500) {
     return () => {
       mountedRef.current = false;
       window.clearInterval(id);
-      if (refreshSoonTimeoutRef.current !== null) {
-        window.clearTimeout(refreshSoonTimeoutRef.current);
-      }
     };
   }, [refresh, pollMs]);
 
@@ -106,6 +138,7 @@ export function useGameState(pollMs = 1500) {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const mode = sessionStorage.getItem("bingo-app-mode");
       const cardId = localStorage.getItem("bingo-card-id");
+      const boardToken = localStorage.getItem("bingo-board-token");
       const isBoard = mode === "board";
       const isJoinedCard = mode === "card" && Boolean(cardId);
       ws.send(
@@ -113,9 +146,11 @@ export function useGameState(pollMs = 1500) {
           type: "subscribe",
           mode: isBoard ? "board" : isJoinedCard ? "card" : "none",
           cardId: isJoinedCard ? cardId : undefined,
+          boardToken: isBoard && boardToken ? boardToken : undefined,
         })
       );
     };
+    sendSubscriptionRef.current = sendSubscription;
 
     const clearReconnect = () => {
       if (reconnectTimeoutRef.current !== null) {
@@ -148,7 +183,7 @@ export function useGameState(pollMs = 1500) {
         reconnectDelayMs = 1000;
         sendSubscription();
         if (resubscribeId !== null) window.clearInterval(resubscribeId);
-        resubscribeId = window.setInterval(sendSubscription, 1000);
+        resubscribeId = window.setInterval(sendSubscription, 5000);
       };
 
       ws.onmessage = (event) => {
@@ -156,11 +191,8 @@ export function useGameState(pollMs = 1500) {
           const parsed = JSON.parse(String(event.data)) as
             | {
                 type?: string;
-                data?: GameState | {
-                  winner?: boolean;
-                  winnerCount?: number;
-                  winnerEventId?: number;
-                };
+                seq?: number;
+                data?: GameState | Record<string, unknown>;
               }
             | GameState;
           window.dispatchEvent(
@@ -168,6 +200,7 @@ export function useGameState(pollMs = 1500) {
               detail: parsed,
             })
           );
+
           if ("type" in parsed && parsed.type === "card_state" && parsed.data && typeof parsed.data === "object") {
             const cardData = parsed.data as {
               winner?: boolean;
@@ -184,7 +217,7 @@ export function useGameState(pollMs = 1500) {
                   const nextWinnerDeclared =
                     typeof cardData.winnerCount === "number"
                       ? cardData.winnerCount > 0 || Boolean(prev.manualWinnerDeclared)
-                      : (cardData.winner === true || Boolean(prev.winnerDeclared));
+                      : cardData.winner === true || Boolean(prev.winnerDeclared);
 
                   if (
                     nextWinnerCount === (prev.winnerCount ?? 0) &&
@@ -204,12 +237,40 @@ export function useGameState(pollMs = 1500) {
               }
             }
           }
+
+          if ("type" in parsed && parsed.data && typeof parsed.data === "object") {
+            const msgType = parsed.type;
+            const data = parsed.data as Record<string, unknown>;
+            if (msgType === "auto_calling_tick" || msgType === "pattern_index_changed") {
+              if (mountedRef.current) {
+                setState((prev) => mergePartialState(prev, data));
+                lastWsSnapshotAtRef.current = Date.now();
+                setConnected(true);
+              }
+              return;
+            }
+          }
+
+          const msgType = "type" in parsed ? parsed.type : undefined;
           const snapshot = "type" in parsed ? parsed.data : parsed;
           if (!snapshot || typeof snapshot !== "object" || !("called" in snapshot)) return;
           const nextState = snapshot as GameState;
           if (!isValidSnapshot(nextState)) return;
+          const wsSeq = "type" in parsed && typeof parsed.seq === "number" ? parsed.seq : undefined;
+          const forceApply =
+            msgType === "game_reset" ||
+            msgType === "number_called" ||
+            msgType === "number_undone" ||
+            msgType === "screensaver_changed" ||
+            msgType === "auto_calling_changed";
+          const allowCallRegression =
+            msgType === "game_reset" || msgType === "number_undone";
           if (mountedRef.current) {
-            setState(nextState);
+            setState((prev) =>
+              forceApply
+                ? mergeServerSnapshot(prev, nextState, { allowCallRegression })
+                : commitSnapshot(prev, nextState, wsSeq)
+            );
             lastWsSnapshotAtRef.current = Date.now();
             setHydrated(true);
             setConnected(true);
@@ -244,7 +305,19 @@ export function useGameState(pollMs = 1500) {
         ws.close();
       }
     };
+  }, [commitSnapshot]);
+
+  useEffect(() => {
+    const resubscribe = () => sendSubscriptionRef.current();
+    window.addEventListener(CARD_SESSION_CHANGED_EVENT, resubscribe);
+    window.addEventListener(APP_MODE_CHANGED_EVENT, resubscribe);
+    window.addEventListener(BOARD_AUTH_CHANGED_EVENT, resubscribe);
+    return () => {
+      window.removeEventListener(CARD_SESSION_CHANGED_EVENT, resubscribe);
+      window.removeEventListener(APP_MODE_CHANGED_EVENT, resubscribe);
+      window.removeEventListener(BOARD_AUTH_CHANGED_EVENT, resubscribe);
+    };
   }, []);
 
-  return { state, connected, refresh, refreshSoon, applyOptimistic, hydrated };
+  return { state, connected, refresh, applyOptimistic, applyServerState, hydrated };
 }

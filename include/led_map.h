@@ -7,14 +7,14 @@
 // Physical strip order is defined by the 5x21 CSV provided by hardware layout.
 // This file maps logical IDs (numbers/letters/game cells) to physical LED index.
 
-// Board section IDs (left-to-right order is configurable).
+// Board section IDs (fixed left-to-right: letters, numbers, game type).
 #define SEC_GAME_TYPE 0
 #define SEC_LETTERS   1
 #define SEC_NUMBERS   2
 
 static const int SECTION_WIDTH[3] = {5, 1, 15};
 
-// boardSectionOrder[i] = section id placed at visual position i (left to right).
+// boardSectionOrder[i] = section id at visual position i (left to right). Hardcoded at boot.
 extern uint8_t boardSectionOrder[3];
 extern int sectionStartCol[3];
 

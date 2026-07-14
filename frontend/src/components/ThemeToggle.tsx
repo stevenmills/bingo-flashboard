@@ -1,9 +1,19 @@
 import { Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/hooks/useTheme";
+import type { AppMode } from "@/types";
 
-export function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
+type Props = {
+  appMode?: AppMode | null;
+};
+
+export function ThemeToggle({ appMode }: Props) {
+  const mode =
+    appMode ??
+    (typeof sessionStorage !== "undefined"
+      ? (sessionStorage.getItem("bingo-app-mode") as AppMode | null)
+      : null);
+  const { theme, setTheme } = useTheme(mode);
   const isDark = theme === "dark";
 
   return (

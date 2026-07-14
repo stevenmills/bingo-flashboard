@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { notifyCardSessionChanged } from "@/lib/card-session-events";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link2, RefreshCw } from "lucide-react";
@@ -18,6 +19,7 @@ import {
   type CardGrid,
   type StoredCardState,
 } from "@/lib/card";
+import { flatNumbersToGrid, takeQrCardClaim, QR_BOARD_VERIFY_KEY } from "@/lib/bingo-card-codec";
 import { cn } from "@/lib/utils";
 import { api } from "@/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -48,16 +50,17 @@ interface WsMessageEnvelope {
 function loadStoredCardState(): { card: CardGrid; autoSync: boolean } {
   try {
     const raw = localStorage.getItem(CARD_STATE_STORAGE_KEY);
-    if (!raw) return { card: generateBingoCard(), autoSync: false };
+    if (!raw) return { card: generateBingoCard(), autoSync: true };
     const parsed = JSON.parse(raw) as StoredCardState;
     if ((parsed.version ?? 1) !== CARD_STATE_STORAGE_VERSION) {
-      return { card: generateBingoCard(), autoSync: false };
+      return { card: generateBingoCard(), autoSync: true };
     }
     const restored = storedCardStateToGrid(parsed);
-    if (!restored) return { card: generateBingoCard(), autoSync: false };
-    return { card: restored, autoSync: Boolean(parsed.autoSync) };
+    if (!restored) return { card: generateBingoCard(), autoSync: true };
+    // Default on when key was missing from older saved state.
+    return { card: restored, autoSync: parsed.autoSync !== false };
   } catch {
-    return { card: generateBingoCard(), autoSync: false };
+    return { card: generateBingoCard(), autoSync: true };
   }
 }
 
@@ -83,22 +86,56 @@ function applySelectionsToCard(card: CardGrid, selections: boolean[]): CardGrid 
   );
 }
 
-function loadInitialCardState(): { card: CardGrid; autoSync: boolean } {
+function loadInitialCardState(): {
+  card: CardGrid;
+  autoSync: boolean;
+  printedClaim: boolean;
+  claimSig: string | null;
+} {
+  // Board-host QR verify keeps the payload for App — don't hydrate card mode from it.
+  if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(QR_BOARD_VERIFY_KEY) === "1") {
+    const stored = loadStoredCardState();
+    return { ...stored, printedClaim: false, claimSig: null };
+  }
+  const claim = takeQrCardClaim();
+  if (claim) {
+    const grid = flatNumbersToGrid(claim.numbers);
+    if (grid) {
+      localStorage.removeItem("bingo-card-id");
+      localStorage.removeItem(CARD_UNJOINED_SELECTIONS_STORAGE_KEY);
+      const cleared = grid.map((row) =>
+        row.map((cell) => ({
+          ...cell,
+          marked: cell.isFree,
+        }))
+      );
+      localStorage.setItem(
+        CARD_STATE_STORAGE_KEY,
+        JSON.stringify(gridToStoredCardState(cleared, true))
+      );
+      return { card: cleared, autoSync: true, printedClaim: true, claimSig: claim.sig };
+    }
+  }
+
   const stored = loadStoredCardState();
   const hasJoinedBoard = Boolean(localStorage.getItem("bingo-card-id"));
-  if (hasJoinedBoard) return stored;
+  if (hasJoinedBoard) return { ...stored, printedClaim: false, claimSig: null };
   const selections = loadUnjoinedSelections();
   if (!selections) {
-    // Prevent stale joined-board coverage from leaking into unjoined card mode.
     const cleared = stored.card.map((row) =>
       row.map((cell) => ({
         ...cell,
         marked: cell.isFree,
       }))
     );
-    return { card: cleared, autoSync: stored.autoSync };
+    return { card: cleared, autoSync: stored.autoSync, printedClaim: false, claimSig: null };
   }
-  return { card: applySelectionsToCard(stored.card, selections), autoSync: stored.autoSync };
+  return {
+    card: applySelectionsToCard(stored.card, selections),
+    autoSync: stored.autoSync,
+    printedClaim: false,
+    claimSig: null,
+  };
 }
 
 export function CardPage({ state, letterColors, connected }: Props) {
@@ -106,6 +143,8 @@ export function CardPage({ state, letterColors, connected }: Props) {
   const [card, setCard] = useState<CardGrid>(initialStoredState.card);
   const [autoSync, setAutoSync] = useState<boolean>(initialStoredState.autoSync);
   const [cardId, setCardId] = useState<string | null>(localStorage.getItem("bingo-card-id"));
+  const [printedClaimPending, setPrintedClaimPending] = useState(initialStoredState.printedClaim);
+  const claimSigRef = useRef<string | null>(initialStoredState.claimSig);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinErrorOpen, setJoinErrorOpen] = useState(false);
   const [winnerFlashCells, setWinnerFlashCells] = useState<Set<number>>(new Set());
@@ -126,9 +165,16 @@ export function CardPage({ state, letterColors, connected }: Props) {
   const freeSpaceActive = useMemo(() => gameTypeUsesFreeSpace(state.gameType), [state.gameType]);
   const joinedToBoard = Boolean(cardId);
   const rerollDisabled = state.called.length > 0;
+
+  useEffect(() => {
+    // Claim flow may have cleared bingo-card-id before React subscribed to session events.
+    notifyCardSessionChanged();
+  }, []);
+
   const clearJoinedCardSession = useCallback(() => {
     setCardId(null);
     localStorage.removeItem("bingo-card-id");
+    notifyCardSessionChanged();
     pendingMarksRef.current.clear();
   }, []);
   const captureWinningFlashCells = useCallback((grid: CardGrid) => {
@@ -153,13 +199,15 @@ export function CardPage({ state, letterColors, connected }: Props) {
     flashedPatternKeysRef.current.add(nextKey);
     activeFlashPatternKeyRef.current = nextKey;
     const filtered = nextPattern.filter((idx) => {
+      // FREE is always marked for qualifying game types — don't include it in flash.
+      if (idx === 12) return false;
       const cell = grid.flat()[idx];
       if (!cell) return false;
-      if (cell.isFree) return freeSpaceActive;
+      if (cell.isFree) return false;
       return cell.value !== null && calledSet.has(cell.value);
     });
     setWinnerFlashCells(new Set<number>(filtered));
-  }, [state.gameType, calledSet, freeSpaceActive]);
+  }, [state.gameType, calledSet]);
 
   const cardNumbers = useMemo(
     () =>
@@ -393,6 +441,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
       }
       setCardId(joined.cardId);
       localStorage.setItem("bingo-card-id", joined.cardId);
+      notifyCardSessionChanged();
       pendingMarksRef.current.clear();
       setJoinError(null);
       applyWinnerState(Boolean(joined.winner), card);
@@ -432,6 +481,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
     }
     setCardId(null);
     localStorage.removeItem("bingo-card-id");
+    notifyCardSessionChanged();
     pendingMarksRef.current.clear();
     flashedPatternKeysRef.current.clear();
     activeFlashPatternKeyRef.current = "";
@@ -459,10 +509,62 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, [handleJoin]);
 
   useEffect(() => {
+    if (!printedClaimPending || !connected) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const claimed = await api.claimPrintedCard(cardNumbers, claimSigRef.current);
+        if (cancelled) return;
+        setCardId(claimed.cardId);
+        localStorage.setItem("bingo-card-id", claimed.cardId);
+        notifyCardSessionChanged();
+        pendingMarksRef.current.clear();
+        setJoinError(null);
+        setPrintedClaimPending(false);
+        setAutoSync(true);
+        if (Array.isArray(claimed.marks) && claimed.marks.length === 25) {
+          setCard((prev) => {
+            const next = prev.map((row, rowIdx) =>
+              row.map((cell, colIdx) => {
+                const idx = rowIdx * 5 + colIdx;
+                return {
+                  ...cell,
+                  marked: cell.isFree ? true : Boolean(claimed.marks[idx]),
+                };
+              })
+            );
+            latestCardRef.current = next;
+            applyWinnerState(resolveCardWinner(next, Boolean(claimed.winner)), next);
+            return next;
+          });
+        } else {
+          applyWinnerState(Boolean(claimed.winner), latestCardRef.current);
+        }
+      } catch {
+        if (cancelled) return;
+        setPrintedClaimPending(false);
+        setJoinError("Unable to verify printed card. Try again.");
+        setJoinErrorOpen(true);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    printedClaimPending,
+    connected,
+    cardNumbers,
+    applyWinnerState,
+    resolveCardWinner,
+  ]);
+
+  useEffect(() => {
     if (!connected) return;
     if (cardId) return;
+    if (printedClaimPending) return;
     void handleJoin();
-  }, [connected, cardId, handleJoin]);
+  }, [connected, cardId, printedClaimPending, handleJoin]);
 
   useEffect(() => {
     if (!cardId) return;

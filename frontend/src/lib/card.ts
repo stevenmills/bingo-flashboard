@@ -58,7 +58,7 @@ export function isCellClickableInManual(cell: CardCell, calledSet: Set<number>):
   return calledSet.has(cell.value);
 }
 
-export function gridToStoredCardState(grid: CardGrid, autoSync = false): StoredCardState {
+export function gridToStoredCardState(grid: CardGrid, autoSync = true): StoredCardState {
   const flat = grid.flat();
   return {
     version: CARD_STATE_STORAGE_VERSION,
@@ -124,7 +124,7 @@ export function winningPatterns(card: CardGrid, gameType: GameType, calledSet: S
     ]);
   }
   if (gameType === "cover_all") {
-    return [Array.from({ length: 25 }, (_, i) => i)];
+    return findSatisfiedPatterns([Array.from({ length: 25 }, (_, i) => i)]);
   }
   if (gameType === "x") {
     return findSatisfiedPatterns([[0, 4, 6, 8, 12, 16, 18, 20, 24]]);

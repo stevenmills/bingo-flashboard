@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "bingo-auto-seconds";
-const DEFAULT_SECONDS = 30;
+const DEFAULT_SECONDS = 10;
 const MIN_SECONDS = 1;
 const MAX_SECONDS = 600;
 

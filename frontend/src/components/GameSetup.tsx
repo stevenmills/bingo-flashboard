@@ -1,8 +1,11 @@
+import { useEffect, useMemo, useState } from "react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { api } from "@/api";
+import { isBoardAuthHttpError } from "@/lib/board-auth";
 import { cn } from "@/lib/utils";
 import { DEFAULT_LETTER_COLORS, rgbaFromHex, type LetterColors } from "@/lib/bingo-ui-colors";
+import type { RefreshOptions } from "@/hooks/useGameState";
 import {
   GAME_TYPE_LABELS,
   LETTERS,
@@ -18,8 +21,11 @@ interface Props {
   gameEstablished: boolean;
   called: number[];
   letterColors?: LetterColors;
-  onRefresh: () => void;
+  onRefresh: (options?: RefreshOptions) => void;
   onApplyOptimistic?: (updater: (prev: GameState) => GameState) => void;
+  onApplyServerState?: (state: GameState) => void;
+  onPrefetchCallNumber?: (n: number) => void;
+  onAnnounceCallNumber?: (n: number) => void;
 }
 
 export function GameSetup({
@@ -30,27 +36,117 @@ export function GameSetup({
   letterColors = DEFAULT_LETTER_COLORS,
   onRefresh,
   onApplyOptimistic,
+  onApplyServerState,
+  onPrefetchCallNumber,
+  onAnnounceCallNumber,
 }: Props) {
-  const calledSet = new Set(called);
+  const [pendingGameType, setPendingGameType] = useState<GameType | null>(null);
+  const [pendingCallingStyle, setPendingCallingStyle] = useState<CallingStyle | null>(null);
+  const displayGameType = pendingGameType ?? gameType;
+  const displayCallingStyle = pendingCallingStyle ?? callingStyle;
+
+  useEffect(() => {
+    if (pendingGameType !== null && pendingGameType === gameType) {
+      setPendingGameType(null);
+    }
+  }, [gameType, pendingGameType]);
+
+  useEffect(() => {
+    if (pendingCallingStyle !== null && pendingCallingStyle === callingStyle) {
+      setPendingCallingStyle(null);
+    }
+  }, [callingStyle, pendingCallingStyle]);
+
+  // Keep manual taps disabled even if parent state briefly flickers from a stale poll.
+  const [pendingCalls, setPendingCalls] = useState<Set<number>>(() => new Set());
+  const calledSet = useMemo(() => {
+    const next = new Set(called);
+    pendingCalls.forEach((n) => next.add(n));
+    return next;
+  }, [called, pendingCalls]);
   const radioFocus = `0 0 0 2px ${rgbaFromHex(letterColors.N, 0.35)}`;
 
+  useEffect(() => {
+    setPendingCalls((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set<number>();
+      let changed = false;
+      prev.forEach((n) => {
+        if (called.includes(n)) {
+          changed = true;
+        } else {
+          next.add(n);
+        }
+      });
+      // Drop pending entries after a reset.
+      if (called.length === 0 && prev.size > 0) return new Set();
+      return changed ? next : prev;
+    });
+  }, [called]);
+
   const handleGameType = (v: string) => {
-    void api.setGameType(v as GameType).catch(() => onRefresh());
+    const gt = v as GameType;
+    if (gt === gameType) return;
+    setPendingGameType(gt);
+    void api.setGameType(gt).catch((e: unknown) => {
+      setPendingGameType(null);
+      if (isBoardAuthHttpError(e)) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+      }
+      onRefresh({ force: true });
+    });
   };
 
   const handleCallingStyle = (v: string) => {
-    void api.setCallingStyle(v as CallingStyle).catch(() => onRefresh());
+    const cs = v as CallingStyle;
+    if (cs === callingStyle) return;
+    setPendingCallingStyle(cs);
+    void api.setCallingStyle(cs).catch((e: unknown) => {
+      setPendingCallingStyle(null);
+      if (isBoardAuthHttpError(e)) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+      }
+      onRefresh({ force: true });
+    });
   };
 
   const handleCallNumber = (n: number) => {
-    onApplyOptimistic?.((prev) => ({
-      ...prev,
-      current: n,
-      called: [...prev.called, n],
-      remaining: Math.max(0, prev.remaining - 1),
-      gameEstablished: true,
-    }));
-    void api.callNumber(n).catch(() => onRefresh());
+    if (calledSet.has(n)) return;
+    setPendingCalls((prev) => {
+      const next = new Set(prev);
+      next.add(n);
+      return next;
+    });
+    onApplyOptimistic?.((prev) => {
+      if (prev.called.includes(n)) return prev;
+      const nextCalled = [...prev.called, n];
+      return {
+        ...prev,
+        called: nextCalled,
+        current: n,
+        remaining: Math.max(0, prev.remaining - 1),
+        gameEstablished: true,
+      };
+    });
+    // Announce immediately (marks manual so the called-watcher does not double-play).
+    // Audio-hold may broadcast a stale `auto_calling_changed` snapshot; merge rejects call regressions.
+    onAnnounceCallNumber?.(n);
+    void api.callNumber(n).then(
+      (next) => {
+        onApplyServerState?.(next);
+      },
+      (e: unknown) => {
+        setPendingCalls((prev) => {
+          const next = new Set(prev);
+          next.delete(n);
+          return next;
+        });
+        if (isBoardAuthHttpError(e)) {
+          window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        }
+        onRefresh({ force: true });
+      }
+    );
   };
 
   return (
@@ -58,17 +154,17 @@ export function GameSetup({
       {/* Game type — pre-game only */}
       {!gameEstablished && <div>
         <Label className="mb-2 block text-muted-foreground">Game type</Label>
-        <RadioGroup value={gameType} onValueChange={handleGameType} className="grid grid-cols-2 gap-2">
+        <RadioGroup value={displayGameType} onValueChange={handleGameType} className="grid grid-cols-2 gap-2">
           {(Object.keys(GAME_TYPE_LABELS) as GameType[]).map((gt) => (
             <Label
               key={gt}
               htmlFor={`gt-${gt}`}
               className={cn(
                 "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                gameType === gt ? "" : "border-border"
+                displayGameType === gt ? "" : "border-border"
               )}
               style={
-                gameType === gt
+                displayGameType === gt
                   ? {
                       borderColor: letterColors.N,
                       backgroundColor: rgbaFromHex(letterColors.N, 0.12),
@@ -98,15 +194,15 @@ export function GameSetup({
       {!gameEstablished && (
         <div>
           <Label className="mb-2 block text-muted-foreground">Calling style</Label>
-          <RadioGroup value={callingStyle} onValueChange={handleCallingStyle} className="grid grid-cols-2 gap-2">
+          <RadioGroup value={displayCallingStyle} onValueChange={handleCallingStyle} className="grid grid-cols-2 gap-2">
             <Label
               htmlFor="cs-auto"
               className={cn(
                 "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                callingStyle === "automatic" ? "" : "border-border"
+                displayCallingStyle === "automatic" ? "" : "border-border"
               )}
               style={
-                callingStyle === "automatic"
+                displayCallingStyle === "automatic"
                   ? {
                       borderColor: letterColors.N,
                       backgroundColor: rgbaFromHex(letterColors.N, 0.12),
@@ -132,10 +228,10 @@ export function GameSetup({
               htmlFor="cs-manual"
               className={cn(
                 "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                callingStyle === "manual" ? "" : "border-border"
+                displayCallingStyle === "manual" ? "" : "border-border"
               )}
               style={
-                callingStyle === "manual"
+                displayCallingStyle === "manual"
                   ? {
                       borderColor: letterColors.N,
                       backgroundColor: rgbaFromHex(letterColors.N, 0.12),
@@ -191,6 +287,7 @@ export function GameSetup({
                         <button
                           key={n}
                           disabled={isCalled}
+                          onPointerDown={() => onPrefetchCallNumber?.(n)}
                           onClick={() => handleCallNumber(n)}
                           className={cn(
                             "w-9 h-8 md:w-10 md:h-9 rounded-md text-xs md:text-sm font-semibold tabular-nums transition-all hover:brightness-110 active:brightness-90",

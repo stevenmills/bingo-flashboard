@@ -1,242 +1,258 @@
-# Bingo Flashboard
+# 🎱 Bingo Flashboard
 
-ESP32-WROOM-32D-driven **105-LED 12V WS2811** bingo flashboard with a WiFi AP and a modern React web UI.
+An **AITRIP 30-pin ESP32** drives a **105-LED 12V WS2811** bingo board — and serves a full **React web UI** over WiFi so phones, tablets, and laptops can call games, join cards, hear call-outs, and print signed bingo sheets.
 
-The device hosts the UI from SPIFFS, and players control games from a phone/tablet/laptop connected to the `BINGO` network.
+Connect to the **`BINGO`** network → open **`http://bingo.local`** (fallback **`http://192.168.4.1`**) → pick **Board** or **Card** mode → play.
 
-## Recent updates
+---
 
-- LED mapping now follows a CSV-defined physical layout in `include/led_map.h` (non-contiguous logical regions are supported).
-- Current called number LED now uses a high-contrast white flash/beacon behavior while it is current.
-- BINGO header LEDs now use a dedicated hardware color (default red), independent of active number theme.
-- Game-type indicator LEDs now use a dedicated configurable hardware color (default warm white `#FFD8A8`).
-- Added LED vibrance control (`0..100`) to prioritize physical strip visibility.
-- Start game flow now issues a backend reset before transitioning, to keep UI/LED state synchronized.
+## ✨ What’s in the box
 
-## Hardware
+| 🎮 Gameplay | 💡 Lights | 📱 Clients | 🔐 Safety |
+|---|---|---|---|
+| 10 game types | 19 themes + vibrance | Board host UI | PIN + 7-day token |
+| Auto / manual calling | Screensavers (13) | Printed QR cards | Unlock lockout |
+| Physical buttons | Called-number banner | Live card sync | Device-signed cards |
+| Caller audio + jokes | Winner animations | Odds drawer | Optional home WiFi |
 
-- **ESP32-WROOM-32D** (DevKit-compatible)
-- **WS2811** strip, 105 LEDs, 12V supply, single data line
-- **Momentary button** between GPIO and GND (internal pull-up) for automatic draws
-- **Status LED** on GPIO 2 cycles rainbow when firmware is running
+---
 
-Core hardware/network config is in `include/config.h`:
-- `DATA_PIN`
-- `BUTTON1_PIN`
-- `BUTTON2_PIN`
-- `NUM_LEDS` (`105`)
-- `AP_SSID` (`BINGO`)
-- `AP_PASSWORD` (`washisnameo`)
+## 🧩 Hardware
 
-## Architecture
+**Board:** [AITRIP 30-pin CP2102 ESP-WROOM-32 USB-C](https://www.amazon.com/dp/B0CR5Y2JVD) (ESP-32D, **4 MB** flash)
 
-- **Firmware** (`src/main.cpp`)
-  - FastLED rendering for board + game-type indicator LEDs
-  - REST API + websocket state/event push via ESPAsyncWebServer
-  - NVS persistence for LED/game preferences plus live game snapshot restore
-- **Frontend** (`frontend/`)
-  - React + TypeScript + Tailwind + shadcn/ui
-  - WebSocket-first state/event updates (`/ws`) with HTTP polling fallback
-  - Auto mock fallback when ESP32 is unreachable
+**Strip:** WS2811 × **105**, **12V**, single data line
 
-## Key features
+Wire by **silkscreen labels** (not generic 38-pin charts). Full pinout + photo: **[WIRING.md](WIRING.md)** · `docs/aitrip-30pin-pinout.png`
 
-### Game flow
-- Automatic or manual calling style
-- Game types: Traditional, Four Corners, Postage Stamp, Cover All, Letter X, Letter Y, Frame Outside, Frame Inside, Plus Sign, Field Goal
-- Winner flow + out-of-numbers modal
-- **Undo** support (`/undo`) for last called number
-- **Power-loss recovery**: called numbers/current game resume after reboot
-- Draw selection uses ESP32 hardware RNG with unbiased index selection
+| Function | GPIO | Silkscreen | Connect |
+|---|---|---|---|
+| LED data | **4** | **`D4`** | Strip **DIN** |
+| Button 1 | **16** | **`RX2`** | Momentary → **GND** |
+| Button 2 | **17** | **`TX2`** | Momentary → **GND** |
+| Status LED | **2** | **`D2`** | Onboard |
+| Ground | — | **`GND`** | 12V (−) + strip GND |
 
-### LED behavior
-- 80 LED board (letters + numbers) + 25 LED game-type matrix
-- 19 LED themes (static + animated)
-- Static solid color option
-- Winner sparkle mode
-- Dedicated BINGO header LED color setting (lights only when that column has calls; includes short preview on color change)
-- Dedicated game-type indicator LED color setting
-- LED vibrance boost control for custom/static/header/game-type colors
+⚠️ **Never** put 12V on ESP32 pins. Tie all grounds together. Power ESP32 via USB-C (or **VIN** 5V).
 
-### Web UI
-- Responsive board + game-type indicator layout
-- First-load mode chooser: `Board` or `Card`
-- Header controls:
-  - Exit-to-mode-selection button (with confirmation modal)
-  - Settings toggle
-  - Odds drawer toggle (dice icon)
-  - Theme toggle
-  - Fullscreen toggle (with broad browser API fallback support)
-  - API status dot tooltip
-  - Automatic-mode play/pause timer controls (seconds + countdown loader)
-- Board mode bottom status bar: live player count + card count
-- Board mode bottom status bar shows live player and card counts
-- Current number shown as a bingo-ball style display
-- Odds drawer includes Monte Carlo game-win estimates with tunable assumptions:
-  - Opponents (default `20`)
-  - Cards per opponent (default `1`)
-  - Trials (default `5000`)
-- In card mode:
-  - If card is joined, odds game type is locked to board game type
-  - If card is not joined, odds drawer allows choosing game type
+### 🎛️ Physical buttons
 
-### Card mode
-- Full-width 5x5 bingo card with FREE center
-- Card values are randomized by column ranges (B/I/N/G/O) and preserved on refresh
-- Re-roll and auto-sync are icon-only controls with tooltips
-- Card mode joins the available board session directly (no seed entry required)
-- Manual marking rules:
-  - Unjoined card: arbitrary non-FREE marking allowed
-  - Joined card: only called numbers are clickable
-- Joined winning card shows winner flashing + confetti on that card view only
-- Subsequent bingos in the same round are supported; flashing prioritizes newly identified winning patterns
-- Board winner state is driven only by joined card sessions (unjoined cards are isolated)
+| Button | Short press | Long press (~700 ms) |
+|---|---|---|
+| **1** (game type) | Cycle game type (when allowed) | Reset active game |
+| **2** (draw / winner) | Draw next (**automatic** style only) | Winner / keep-going — **or**, on a fresh **manual** game with **zero** calls: switch to **automatic** and draw the first number *(does not turn on UI auto-call Play)* |
 
-### Board security
-- Board mode is PIN-protected with timed session expiry
-- Board controls require a valid board token
-- Board PIN has firmware default and can be changed in Board settings
-- Auth loss/expiry in board mode prompts unlock in place (no forced mode switch)
-- Card mode settings only show `BINGO UI Colors`
+Any button exits LED test / screensaver.
 
-### UI-only color customization (does **not** affect LEDs)
-- B/I/N/G/O web UI color themes:
-  - Default, Rainbow, Warm Sunset, Cool Blue, High Contrast, Custom
-- Custom per-letter colors (applied only when theme is `Custom`)
-- Action button colors are derived from letter colors:
-  - Draw next uses `N`
-  - Winner uses `G`
+---
 
-## API endpoints (high level)
-
-- `GET /api/state`
-- `POST /draw`
-- `POST /call`
-- `POST /undo`
-- `POST /reset`
-- `POST /calling-style`
-- `POST /game-type`
-- `POST /declare-winner`
-- `POST /clear-winner`
-- `POST /brightness`
-- `POST /theme`
-- `POST /color`
-- `POST /vibrance`
-- `POST /letter-colors`
-- `POST /letter-header-color`
-- `POST /game-type-color`
-- `POST /led-test`
-- `POST /auth/board/unlock`
-- `POST /auth/board/lock`
-- `POST /auth/board/refresh`
-- `POST /board/pin`
-- `POST /card/join`
-- `POST /card/mark`
-- `POST /card/leave`
-- `GET /api/card-state`
-- `GET /ws` (websocket upgrade endpoint for realtime state + card events)
-
-### WebSocket subscription scope
-
-- Frontend clients send a `/ws` subscription envelope (`type: "subscribe"`) with mode:
-  - `board` for Board mode clients
-  - `card` with `cardId` for joined Card mode clients
-  - `none` when card is not joined
-- Backend pushes board snapshots/winner state only to:
-  - Board subscribers
-  - Card subscribers whose `cardId` is currently joined
-- `card_state` events are pushed only to the matching joined card (plus board subscribers)
-
-See `AGENTS.md` for full endpoint behavior and payload details.
-
-## Persistence
-
-### ESP32 NVS
-Persists LED/game preferences such as brightness, vibrance, theme, color mode, static color, header color, game-type indicator color, custom B/I/N/G/O colors, game type, and calling style.
-
-Also persists a runtime game snapshot (`NVS_GAME_STATE`):
-- call order
-- current number
-- remaining pool
-- game-established flag
-- board seed
-
-### Browser localStorage
-- `bingo-theme` (light/dark mode)
-- `bingo-gameType` (mock API)
-- `bingo-callingStyle` (mock API)
-- `bingo-brightness` (mock API brightness mirror)
-- `bingo-led-vibrance` (mock API vibrance mirror)
-- `bingo-ui-colors` (UI-only BINGO letter theme/colors)
-- `bingo-auto-seconds` (automatic-calling interval)
-- `bingo-board-token` (board auth token)
-- `bingo-board-token-expiry` (board token expiry)
-- `bingo-card-id` (joined card session id)
-- `bingo-card-state` (persisted local card values/marks)
-
-### Browser sessionStorage
-- `bingo-app-mode` (last selected view mode for current tab/session)
-
-Odds drawer Monte Carlo settings are currently session-local (not persisted to localStorage).
-
-## Build & deploy
-
-### Frontend build
-```bash
-cd frontend
-npm install
-npm run build   # outputs to ../data/
-```
-
-### Firmware build/upload
-Requires [PlatformIO](https://platformio.org/):
-
-```bash
-pio run -e esp32dev
-pio run -e esp32dev --target upload
-pio run -e esp32dev --target uploadfs
-```
-
-### One-command workflow (recommended)
-From repo root, use the included `Makefile` shortcuts:
-
-```bash
-make deploy      # build frontend + upload firmware + upload SPIFFS
-make fw-upload   # firmware only
-make fs-upload   # SPIFFS only
-make monitor     # serial monitor
-```
-
-Optional port/env overrides:
-
-```bash
-make deploy PIO_PORT=/dev/cu.usbserial-0001
-make fw-upload PIO_ENV=esp32dev PIO_PORT=/dev/cu.usbserial-0001
-```
-
-### Device usage
-1. Power ESP32
-2. Connect to WiFi `BINGO` (password `washisnameo`)
-3. Open `http://bingo.local` (fallback: `http://192.168.4.1`)
-
-## Local development
-
-```bash
-cd frontend
-npm run dev
-```
-
-- Vite proxies API calls to `192.168.4.1`
-- If ESP32 is unavailable, frontend auto-falls back to the in-memory mock API after timeout
-
-## Repo layout
+## 🏗️ Architecture
 
 ```text
-src/main.cpp                Firmware (ESP32)
-include/config.h            Pins, AP credentials, NVS keys
-include/led_map.h           Physical LED mapping
-platformio.ini              PlatformIO project config
-data/                       Frontend build output served by SPIFFS
-frontend/                   React + TypeScript app source
-frontend/src/lib/odds.ts    Monte Carlo odds engine for Odds drawer
+┌────────────────────┐   WiFi AP "BINGO"    ┌──────────────────────┐
+│  ESP32 firmware    │ ◄──────────────────► │  Browser (React SPA) │
+│  FastLED → 105 LEDs│   REST + WebSocket   │  Board / Card / OCR  │
+│  SPIFFS → UI+MP3s  │   Push snapshots     │  Served from /data   │
+└────────────────────┘                      └──────────────────────┘
 ```
+
+- **Firmware:** `src/main.cpp` — game engine, LEDs, auth, cards, WiFi, NVS
+- **Frontend:** `frontend/` — Vite + React + TypeScript + Tailwind + shadcn/ui
+- **SPIFFS:** custom partition (~2.2 MB) for UI + caller MP3s — `partitions/bingo.csv`
+- **Dev mock:** if the board is unreachable, the UI falls back to an in-memory mock API
+
+---
+
+## 🎯 Game features
+
+### Calling
+- **Automatic** — Draw next / header Play timer / Button 2 short press
+- **Manual** — Tap numbers on the board; Button 2 long-press can convert a blank manual game to automatic + first draw
+- **Undo** last call
+- **Power-loss recovery** — call order / current / pool restore from NVS
+- Default auto-call interval: **10 seconds** (configurable; Play stays UI-driven)
+
+### Game types
+Traditional · Four Corners · Postage Stamp · Cover All · Letter X · Letter Y · Frame Outside · Frame Inside · Plus Sign · Field Goal
+
+Traditional & Postage Stamp **cycle** winning orientations on the LED matrix (synced to the UI).
+
+### Winners
+- Declare / clear winner (UI + Button 2 long-press)
+- Card-driven winners + keep-going with claimed pattern masks
+- Winner LED phases (board sparkle → scroll)
+- Winner activation can wait while call-out audio is still playing
+
+---
+
+## 🔊 Caller audio
+
+Pre-recorded clips on SPIFFS / `frontend/public/`:
+
+- Numbers **B-1 … O-75**
+- Utility: `on`, `jokes-on`, `bingo`
+- Optional jokes (e.g. B-4, O-67)
+
+**Board UI:** unlock with a tap → volume / jokes / speech rate · keepalive for iOS/Android · firmware **audio hold** so the next auto-draw waits for the clip (countdown still runs).
+
+Regenerate locally (macOS `say` + ffmpeg):
+
+```bash
+./scripts/generate-caller-audio.sh
+```
+
+---
+
+## 🃏 Card mode & printable cards
+
+- Full **5×5** card with FREE center; re-roll / auto-sync
+- Join the live board session (no seed)
+- Joined cards: only called numbers markable; winner flash + confetti
+- Settings → **Cards**:
+  - Download signed **PDF** (4 cards / page; FREE cell = QR)
+  - Copy shareable claim links
+- QR / link joins via `POST /card/claim` with HMAC over the board’s stable **device id**
+- Scanning while already unlocked as Board can **verify** authenticity without switching modes
+
+---
+
+## 🔐 Board access
+
+- Default PIN: **`1975`** (change in Settings → Access)
+- Session token TTL: **7 days**, persisted in NVS (survives reboot)
+- **5** failed unlocks → **30 s** lockout (`429`)
+- Mutating board APIs require `X-Board-Token`
+- Public paths: unlock, card join/mark/leave/claim/state sync
+- Expired auth prompts unlock **in place** (no forced Card-mode switch)
+
+---
+
+## 💡 LED features
+
+| Feature | Notes |
+|---|---|
+| Layout | CSV-mapped; letters → numbers → game-type matrix |
+| Themes | 19 (static + animated) |
+| Color modes | Theme / solid / custom letter colors |
+| Header color | Dedicated BINGO letter LEDs |
+| Game-type color | Dedicated 5×5 matrix |
+| Vibrance | `0–100` boost for strip punch |
+| Current beacon | Color + **flash / pulse / strobe** |
+| Letter-full mode | When a column is complete: on / off / number theme |
+| Called-number banner | Optional ~3 s letter+digits glyph across the board |
+| Screensavers | 13 types on the full **21×5** matrix |
+| LED test | Sequenced strip test from Settings |
+
+---
+
+## 🖥️ Web UI highlights
+
+- Mode chooser: **Board** vs **Card**
+- Odds drawer (Monte Carlo win estimates)
+- Per-mode light/dark themes (`bingo-theme-board` / `bingo-theme-card`; card defaults dark)
+- Settings tabs: **LEDs · Screensaver · UI · Caller · Cards · WiFi · Access**
+- Optional **STA WiFi** join (home network) alongside / instead of AP-only use
+- Fullscreen, theme toggle, live player/card counts
+- UI-only BINGO color themes (do **not** change strip colors)
+
+---
+
+## 📡 Networking
+
+| | |
+|---|---|
+| AP SSID | `BINGO` |
+| AP password | `washisnameo` |
+| AP IP | `192.168.4.1` |
+| mDNS | `bingo.local` |
+| Config | `include/config.h` |
+
+Realtime: WebSocket `/ws` (subscribe as `board` / `card` / `none`) + HTTP polling fallback.
+
+---
+
+## 🛠️ Build & deploy
+
+**Needs:** Node.js, npm, [PlatformIO](https://platformio.org/), Python 3 (for `make qa`)
+
+### One-command deploy
+
+```bash
+make deploy
+# or pin the serial port:
+make deploy PIO_PORT=/dev/cu.usbserial-0001
+```
+
+### Pieces
+
+```bash
+make frontend-build   # Vite → data/ (prunes stale hashed assets; keeps MP3s)
+make fw-upload        # firmware (esp32dev + partitions/bingo.csv)
+make fs-upload        # SPIFFS
+make monitor          # serial @ 115200
+make qa               # smoke tests → QA_BASE / QA_PIN
+```
+
+SPIFFS size guidance: UI + clips should fit in **~2.2 MiB**. Build prints prune size via `scripts/prune-spiffs-data.mjs`.
+
+### Local UI (no hardware)
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Mock backend activates automatically if the ESP32 doesn’t answer within ~2 s. Force mock with `VITE_MOCK=true`.
+
+### Shared multi-tab mock (optional)
+
+See `frontend/dev/shared-mock-server.mjs` for multi-browser mock sessions during development.
+
+---
+
+## 🧪 QA smoke tests
+
+```bash
+make qa
+make qa QA_BASE=http://192.168.4.1 QA_PIN=1975
+```
+
+`scripts/qa-board.py` exercises unlock/lockout, game actions, screensaver quirks, LED test vs screensaver, auth headers, and more.
+
+---
+
+## 📁 Repo map
+
+```text
+bingo-flashboard/
+├── src/main.cpp              # Firmware (game + LEDs + API + WS)
+├── include/config.h          # Pins, AP, PIN, NVS keys
+├── include/led_map.h         # Physical LED index maps
+├── partitions/bingo.csv      # Larger SPIFFS layout
+├── WIRING.md                 # AITRIP wiring + pinout image
+├── docs/                     # Hardware diagrams
+├── data/                     # SPIFFS payload (built UI + MP3s)
+├── frontend/                 # React app source
+│   └── public/caller-*.mp3   # Call-out audio (copied into data/)
+├── scripts/
+│   ├── generate-caller-audio.sh
+│   ├── prune-spiffs-data.mjs
+│   └── qa-board.py
+├── Makefile                  # deploy helpers
+└── platformio.ini
+```
+
+---
+
+## 🔑 Persistence cheatsheet
+
+**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
+
+**Browser:** UI themes (per mode), UI letter colors, auto-call seconds UI, board token/expiry, card id + card state, caller speech/jokes/rate prefs.
+
+---
+
+## 📝 License / notes
+
+Personal / venue bingo hardware project. WiFi credentials and default PIN are intended for a local party AP — change them before leaving the device on an open floor.
+
+Happy daubing. 🎉

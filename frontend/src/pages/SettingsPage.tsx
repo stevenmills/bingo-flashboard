@@ -32,7 +32,10 @@ export function SettingsPage({ state, onRefresh }: Props) {
           screensaverSpeedMs={state.screensaverSpeedMs}
           screensaverColor={state.screensaverColor}
           ledLetterColors={state.ledLetterColors}
-          ledBoardSectionOrder={state.ledBoardSectionOrder}
+          letterFullMode={state.letterFullMode}
+          currentNumberEffect={state.currentNumberEffect}
+          currentNumberColor={state.currentNumberColor}
+          calledNumberBanner={state.calledNumberBanner}
           wifiSsid={state.wifiSsid}
           wifiConfigured={state.wifiConfigured}
           wifiConnected={state.wifiConnected}

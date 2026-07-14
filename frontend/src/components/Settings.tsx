@@ -1,22 +1,27 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FocusEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FocusEvent, type ReactNode } from "react";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/api";
+import { isBoardAuthHttpError } from "@/lib/board-auth";
+import type { RefreshOptions } from "@/hooks/useGameState";
 import {
   THEME_NAMES,
   LETTERS,
   DEFAULT_LED_LETTER_COLORS,
-  DEFAULT_LED_BOARD_SECTION_ORDER,
-  LED_BOARD_SECTION_LABELS,
+  SCREENSAVER_TYPE_DESCRIPTIONS,
   SCREENSAVER_TYPE_LABELS,
+  LETTER_FULL_MODE_LABELS,
+  CURRENT_NUMBER_EFFECT_LABELS,
   type ScreensaverType,
   type AppMode,
   type ColorMode,
   type Letter,
-  type LedBoardSection,
+  type LetterFullMode,
+  type CurrentNumberEffect,
   type LedLetterColors,
 } from "@/types";
 import {
@@ -27,10 +32,67 @@ import {
   type BingoUiThemeId,
   type LetterColors,
 } from "@/lib/bingo-ui-colors";
+import { cn } from "@/lib/utils";
+import { copyTextToClipboard } from "@/lib/clipboard";
+import { Check, Copy, FileStack, Lamp, Lock, MonitorPlay, Palette, Volume2, Wifi, X } from "lucide-react";
+import { buildCardClaimUrl, generateSignedPrintableCards } from "@/lib/bingo-card-codec";
 
 const STATIC_VALUE = "static";
 const CUSTOM_LETTERS_VALUE = "custom_letters";
 const MAX_BRIGHTNESS = 255;
+
+type SettingsTabId = "leds" | "screensaver" | "ui" | "caller" | "cards" | "wifi" | "access";
+
+function SettingsPanel({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+        {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SettingsGroup({
+  title,
+  description,
+  children,
+  className,
+}: {
+  title?: string;
+  description?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex h-full flex-col gap-4 rounded-xl border border-border/80 bg-muted/20 p-4",
+        className
+      )}
+    >
+      {(title || description) && (
+        <div className="shrink-0">
+          {title ? <Label className="text-sm font-medium">{title}</Label> : null}
+          {description ? (
+            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{description}</p>
+          ) : null}
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1 flex-col justify-evenly gap-4">{children}</div>
+    </div>
+  );
+}
 
 function rawToPercent(raw: number): number {
   return Math.round((raw / MAX_BRIGHTNESS) * 100);
@@ -38,10 +100,6 @@ function rawToPercent(raw: number): number {
 
 function percentToRaw(percent: number): number {
   return Math.round((percent / 100) * MAX_BRIGHTNESS);
-}
-
-function normalizeLedBoardSectionOrder(order?: LedBoardSection[]): LedBoardSection[] {
-  return order?.length === 3 ? order : DEFAULT_LED_BOARD_SECTION_ORDER;
 }
 
 function focusWithLetterN(e: FocusEvent<HTMLInputElement>, color: string) {
@@ -80,7 +138,10 @@ interface Props {
   screensaverSpeedMs?: number;
   screensaverColor?: string;
   ledLetterColors: LedLetterColors;
-  ledBoardSectionOrder: LedBoardSection[];
+  letterFullMode?: LetterFullMode;
+  currentNumberEffect?: CurrentNumberEffect;
+  currentNumberColor?: string;
+  calledNumberBanner?: boolean;
   wifiSsid?: string;
   wifiConfigured?: boolean;
   wifiConnected?: boolean;
@@ -92,7 +153,10 @@ interface Props {
   letterColors: LetterColors;
   onUiColorThemeChange: (theme: BingoUiThemeId) => void;
   onUiCustomColorChange: (letter: (typeof LETTERS)[number], color: string) => void;
-  onRefresh: () => void;
+  callerSpeechRate?: number;
+  onCallerSpeechRateChange?: (rate: number) => void;
+  onClose?: () => void;
+  onRefresh: (options?: RefreshOptions) => void;
 }
 
 export function Settings({
@@ -111,7 +175,10 @@ export function Settings({
   screensaverSpeedMs = 90,
   screensaverColor = "#00ff00",
   ledLetterColors,
-  ledBoardSectionOrder,
+  letterFullMode = "on",
+  currentNumberEffect = "flash",
+  currentNumberColor = "#ffffff",
+  calledNumberBanner = false,
   wifiSsid = "",
   wifiConfigured = false,
   wifiConnected = false,
@@ -123,10 +190,14 @@ export function Settings({
   letterColors,
   onUiColorThemeChange,
   onUiCustomColorChange,
+  callerSpeechRate = 0.85,
+  onCallerSpeechRateChange,
+  onClose,
   onRefresh,
 }: Props) {
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
   const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
+  const [localCallerSpeechRate, setLocalCallerSpeechRate] = useState(callerSpeechRate);
   const [localTheme, setLocalTheme] = useState(theme);
   const [localColorMode, setLocalColorMode] = useState<ColorMode>(colorMode);
   const [localColor, setLocalColor] = useState(staticColor);
@@ -137,19 +208,31 @@ export function Settings({
   const [localScreensaverText, setLocalScreensaverText] = useState(screensaverText);
   const [localScreensaverSpeedMs, setLocalScreensaverSpeedMs] = useState(screensaverSpeedMs);
   const [localScreensaverColor, setLocalScreensaverColor] = useState(screensaverColor);
+  const [screensaverSaving, setScreensaverSaving] = useState(false);
+  const screensaverSavingRef = useRef(false);
   const [isEditingScreensaverText, setIsEditingScreensaverText] = useState(false);
   const [localLedLetterColors, setLocalLedLetterColors] = useState<LedLetterColors>(ledLetterColors);
-  const [localLedBoardSectionOrder, setLocalLedBoardSectionOrder] = useState<LedBoardSection[]>(
-    ledBoardSectionOrder.length === 3 ? ledBoardSectionOrder : DEFAULT_LED_BOARD_SECTION_ORDER
-  );
+  const [localLetterFullMode, setLocalLetterFullMode] = useState<LetterFullMode>(letterFullMode);
+  const [localCurrentNumberEffect, setLocalCurrentNumberEffect] =
+    useState<CurrentNumberEffect>(currentNumberEffect);
+  const [localCurrentNumberColor, setLocalCurrentNumberColor] = useState(currentNumberColor);
+  const [localCalledNumberBanner, setLocalCalledNumberBanner] = useState(calledNumberBanner);
   const [localWifiSsid, setLocalWifiSsid] = useState(wifiSsid);
   const [localWifiPassword, setLocalWifiPassword] = useState("");
   const [wifiMessage, setWifiMessage] = useState<string | null>(null);
+  const [cardCountDraft, setCardCountDraft] = useState("4");
+  const [cardsBusy, setCardsBusy] = useState(false);
+  const [cardsMessage, setCardsMessage] = useState<string | null>(null);
+  const [cardShareLinks, setCardShareLinks] = useState<Array<{ label: string; url: string }> | null>(null);
+  const [cardCopyKey, setCardCopyKey] = useState<string | null>(null);
   const [currentBoardPin, setCurrentBoardPin] = useState("");
   const [nextBoardPin, setNextBoardPin] = useState("");
   const [pinMessage, setPinMessage] = useState<string | null>(null);
   const [editingHexField, setEditingHexField] = useState<string | null>(null);
   const [localUiCustomColors, setLocalUiCustomColors] = useState(uiCustomColors);
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId>(
+    settingsMode === "board" ? "leds" : "ui"
+  );
   const wasSettingsOpenRef = useRef(settingsOpen);
   const serverStateRef = useRef({
     brightness,
@@ -165,7 +248,10 @@ export function Settings({
     screensaverSpeedMs,
     screensaverColor,
     ledLetterColors,
-    ledBoardSectionOrder,
+    letterFullMode,
+    currentNumberEffect,
+    currentNumberColor,
+    calledNumberBanner,
     wifiSsid,
   });
 
@@ -183,7 +269,10 @@ export function Settings({
     screensaverSpeedMs,
     screensaverColor,
     ledLetterColors,
-    ledBoardSectionOrder,
+    letterFullMode,
+    currentNumberEffect,
+    currentNumberColor,
+    calledNumberBanner,
     wifiSsid,
   };
 
@@ -210,12 +299,16 @@ export function Settings({
     setLocalScreensaverSpeedMs(s.screensaverSpeedMs ?? 90);
     setLocalScreensaverColor(s.screensaverColor ?? "#00ff00");
     setLocalLedLetterColors(s.ledLetterColors);
-    setLocalLedBoardSectionOrder(normalizeLedBoardSectionOrder(s.ledBoardSectionOrder));
+    setLocalLetterFullMode(s.letterFullMode ?? "on");
+    setLocalCurrentNumberEffect(s.currentNumberEffect ?? "flash");
+    setLocalCurrentNumberColor(s.currentNumberColor ?? "#ffffff");
+    setLocalCalledNumberBanner(Boolean(s.calledNumberBanner));
     setLocalWifiSsid(s.wifiSsid ?? "");
     setLocalWifiPassword("");
     setLocalUiCustomColors(uiCustomColors);
+    setLocalCallerSpeechRate(callerSpeechRate);
     wasSettingsOpenRef.current = true;
-  }, [settingsOpen, uiCustomColors]);
+  }, [settingsOpen, uiCustomColors, callerSpeechRate]);
 
   // The select value: "0"–"7" for palettes, "static" for solid color
   const selectValue = localColorMode === "solid"
@@ -225,7 +318,7 @@ export function Settings({
       : String(localTheme);
 
   const handleBoardAuthFailure = (error: unknown) => {
-    if (error instanceof Error && error.message.includes("401")) {
+    if (isBoardAuthHttpError(error)) {
       window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
     }
   };
@@ -406,9 +499,42 @@ export function Settings({
   };
 
   const handleScreensaverToggle = () => {
+    if (screensaverSavingRef.current) return;
     const next = !localScreensaverEnabled;
+    screensaverSavingRef.current = true;
+    setScreensaverSaving(true);
     setLocalScreensaverEnabled(next);
-    persistSetting(() => api.setScreensaverEnabled(next));
+
+    const applyResult = (state?: { screensaverEnabled?: boolean }) => {
+      if (typeof state?.screensaverEnabled === "boolean") {
+        setLocalScreensaverEnabled(state.screensaverEnabled);
+      }
+      onRefresh({ force: true });
+    };
+
+    const attempt = () => api.setScreensaverEnabled(next);
+
+    void attempt()
+      .then(applyResult)
+      .catch(async (error: unknown) => {
+        if (isBoardAuthHttpError(error)) {
+          try {
+            await api.refreshBoardAuth();
+            applyResult(await attempt());
+            return;
+          } catch (retryError: unknown) {
+            setLocalScreensaverEnabled(!next);
+            handleBoardAuthFailure(retryError);
+            return;
+          }
+        }
+        setLocalScreensaverEnabled(!next);
+        handleBoardAuthFailure(error);
+      })
+      .finally(() => {
+        screensaverSavingRef.current = false;
+        setScreensaverSaving(false);
+      });
   };
 
   const handleScreensaverTextChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -459,15 +585,159 @@ export function Settings({
     persistSetting(() => api.setScreensaverColor(normalized));
   };
 
-  const screensaverDescription =
-    localScreensaverType === "text"
-      ? "Always overrides board LEDs and scrolls text on the full 21x5 matrix."
-      : localScreensaverType === "rainbow"
-        ? "Animated rainbow effect across the full 21x5 matrix."
-        : "Solid color fill across the full 21x5 matrix.";
+  const screensaverDescription = SCREENSAVER_TYPE_DESCRIPTIONS[localScreensaverType];
 
   const screensaverSpeedLabel =
     localScreensaverType === "text" ? "Scroll Speed" : "Animation Speed";
+
+  const boardTabs = useMemo(() => {
+    const tabs: Array<{ id: SettingsTabId; label: string; icon: ReactNode }> = [
+      { id: "leds", label: "Lights", icon: <Lamp className="h-3.5 w-3.5" /> },
+      { id: "screensaver", label: "Screensaver", icon: <MonitorPlay className="h-3.5 w-3.5" /> },
+      { id: "ui", label: "UI Colors", icon: <Palette className="h-3.5 w-3.5" /> },
+    ];
+    if (onCallerSpeechRateChange) {
+      tabs.push({ id: "caller", label: "Caller", icon: <Volume2 className="h-3.5 w-3.5" /> });
+    }
+    tabs.push(
+      { id: "cards", label: "Cards", icon: <FileStack className="h-3.5 w-3.5" /> },
+      { id: "wifi", label: "WiFi", icon: <Wifi className="h-3.5 w-3.5" /> },
+      { id: "access", label: "Access", icon: <Lock className="h-3.5 w-3.5" /> }
+    );
+    return tabs;
+  }, [onCallerSpeechRateChange]);
+
+  const parseCardCount = () => {
+    const parsed = Number.parseInt(cardCountDraft, 10);
+    const count = Number.isFinite(parsed) ? Math.max(1, Math.min(200, parsed)) : 4;
+    setCardCountDraft(String(count));
+    return count;
+  };
+
+  const copyCardText = async (text: string, key: string) => {
+    const ok = await copyTextToClipboard(text);
+    if (!ok) {
+      setCardsMessage("Unable to copy. Try selecting the link manually.");
+      return;
+    }
+    setCardsMessage(null);
+    setCardCopyKey(key);
+    window.setTimeout(() => {
+      setCardCopyKey((prev) => (prev === key ? null : prev));
+    }, 1600);
+  };
+
+  const handleGenerateBingoCards = async () => {
+    const count = parseCardCount();
+    setCardsBusy(true);
+    setCardsMessage(null);
+    try {
+      const { deviceId } = await api.getDeviceId();
+      const cards = await generateSignedPrintableCards(count, deviceId);
+      const { buildBingoCardsPdf, downloadBlob } = await import("@/lib/bingo-cards-pdf");
+      const blob = await buildBingoCardsPdf(cards, "http://bingo.local");
+      const sheets = Math.ceil(cards.length / 4);
+      downloadBlob(blob, `bingo-cards-${cards.length}.pdf`);
+      setCardsMessage(
+        `Downloaded ${cards.length} unique authenticated card${cards.length === 1 ? "" : "s"} across ${sheets} sheet${sheets === 1 ? "" : "s"} (4 per page).`
+      );
+    } catch (e: unknown) {
+      if (isBoardAuthHttpError(e)) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        setCardsMessage("Board auth required to generate signed cards.");
+      } else {
+        setCardsMessage("Unable to generate PDF. Try again.");
+      }
+    } finally {
+      setCardsBusy(false);
+    }
+  };
+
+  const handleGenerateCardLinks = async () => {
+    const count = parseCardCount();
+    setCardsBusy(true);
+    setCardsMessage(null);
+    try {
+      const { deviceId } = await api.getDeviceId();
+      const cards = await generateSignedPrintableCards(count, deviceId);
+      setCardShareLinks(
+        cards.map((card, i) => ({
+          label: `Card ${i + 1}`,
+          url: buildCardClaimUrl(card.numbers, "http://bingo.local", card.sig),
+        }))
+      );
+      setCardsMessage(
+        `Ready: ${count} unique authenticated link${count === 1 ? "" : "s"}. Copy one or copy all to text people.`
+      );
+    } catch (e: unknown) {
+      if (isBoardAuthHttpError(e)) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        setCardsMessage("Board auth required to generate signed links.");
+      } else {
+        setCardsMessage("Unable to generate links. Try again.");
+      }
+    } finally {
+      setCardsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (settingsMode !== "board") {
+      setSettingsTab("ui");
+      return;
+    }
+    setSettingsTab((prev) => {
+      if (prev === "caller" && !onCallerSpeechRateChange) return "leds";
+      if (boardTabs.some((tab) => tab.id === prev)) return prev;
+      return "leds";
+    });
+  }, [settingsMode, onCallerSpeechRateChange, boardTabs]);
+
+  const handleLetterFullMode = (mode: LetterFullMode) => {
+    if (mode === localLetterFullMode) return;
+    const previous = localLetterFullMode;
+    setLocalLetterFullMode(mode);
+    persistSetting(() => api.setLetterFullMode(mode), (error) => {
+      setLocalLetterFullMode(previous);
+      handleBoardAuthFailure(error);
+    });
+  };
+
+  const handleCurrentNumberEffect = (effect: CurrentNumberEffect) => {
+    if (effect === localCurrentNumberEffect) return;
+    const previous = localCurrentNumberEffect;
+    setLocalCurrentNumberEffect(effect);
+    persistSetting(() => api.setCurrentNumberEffect(effect), (error) => {
+      setLocalCurrentNumberEffect(previous);
+      handleBoardAuthFailure(error);
+    });
+  };
+
+  const handleCurrentNumberColor = (value: string) => {
+    setLocalCurrentNumberColor(value);
+    persistSetting(() => api.setCurrentNumberColor(value));
+  };
+
+  const handleCurrentNumberColorHexCommit = (value: string) => {
+    if (!isValidHexColor(value)) {
+      setLocalCurrentNumberColor(serverStateRef.current.currentNumberColor ?? "#ffffff");
+      setEditingHexField(null);
+      return;
+    }
+    const normalized = value.startsWith("#") ? value : `#${value}`;
+    setLocalCurrentNumberColor(normalized);
+    setEditingHexField(null);
+    persistSetting(() => api.setCurrentNumberColor(normalized));
+  };
+
+  const handleCalledNumberBannerToggle = () => {
+    const next = !localCalledNumberBanner;
+    setLocalCalledNumberBanner(next);
+    persistSetting(() => api.setCalledNumberBanner(next), (error) => {
+      setLocalCalledNumberBanner(!next);
+      handleBoardAuthFailure(error);
+    });
+  };
 
   const handleBoardPinChange = async () => {
     setPinMessage(null);
@@ -479,24 +749,6 @@ export function Settings({
     } catch {
       setPinMessage("Unable to update PIN.");
     }
-  };
-
-  const handleLedBoardSectionAtPosition = (position: 0 | 1 | 2, section: LedBoardSection) => {
-    if (localLedBoardSectionOrder[position] === section) return;
-
-    const previous = localLedBoardSectionOrder;
-    const next = [...previous];
-    const existingIdx = next.indexOf(section);
-    if (existingIdx >= 0) {
-      next[existingIdx] = next[position];
-    }
-    next[position] = section;
-
-    setLocalLedBoardSectionOrder(next);
-    persistSetting(() => api.setLedBoardSectionOrder(next), (error) => {
-      setLocalLedBoardSectionOrder(previous);
-      handleBoardAuthFailure(error);
-    });
   };
 
   const handleWifiSave = () => {
@@ -530,288 +782,837 @@ export function Settings({
       });
   };
 
-  const boardSectionPositions: Array<{ label: string; index: 0 | 1 | 2 }> = [
-    { label: "Left", index: 0 },
-    { label: "Center", index: 1 },
-    { label: "Right", index: 2 },
-  ];
-
   return (
-    <div className="space-y-6">
-      {/* LEDs sub-section */}
-      {settingsMode === "board" && (
-      <div>
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">LEDs</h3>
-        <div className="space-y-5">
+    <div className="space-y-4">
+      {onClose ? (
+        <div className="hidden md:flex items-center justify-between gap-3 border-b border-border/70 pb-3">
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <Label>Brightness</Label>
-              <span className="text-sm text-muted-foreground tabular-nums">
-                {localBrightnessPercent}%
-              </span>
-            </div>
-            <Slider
-              value={[localBrightnessPercent]}
-              min={0}
-              max={100}
-              step={1}
-              onValueChange={handleBrightness}
-              onValueCommit={handleBrightnessCommit}
-              accentColor={letterColors.N}
-            />
+            <h2 className="text-lg font-semibold tracking-tight">Settings</h2>
+            <p className="text-sm text-muted-foreground">Choose a section, then adjust options on the right.</p>
           </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <Label>LED Vibrance</Label>
-              <span className="text-sm text-muted-foreground tabular-nums">
-                {localLedVibrance}%
-              </span>
-            </div>
-            <Slider
-              value={[localLedVibrance]}
-              min={0}
-              max={100}
-              step={1}
-              onValueChange={handleLedVibrance}
-              onValueCommit={handleLedVibranceCommit}
-              accentColor={letterColors.N}
-            />
-          </div>
-
-          <div>
-            <Label className="mb-2 block">Theme</Label>
-            <Select value={selectValue} onValueChange={handleThemeChange}>
-              <SelectTrigger
-                className="focus:ring-0 focus:ring-offset-0"
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
-                onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+          <button
+            type="button"
+            className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
+            aria-label="Close settings"
+            title="Close settings"
+            onClick={onClose}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+      ) : null}
+      {settingsMode === "board" ? (
+        <Tabs
+          value={settingsTab}
+          onValueChange={(value) => setSettingsTab(value as SettingsTabId)}
+          className="w-full md:flex md:items-start md:gap-6"
+        >
+          <TabsList
+            className={cn(
+              "h-auto w-full justify-start gap-1 overflow-x-auto rounded-xl bg-muted/60 p-1.5",
+              // Mobile: sticky horizontal strip
+              "sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70",
+              // Desktop: fixed-width vertical sidebar
+              "md:sticky md:top-16 md:w-48 md:shrink-0 md:flex-col md:items-stretch md:overflow-visible md:self-start"
+            )}
+          >
+            {boardTabs.map((tab) => (
+              <TabsTrigger
+                key={tab.id}
+                value={tab.id}
+                className={cn(
+                  "shrink-0 gap-1.5 px-3 py-2 data-[state=active]:shadow-sm",
+                  "md:w-full md:justify-start"
+                )}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {THEME_NAMES.map((name, i) => (
-                  <SelectItem key={i} value={String(i)}>
-                    {name}
-                  </SelectItem>
-                ))}
-                <SelectItem value={STATIC_VALUE}>Static</SelectItem>
-                <SelectItem value={CUSTOM_LETTERS_VALUE}>Custom BINGO Letters</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+                {tab.icon}
+                <span>{tab.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-          {/* Color picker — only visible when Static is selected */}
-          {localColorMode === "solid" && (
-            <div>
-              <Label className="mb-2 block">Color</Label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="color"
-                  value={localColor.startsWith("#") ? localColor : `#${localColor}`}
-                  onChange={handleColorPicker}
-                  className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
-                />
-                <Input
-                  value={localColor}
-                  onChange={handleColorHex}
-                  maxLength={7}
-                  className="w-28"
-                  placeholder={letterColors.N}
-                  style={{ borderColor: letterColors.N }}
-                  onFocus={(e) => {
-                    setEditingHexField("static");
-                    focusWithLetterN(e, letterColors.N);
-                  }}
-                  onBlur={(e) => {
-                    blurWithLetterN(e, letterColors.N);
-                    void commitColorHex(e.target.value);
-                  }}
-                />
-              </div>
-            </div>
-          )}
+          <div className="min-w-0 flex-1 pt-3 md:pt-0">
+          <TabsContent value="leds" className="mt-0 outline-none">
+            <SettingsPanel
+              title="Board lights"
+              description="Brightness, themes, and how LEDs look during a game."
+            >
+              <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
+              <SettingsGroup title="Brightness & vibrance">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label>Brightness</Label>
+                    <span className="text-sm text-muted-foreground tabular-nums">
+                      {localBrightnessPercent}%
+                    </span>
+                  </div>
+                  <Slider
+                    value={[localBrightnessPercent]}
+                    min={0}
+                    max={100}
+                    step={1}
+                    onValueChange={handleBrightness}
+                    onValueCommit={handleBrightnessCommit}
+                    accentColor={letterColors.N}
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label>LED Vibrance</Label>
+                    <span className="text-sm text-muted-foreground tabular-nums">
+                      {localLedVibrance}%
+                    </span>
+                  </div>
+                  <Slider
+                    value={[localLedVibrance]}
+                    min={0}
+                    max={100}
+                    step={1}
+                    onValueChange={handleLedVibrance}
+                    onValueCommit={handleLedVibranceCommit}
+                    accentColor={letterColors.N}
+                  />
+                </div>
+              </SettingsGroup>
 
-          <div>
-            <Label className="mb-2 block">BINGO Header LED Color</Label>
-            <div className="flex items-center gap-3">
-              <input
-                type="color"
-                value={localLedHeaderColor.startsWith("#") ? localLedHeaderColor : `#${localLedHeaderColor}`}
-                onChange={handleLedHeaderColorPicker}
-                className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
-              />
-              <Input
-                value={localLedHeaderColor}
-                onChange={handleLedHeaderColorHex}
-                maxLength={7}
-                className="w-28"
-                placeholder="#ff0000"
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => {
-                  setEditingHexField("header");
-                  focusWithLetterN(e, letterColors.N);
-                }}
-                onBlur={(e) => {
-                  blurWithLetterN(e, letterColors.N);
-                  void commitLedHeaderColorHex(e.target.value);
-                }}
-              />
-            </div>
-          </div>
+              <SettingsGroup title="Theme & colors">
+                <div>
+                  <Label className="mb-2 block">Theme</Label>
+                  <Select value={selectValue} onValueChange={handleThemeChange}>
+                    <SelectTrigger
+                      className="focus:ring-0 focus:ring-offset-0"
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                      onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {THEME_NAMES.map((name, i) => (
+                        <SelectItem key={i} value={String(i)}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={STATIC_VALUE}>Static</SelectItem>
+                      <SelectItem value={CUSTOM_LETTERS_VALUE}>Custom BINGO Letters</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-          <div>
-            <Label className="mb-2 block">Game Type Indicator LED Color</Label>
-            <div className="flex items-center gap-3">
-              <input
-                type="color"
-                value={localLedGameTypeColor.startsWith("#") ? localLedGameTypeColor : `#${localLedGameTypeColor}`}
-                onChange={handleLedGameTypeColorPicker}
-                className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
-              />
-              <Input
-                value={localLedGameTypeColor}
-                onChange={handleLedGameTypeColorHex}
-                maxLength={7}
-                className="w-28"
-                placeholder="#ffd8a8"
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => {
-                  setEditingHexField("gameType");
-                  focusWithLetterN(e, letterColors.N);
-                }}
-                onBlur={(e) => {
-                  blurWithLetterN(e, letterColors.N);
-                  void commitLedGameTypeColorHex(e.target.value);
-                }}
-              />
-            </div>
-          </div>
+                {localColorMode === "solid" && (
+                  <div>
+                    <Label className="mb-2 block">Color</Label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={localColor.startsWith("#") ? localColor : `#${localColor}`}
+                        onChange={handleColorPicker}
+                        className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                      />
+                      <Input
+                        value={localColor}
+                        onChange={handleColorHex}
+                        maxLength={7}
+                        className="w-28"
+                        placeholder={letterColors.N}
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => {
+                          setEditingHexField("static");
+                          focusWithLetterN(e, letterColors.N);
+                        }}
+                        onBlur={(e) => {
+                          blurWithLetterN(e, letterColors.N);
+                          void commitColorHex(e.target.value);
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
 
-          {localColorMode === "custom" && (
-            <div>
-              <Label className="mb-3 block">LED letter colors (B/I/N/G/O)</Label>
-              <div className="grid sm:grid-cols-2 gap-3">
-                {LETTERS.map((letter) => (
-                  <div key={letter} className="flex items-center gap-3">
-                    <span className="w-5 text-sm font-semibold text-muted-foreground">{letter}</span>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="mb-2 block">BINGO Header LED</Label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={localLedHeaderColor.startsWith("#") ? localLedHeaderColor : `#${localLedHeaderColor}`}
+                        onChange={handleLedHeaderColorPicker}
+                        className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                      />
+                      <Input
+                        value={localLedHeaderColor}
+                        onChange={handleLedHeaderColorHex}
+                        maxLength={7}
+                        className="w-28"
+                        placeholder="#ffd8a8"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => {
+                          setEditingHexField("header");
+                          focusWithLetterN(e, letterColors.N);
+                        }}
+                        onBlur={(e) => {
+                          blurWithLetterN(e, letterColors.N);
+                          void commitLedHeaderColorHex(e.target.value);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="mb-2 block">Game Type LED</Label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={localLedGameTypeColor.startsWith("#") ? localLedGameTypeColor : `#${localLedGameTypeColor}`}
+                        onChange={handleLedGameTypeColorPicker}
+                        className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                      />
+                      <Input
+                        value={localLedGameTypeColor}
+                        onChange={handleLedGameTypeColorHex}
+                        maxLength={7}
+                        className="w-28"
+                        placeholder="#ffd8a8"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => {
+                          setEditingHexField("gameType");
+                          focusWithLetterN(e, letterColors.N);
+                        }}
+                        onBlur={(e) => {
+                          blurWithLetterN(e, letterColors.N);
+                          void commitLedGameTypeColorHex(e.target.value);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {localColorMode === "custom" && (
+                  <div>
+                    <Label className="mb-3 block">LED letter colors (B/I/N/G/O)</Label>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      {LETTERS.map((letter) => (
+                        <div key={letter} className="flex items-center gap-3">
+                          <span className="w-5 text-sm font-semibold text-muted-foreground">{letter}</span>
+                          <input
+                            type="color"
+                            value={localLedLetterColors[letter]}
+                            onChange={handleLedCustomColorPicker(letter)}
+                            className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                          />
+                          <Input
+                            value={localLedLetterColors[letter]}
+                            onChange={handleLedCustomColorHex(letter)}
+                            maxLength={7}
+                            className="w-28"
+                            placeholder="#3b82f6"
+                            style={{ borderColor: letterColors.N }}
+                            onFocus={(e) => {
+                              setEditingHexField(`led-${letter}`);
+                              focusWithLetterN(e, letterColors.N);
+                            }}
+                            onBlur={(e) => {
+                              blurWithLetterN(e, letterColors.N);
+                              void commitLedLetterColorHex(letter, e.target.value);
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3">
+                      <Button type="button" variant="outline" onClick={() => void handleResetLedLetterColors()}>
+                        Reset LED colors to defaults
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </SettingsGroup>
+
+              <SettingsGroup
+                title="Completed letter LED"
+                description="When all 15 numbers for a letter are called. Partial columns still use the header color."
+              >
+                <Select
+                  value={localLetterFullMode}
+                  onValueChange={(value) => void handleLetterFullMode(value as LetterFullMode)}
+                >
+                  <SelectTrigger
+                    className="focus:ring-0 focus:ring-offset-0"
+                    style={{ borderColor: letterColors.N }}
+                    onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                    onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(LETTER_FULL_MODE_LABELS) as LetterFullMode[]).map((mode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {LETTER_FULL_MODE_LABELS[mode]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingsGroup>
+
+              <SettingsGroup
+                title="Called number banner"
+                description="When a number is called, briefly show letter + digits centered across the number and game-type LEDs using the number theme color, then return to the normal board."
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label className="block">Called Number Banner</Label>
+                    <p className="text-xs text-muted-foreground">Shows for 3 seconds after each call.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="default"
+                    onClick={handleCalledNumberBannerToggle}
+                    className="shrink-0 text-white"
+                    style={{
+                      backgroundColor: localCalledNumberBanner ? letterColors.I : letterColors.N,
+                      borderColor: localCalledNumberBanner ? letterColors.I : letterColors.N,
+                    }}
+                  >
+                    {localCalledNumberBanner ? "Disable" : "Enable"}
+                  </Button>
+                </div>
+              </SettingsGroup>
+
+              <SettingsGroup
+                title="Current number highlight"
+                description="Style and color for the most recently called number."
+              >
+                <Select
+                  value={localCurrentNumberEffect}
+                  onValueChange={(value) => void handleCurrentNumberEffect(value as CurrentNumberEffect)}
+                >
+                  <SelectTrigger
+                    className="focus:ring-0 focus:ring-offset-0"
+                    style={{ borderColor: letterColors.N }}
+                    onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                    onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(CURRENT_NUMBER_EFFECT_LABELS) as CurrentNumberEffect[]).map((effect) => (
+                      <SelectItem key={effect} value={effect}>
+                        {CURRENT_NUMBER_EFFECT_LABELS[effect]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div>
+                  <Label className="mb-2 block">Color</Label>
+                  <div className="flex items-center gap-3">
                     <input
                       type="color"
-                      value={localLedLetterColors[letter]}
-                      onChange={handleLedCustomColorPicker(letter)}
-                      className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                      value={localCurrentNumberColor}
+                      onChange={(e) => handleCurrentNumberColor(e.target.value)}
+                      className="h-10 w-14 cursor-pointer rounded border border-border bg-transparent p-1"
+                      aria-label="Current number color"
                     />
                     <Input
-                      value={localLedLetterColors[letter]}
-                      onChange={handleLedCustomColorHex(letter)}
-                      maxLength={7}
-                      className="w-28"
-                      placeholder="#3b82f6"
-                      style={{ borderColor: letterColors.N }}
-                      onFocus={(e) => {
-                        setEditingHexField(`led-${letter}`);
-                        focusWithLetterN(e, letterColors.N);
+                      value={
+                        editingHexField === "currentNumberColor"
+                          ? localCurrentNumberColor
+                          : localCurrentNumberColor.toUpperCase()
+                      }
+                      onFocus={() => setEditingHexField("currentNumberColor")}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                        setLocalCurrentNumberColor(e.target.value)
+                      }
+                      onBlur={(e) => handleCurrentNumberColorHexCommit(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          (e.target as HTMLInputElement).blur();
+                        }
                       }}
+                      className="font-mono uppercase"
+                      style={{ borderColor: letterColors.N }}
+                    />
+                  </div>
+                </div>
+              </SettingsGroup>
+
+              <SettingsGroup title="Diagnostics" className="lg:col-span-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label className="block">LED board test</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Cycles letters (red), numbers (green), game type (blue), then all three together.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="default"
+                    onClick={handleLedTestToggle}
+                    className="shrink-0 text-white"
+                    style={{
+                      backgroundColor: ledTestMode ? letterColors.I : letterColors.N,
+                      borderColor: ledTestMode ? letterColors.I : letterColors.N,
+                    }}
+                  >
+                    {ledTestMode ? "Disable" : "Enable"}
+                  </Button>
+                </div>
+              </SettingsGroup>
+              </div>
+            </SettingsPanel>
+          </TabsContent>
+
+          <TabsContent value="screensaver" className="mt-0 outline-none">
+            <SettingsPanel
+              title="Screensaver"
+              description="Idle display when the board is not being used for a game."
+            >
+              <SettingsGroup>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label className="block">Screensaver mode</Label>
+                    <p className="text-xs text-muted-foreground">{screensaverDescription}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="default"
+                    onClick={handleScreensaverToggle}
+                    disabled={screensaverSaving}
+                    className="shrink-0 text-white"
+                    style={{
+                      backgroundColor: localScreensaverEnabled ? letterColors.I : letterColors.N,
+                      borderColor: localScreensaverEnabled ? letterColors.I : letterColors.N,
+                      opacity: screensaverSaving ? 0.7 : 1,
+                    }}
+                  >
+                    {screensaverSaving
+                      ? "Saving..."
+                      : localScreensaverEnabled
+                        ? "Disable"
+                        : "Enable"}
+                  </Button>
+                </div>
+                <div>
+                  <Label className="mb-2 block">Type</Label>
+                  <Select value={localScreensaverType} onValueChange={handleScreensaverTypeChange}>
+                    <SelectTrigger
+                      className="w-full"
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                      onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(Object.entries(SCREENSAVER_TYPE_LABELS) as [ScreensaverType, string][]).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        )
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {localScreensaverType === "text" && (
+                  <div>
+                    <Label className="mb-2 block">Text</Label>
+                    <Input
+                      value={localScreensaverText}
+                      onChange={handleScreensaverTextChange}
                       onBlur={(e) => {
                         blurWithLetterN(e, letterColors.N);
-                        void commitLedLetterColorHex(letter, e.target.value);
+                        setIsEditingScreensaverText(false);
+                        void commitScreensaverText();
+                      }}
+                      maxLength={80}
+                      placeholder="BINGO NIGHT"
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => {
+                        setIsEditingScreensaverText(true);
+                        focusWithLetterN(e, letterColors.N);
                       }}
                     />
                   </div>
-                ))}
-              </div>
-              <div className="mt-3">
-                <Button type="button" variant="outline" onClick={() => void handleResetLedLetterColors()}>
-                  Reset LED colors to defaults
-                </Button>
-              </div>
-            </div>
+                )}
+                {localScreensaverType === "solid" && (
+                  <div>
+                    <Label className="mb-2 block">Color</Label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={localScreensaverColor.startsWith("#") ? localScreensaverColor : `#${localScreensaverColor}`}
+                        onChange={handleScreensaverColorPicker}
+                        className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                      />
+                      <Input
+                        value={localScreensaverColor}
+                        onChange={handleScreensaverColorHex}
+                        maxLength={7}
+                        className="w-28"
+                        placeholder="#00ff00"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => {
+                          setEditingHexField("screensaver");
+                          focusWithLetterN(e, letterColors.N);
+                        }}
+                        onBlur={(e) => {
+                          blurWithLetterN(e, letterColors.N);
+                          void commitScreensaverColorHex(e.target.value);
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label>{screensaverSpeedLabel}</Label>
+                    <span className="text-sm text-muted-foreground tabular-nums">
+                      {localScreensaverSpeedMs} ms
+                    </span>
+                  </div>
+                  <Slider
+                    value={[localScreensaverSpeedMs]}
+                    min={20}
+                    max={500}
+                    step={5}
+                    onValueChange={handleScreensaverSpeed}
+                    onValueCommit={handleScreensaverSpeedCommit}
+                    accentColor={letterColors.N}
+                  />
+                </div>
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+
+          <TabsContent value="ui" className="mt-0 outline-none">
+            <SettingsPanel
+              title="BINGO UI colors"
+              description="Colors used in the web interface only — not the physical LED strip."
+            >
+              <SettingsGroup>
+                <div>
+                  <Label className="mb-2 block">Theme</Label>
+                  <Select value={uiColorTheme} onValueChange={handleUiThemeChange}>
+                    <SelectTrigger
+                      className="focus:ring-0 focus:ring-offset-0"
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                      onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {BINGO_UI_THEME_ORDER.map((themeId) => (
+                        <SelectItem key={themeId} value={themeId}>
+                          {BINGO_UI_THEME_LABELS[themeId]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {uiColorTheme === "custom" && (
+                  <div>
+                    <Label className="mb-3 block">Custom letter colors</Label>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      {LETTERS.map((letter) => (
+                        <div key={letter} className="flex items-center gap-3">
+                          <span className="w-5 text-sm font-semibold text-muted-foreground">{letter}</span>
+                          <input
+                            type="color"
+                            value={localUiCustomColors[letter]}
+                            onChange={handleUiCustomColorPicker(letter)}
+                            className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                          />
+                          <Input
+                            value={localUiCustomColors[letter]}
+                            onChange={handleUiCustomColorHex(letter)}
+                            maxLength={7}
+                            className="w-28"
+                            placeholder="#3b82f6"
+                            style={{ borderColor: letterColors.N }}
+                            onFocus={(e) => {
+                              setEditingHexField(`ui-${letter}`);
+                              focusWithLetterN(e, letterColors.N);
+                            }}
+                            onBlur={(e) => {
+                              blurWithLetterN(e, letterColors.N);
+                              commitUiCustomColorHex(letter, e.target.value);
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+
+          {onCallerSpeechRateChange && (
+            <TabsContent value="caller" className="mt-0 outline-none">
+              <SettingsPanel
+                title="Number caller"
+                description="Playback settings for pre-recorded call-outs."
+              >
+                <SettingsGroup>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <Label>Speech rate</Label>
+                      <span className="text-sm text-muted-foreground tabular-nums">
+                        {localCallerSpeechRate.toFixed(2)}×
+                      </span>
+                    </div>
+                    <Slider
+                      value={[localCallerSpeechRate]}
+                      min={0.6}
+                      max={1.2}
+                      step={0.05}
+                      onValueChange={(value) => setLocalCallerSpeechRate(value[0])}
+                      onValueCommit={(value) => onCallerSpeechRateChange(value[0])}
+                    />
+                    <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+                      Lower is slower. Tap the header speaker icon once on phone to enable sound
+                      (required for Bluetooth).
+                    </p>
+                  </div>
+                </SettingsGroup>
+              </SettingsPanel>
+            </TabsContent>
           )}
 
-          <div className="rounded-md border border-border p-4 space-y-4">
-            <div>
-              <Label className="block">LED Board Section Order</Label>
-              <p className="text-xs text-muted-foreground mb-3">
-                Choose the left-to-right order of the game type matrix, letter headers, and number board on the physical LEDs.
-              </p>
-              <div className="grid sm:grid-cols-3 gap-3">
-                {boardSectionPositions.map(({ label, index }) => (
-                  <div key={label}>
-                    <Label className="mb-2 block text-xs text-muted-foreground">{label}</Label>
-                    <Select
-                      value={localLedBoardSectionOrder[index]}
-                      onValueChange={(value) => void handleLedBoardSectionAtPosition(index, value as LedBoardSection)}
-                    >
-                      <SelectTrigger
-                        className="focus:ring-0 focus:ring-offset-0"
-                        style={{ borderColor: letterColors.N }}
-                        onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
-                        onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(Object.keys(LED_BOARD_SECTION_LABELS) as LedBoardSection[]).map((section) => (
-                          <SelectItem key={section} value={section}>
-                            {LED_BOARD_SECTION_LABELS[section]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <Label className="block">LED Board Test</Label>
-              <p className="text-xs text-muted-foreground">
-                Runs a repeating one-by-one LED verification sequence.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="default"
-              onClick={handleLedTestToggle}
-              className="text-white"
-              style={{
-                backgroundColor: ledTestMode ? letterColors.I : letterColors.N,
-                borderColor: ledTestMode ? letterColors.I : letterColors.N,
-              }}
+          <TabsContent value="cards" className="mt-0 outline-none">
+            <SettingsPanel
+              title="Bingo cards"
+              description="Create printable PDFs or shareable bingo.local links. Each card is uniquely fingerprinted and signed with this board’s device ID so authenticated scans can verify authenticity."
             >
-              {ledTestMode ? "Disable LED Board Test" : "Enable LED Board Test"}
-            </Button>
-          </div>
+              <SettingsGroup>
+                <div>
+                  <Label className="mb-2 block">How many cards?</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={cardCountDraft}
+                    onChange={(e) => setCardCountDraft(e.target.value)}
+                    className="max-w-[10rem]"
+                    style={{ borderColor: letterColors.N }}
+                  />
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {(() => {
+                      const n = Math.max(1, Math.min(200, Number.parseInt(cardCountDraft, 10) || 1));
+                      const sheets = Math.ceil(n / 4);
+                      return `${n} card${n === 1 ? "" : "s"} → ${sheets} PDF sheet${sheets === 1 ? "" : "s"} (4 per page), or ${n} share link${n === 1 ? "" : "s"}.`;
+                    })()}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/70 bg-background/60 p-3 text-xs text-muted-foreground space-y-1.5">
+                  <p>
+                    PDF: the center FREE cell is a QR. Scan it with a phone camera to open the card
+                    (no board PIN). On a logged-in board host phone, the same QR stays in board mode and
+                    checks for a winner. Links: text a{" "}
+                    <span className="font-medium text-foreground">bingo.local</span> URL so someone can open
+                    the card in their phone browser. Auto-sync marks are on by default; if the card is a
+                    bingo for the current game type, winner mode activates.
+                  </p>
+                  <p>Print on letter paper. Leave the center QR unobstructed when marking or cutting cards.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    disabled={cardsBusy}
+                    onClick={() => void handleGenerateBingoCards()}
+                    className="text-white"
+                    style={{ backgroundColor: letterColors.N }}
+                  >
+                    {cardsBusy ? "Generating…" : "Download PDF"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={cardsBusy}
+                    onClick={() => void handleGenerateCardLinks()}
+                  >
+                    Generate links
+                  </Button>
+                  {cardsMessage && <span className="text-xs text-muted-foreground">{cardsMessage}</span>}
+                </div>
 
-          <div className="rounded-md border border-border p-4 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <Label className="block">Screensaver Mode</Label>
+                {cardShareLinks && cardShareLinks.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Label className="text-sm">Shareable card links</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={() =>
+                          void copyCardText(
+                            cardShareLinks.map((row) => row.url).join("\n"),
+                            "all"
+                          )
+                        }
+                      >
+                        {cardCopyKey === "all" ? (
+                          <Check className="h-3.5 w-3.5" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        {cardCopyKey === "all" ? "Copied all" : "Copy all"}
+                      </Button>
+                    </div>
+                    <ul className="max-h-[22rem] overflow-y-auto rounded-lg border border-border/70 divide-y divide-border/60 bg-background/50">
+                      {cardShareLinks.map((row, idx) => {
+                        const key = `row-${idx}`;
+                        const copied = cardCopyKey === key;
+                        return (
+                          <li
+                            key={key}
+                            className="flex items-center gap-2 px-3 py-2 text-sm"
+                          >
+                            <span className="w-16 shrink-0 text-xs font-medium text-muted-foreground">
+                              {row.label}
+                            </span>
+                            <code className="min-w-0 flex-1 truncate text-xs text-foreground/90">
+                              {row.url}
+                            </code>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 shrink-0 gap-1 px-2"
+                              onClick={() => void copyCardText(row.url, key)}
+                              aria-label={`Copy ${row.label} link`}
+                            >
+                              {copied ? (
+                                <Check className="h-3.5 w-3.5" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                              <span className="text-xs">{copied ? "Copied" : "Copy"}</span>
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+
+          <TabsContent value="wifi" className="mt-0 outline-none">
+            <SettingsPanel
+              title="WiFi"
+              description="On power-up the board joins this network when configured; otherwise it uses the BINGO access point. Open http://bingo.local in either mode."
+            >
+              <SettingsGroup>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Input
+                    value={localWifiSsid}
+                    onChange={(e) => setLocalWifiSsid(e.target.value)}
+                    placeholder="WiFi network name (SSID)"
+                    disabled={!boardAuthGranted}
+                    maxLength={32}
+                    style={{ borderColor: letterColors.N }}
+                    onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                    onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                  />
+                  <Input
+                    type="password"
+                    value={localWifiPassword}
+                    onChange={(e) => setLocalWifiPassword(e.target.value)}
+                    placeholder={wifiConfigured ? "New password (optional)" : "WiFi password"}
+                    disabled={!boardAuthGranted}
+                    maxLength={64}
+                    style={{ borderColor: letterColors.N }}
+                    onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                    onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    onClick={() => void handleWifiSave()}
+                    disabled={!boardAuthGranted}
+                    className="text-white"
+                    style={{ backgroundColor: letterColors.N }}
+                  >
+                    Save WiFi
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleWifiClear()}
+                    disabled={!boardAuthGranted || !wifiConfigured}
+                  >
+                    Clear WiFi
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  {screensaverDescription}
+                  Current mode:{" "}
+                  {wifiMode === "sta" && wifiConnected ? "Connected to saved WiFi" : "Device access point"}
                 </p>
-              </div>
-              <Button
-                type="button"
-                variant="default"
-                onClick={handleScreensaverToggle}
-                className="text-white"
-                style={{
-                  backgroundColor: localScreensaverEnabled ? letterColors.I : letterColors.N,
-                  borderColor: localScreensaverEnabled ? letterColors.I : letterColors.N,
-                }}
-              >
-                {localScreensaverEnabled ? "Disable Screensaver" : "Enable Screensaver"}
-              </Button>
-            </div>
+                {wifiMessage && <p className="text-xs text-muted-foreground">{wifiMessage}</p>}
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+
+          <TabsContent value="access" className="mt-0 outline-none">
+            <SettingsPanel
+              title="Board access"
+              description="Change the PIN that unlocks board controls on this device."
+            >
+              <SettingsGroup>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Input
+                    type="password"
+                    value={currentBoardPin}
+                    onChange={(e) => setCurrentBoardPin(e.target.value)}
+                    placeholder="Current PIN"
+                    disabled={!boardAuthGranted}
+                    style={{ borderColor: letterColors.N }}
+                    onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                    onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                  />
+                  <Input
+                    type="password"
+                    value={nextBoardPin}
+                    onChange={(e) => setNextBoardPin(e.target.value)}
+                    placeholder="New PIN"
+                    disabled={!boardAuthGranted}
+                    style={{ borderColor: letterColors.N }}
+                    onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                    onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    onClick={handleBoardPinChange}
+                    disabled={!boardAuthGranted || currentBoardPin.length < 1 || nextBoardPin.length < 4}
+                    className="text-white"
+                    style={{ backgroundColor: letterColors.N }}
+                  >
+                    Update Board PIN
+                  </Button>
+                  {pinMessage && <span className="text-xs text-muted-foreground">{pinMessage}</span>}
+                </div>
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+          </div>
+        </Tabs>
+      ) : (
+        <SettingsPanel
+          title="BINGO UI colors"
+          description="Colors used in the web interface only."
+        >
+          <SettingsGroup>
             <div>
-              <Label className="mb-2 block">Screensaver Type</Label>
-              <Select value={localScreensaverType} onValueChange={handleScreensaverTypeChange}>
+              <Label className="mb-2 block">Theme</Label>
+              <Select value={uiColorTheme} onValueChange={handleUiThemeChange}>
                 <SelectTrigger
-                  className="w-full"
+                  className="focus:ring-0 focus:ring-offset-0"
                   style={{ borderColor: letterColors.N }}
                   onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
                   onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
@@ -819,265 +1620,51 @@ export function Settings({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(Object.entries(SCREENSAVER_TYPE_LABELS) as [ScreensaverType, string][]).map(
-                    ([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    )
-                  )}
+                  {BINGO_UI_THEME_ORDER.map((themeId) => (
+                    <SelectItem key={themeId} value={themeId}>
+                      {BINGO_UI_THEME_LABELS[themeId]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-            {localScreensaverType === "text" && (
-            <div>
-              <Label className="mb-2 block">Screensaver Text</Label>
-              <Input
-                value={localScreensaverText}
-                onChange={handleScreensaverTextChange}
-                onBlur={(e) => {
-                  blurWithLetterN(e, letterColors.N);
-                  setIsEditingScreensaverText(false);
-                  void commitScreensaverText();
-                }}
-                maxLength={80}
-                placeholder="BINGO NIGHT"
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => {
-                  setIsEditingScreensaverText(true);
-                  focusWithLetterN(e, letterColors.N);
-                }}
-              />
-            </div>
+            {uiColorTheme === "custom" && (
+              <div>
+                <Label className="mb-3 block">Custom letter colors</Label>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {LETTERS.map((letter) => (
+                    <div key={letter} className="flex items-center gap-3">
+                      <span className="w-5 text-sm font-semibold text-muted-foreground">{letter}</span>
+                      <input
+                        type="color"
+                        value={localUiCustomColors[letter]}
+                        onChange={handleUiCustomColorPicker(letter)}
+                        className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
+                      />
+                      <Input
+                        value={localUiCustomColors[letter]}
+                        onChange={handleUiCustomColorHex(letter)}
+                        maxLength={7}
+                        className="w-28"
+                        placeholder="#3b82f6"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => {
+                          setEditingHexField(`ui-${letter}`);
+                          focusWithLetterN(e, letterColors.N);
+                        }}
+                        onBlur={(e) => {
+                          blurWithLetterN(e, letterColors.N);
+                          commitUiCustomColorHex(letter, e.target.value);
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
-            {localScreensaverType === "solid" && (
-            <div>
-              <Label className="mb-2 block">Screensaver Color</Label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="color"
-                  value={localScreensaverColor.startsWith("#") ? localScreensaverColor : `#${localScreensaverColor}`}
-                  onChange={handleScreensaverColorPicker}
-                  className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
-                />
-                <Input
-                  value={localScreensaverColor}
-                  onChange={handleScreensaverColorHex}
-                  maxLength={7}
-                  className="w-28"
-                  placeholder="#00ff00"
-                  style={{ borderColor: letterColors.N }}
-                  onFocus={(e) => {
-                    setEditingHexField("screensaver");
-                    focusWithLetterN(e, letterColors.N);
-                  }}
-                  onBlur={(e) => {
-                    blurWithLetterN(e, letterColors.N);
-                    void commitScreensaverColorHex(e.target.value);
-                  }}
-                />
-              </div>
-            </div>
-            )}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label>{screensaverSpeedLabel}</Label>
-                <span className="text-sm text-muted-foreground tabular-nums">
-                  {localScreensaverSpeedMs} ms
-                </span>
-              </div>
-              <Slider
-                value={[localScreensaverSpeedMs]}
-                min={20}
-                max={500}
-                step={5}
-                onValueChange={handleScreensaverSpeed}
-                onValueCommit={handleScreensaverSpeedCommit}
-                accentColor={letterColors.N}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
+          </SettingsGroup>
+        </SettingsPanel>
       )}
-
-      <div>
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-          BINGO UI Colors
-        </h3>
-        <div className="space-y-5">
-          <div>
-            <Label className="mb-2 block">Theme</Label>
-            <Select value={uiColorTheme} onValueChange={handleUiThemeChange}>
-              <SelectTrigger
-                className="focus:ring-0 focus:ring-offset-0"
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
-                onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BINGO_UI_THEME_ORDER.map((themeId) => (
-                  <SelectItem key={themeId} value={themeId}>
-                    {BINGO_UI_THEME_LABELS[themeId]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {uiColorTheme === "custom" && (
-            <div>
-              <Label className="mb-3 block">Custom letter colors</Label>
-              <div className="grid sm:grid-cols-2 gap-3">
-                {LETTERS.map((letter) => (
-                  <div key={letter} className="flex items-center gap-3">
-                    <span className="w-5 text-sm font-semibold text-muted-foreground">{letter}</span>
-                    <input
-                      type="color"
-                      value={localUiCustomColors[letter]}
-                      onChange={handleUiCustomColorPicker(letter)}
-                      className="h-10 w-12 rounded-lg border border-input cursor-pointer p-0.5"
-                    />
-                    <Input
-                      value={localUiCustomColors[letter]}
-                      onChange={handleUiCustomColorHex(letter)}
-                      maxLength={7}
-                      className="w-28"
-                      placeholder="#3b82f6"
-                      style={{ borderColor: letterColors.N }}
-                      onFocus={(e) => {
-                        setEditingHexField(`ui-${letter}`);
-                        focusWithLetterN(e, letterColors.N);
-                      }}
-                      onBlur={(e) => {
-                        blurWithLetterN(e, letterColors.N);
-                        commitUiCustomColorHex(letter, e.target.value);
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-        </div>
-      </div>
-
-      {settingsMode === "board" && (
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-            WiFi
-          </h3>
-          <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              On power-up, the board connects to this network when configured. If connection fails, it falls back to the
-              {" "}
-              <span className="font-medium">BINGO</span>
-              {" "}
-              access point. Use
-              {" "}
-              <span className="font-medium">http://bingo.local</span>
-              {" "}
-              in either mode.
-            </p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Input
-                value={localWifiSsid}
-                onChange={(e) => setLocalWifiSsid(e.target.value)}
-                placeholder="WiFi network name (SSID)"
-                disabled={!boardAuthGranted}
-                maxLength={32}
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => focusWithLetterN(e, letterColors.N)}
-                onBlur={(e) => blurWithLetterN(e, letterColors.N)}
-              />
-              <Input
-                type="password"
-                value={localWifiPassword}
-                onChange={(e) => setLocalWifiPassword(e.target.value)}
-                placeholder={wifiConfigured ? "New password (optional)" : "WiFi password"}
-                disabled={!boardAuthGranted}
-                maxLength={64}
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => focusWithLetterN(e, letterColors.N)}
-                onBlur={(e) => blurWithLetterN(e, letterColors.N)}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                type="button"
-                onClick={() => void handleWifiSave()}
-                disabled={!boardAuthGranted}
-                className="text-white"
-                style={{ backgroundColor: letterColors.N }}
-              >
-                Save WiFi
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void handleWifiClear()}
-                disabled={!boardAuthGranted || !wifiConfigured}
-              >
-                Clear WiFi
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                Current mode:
-                {" "}
-                {wifiMode === "sta" && wifiConnected ? "Connected to saved WiFi" : "Device access point"}
-              </span>
-              {wifiMessage && <span className="text-xs text-muted-foreground">{wifiMessage}</span>}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {settingsMode === "board" && (
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-            Board Access
-          </h3>
-          <div className="space-y-3">
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Input
-                type="password"
-                value={currentBoardPin}
-                onChange={(e) => setCurrentBoardPin(e.target.value)}
-                placeholder="Current PIN"
-                disabled={!boardAuthGranted}
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => focusWithLetterN(e, letterColors.N)}
-                onBlur={(e) => blurWithLetterN(e, letterColors.N)}
-              />
-              <Input
-                type="password"
-                value={nextBoardPin}
-                onChange={(e) => setNextBoardPin(e.target.value)}
-                placeholder="New PIN"
-                disabled={!boardAuthGranted}
-                style={{ borderColor: letterColors.N }}
-                onFocus={(e) => focusWithLetterN(e, letterColors.N)}
-                onBlur={(e) => blurWithLetterN(e, letterColors.N)}
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                type="button"
-                onClick={handleBoardPinChange}
-                disabled={!boardAuthGranted || currentBoardPin.length < 1 || nextBoardPin.length < 4}
-                className="text-white"
-                style={{ backgroundColor: letterColors.N }}
-              >
-                Update Board PIN
-              </Button>
-              {pinMessage && <span className="text-xs text-muted-foreground">{pinMessage}</span>}
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

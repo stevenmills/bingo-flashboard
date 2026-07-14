@@ -7,16 +7,37 @@ import { ModeChooser } from "@/components/ModeChooser";
 import { Settings } from "@/components/Settings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { Dices, Lock, LogOut, Maximize2, Menu, Minimize2, Moon, Pause, PawPrint, Play, Settings2, Sun } from "lucide-react";
+import { Dices, Laugh, Lock, LogOut, Maximize2, Menu, Minimize2, Moon, Pause, PawPrint, Play, Settings2, Sun, Volume2, VolumeX, X } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/hooks/useTheme";
 import { useBingoUiColors } from "@/hooks/useBingoUiColors";
+import { useCallerSpeech } from "@/hooks/useCallerSpeech";
+import { AutoCallingProgressBar } from "@/components/AutoCallingProgressBar";
+import { useBoardAuth } from "@/hooks/useBoardAuth";
+import { notifyAppModeChanged, notifyCardSessionChanged } from "@/lib/card-session-events";
+import { isBoardAuthHttpError, isStoredBoardSessionActive } from "@/lib/board-auth";
 import { api } from "@/api";
 import { Input } from "@/components/ui/input";
 import { rgbaFromHex } from "@/lib/bingo-ui-colors";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { AppMode, GameType } from "@/types";
+import { bootstrapQrCardClaim, clearQrBoardVerifyFlag, isQrBoardVerifyPending, takeQrCardClaim } from "@/lib/bingo-card-codec";
+
+const APP_MODE_STORAGE_KEY = "bingo-app-mode";
+// QR scan: unauthenticated → card mode; authenticated board session → board verify.
+const qrClaimRoute = bootstrapQrCardClaim(APP_MODE_STORAGE_KEY);
+
+function readInitialAppMode(): AppMode {
+  const saved = sessionStorage.getItem(APP_MODE_STORAGE_KEY);
+  if (saved === "board" || saved === "card") return saved;
+  return "board";
+}
+
+function readModeInitialized(): boolean {
+  const saved = sessionStorage.getItem(APP_MODE_STORAGE_KEY);
+  return saved === "board" || saved === "card";
+}
 
 type FullscreenDoc = Document & {
   webkitExitFullscreen?: () => Promise<void> | void;
@@ -47,16 +68,6 @@ function isFullscreenNow(): boolean {
   );
 }
 
-const APP_MODE_STORAGE_KEY = "bingo-app-mode";
-const BOARD_TOKEN_STORAGE_KEY = "bingo-board-token";
-const BOARD_TOKEN_EXPIRY_STORAGE_KEY = "bingo-board-token-expiry";
-
-function hasStoredBoardToken(): boolean {
-  const token = localStorage.getItem(BOARD_TOKEN_STORAGE_KEY);
-  const expiry = Number.parseInt(localStorage.getItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY) ?? "0", 10);
-  return Boolean(token && !Number.isNaN(expiry) && expiry > Date.now());
-}
-
 export default function App() {
   const readStoredAutoSync = () => {
     try {
@@ -70,12 +81,26 @@ export default function App() {
   };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [oddsOpen, setOddsOpen] = useState(false);
-  const [modeInitialized, setModeInitialized] = useState(false);
-  const [appMode, setAppMode] = useState<AppMode>("board");
-  const [pendingMode, setPendingMode] = useState<AppMode | null>(null);
-  // Keep state highly responsive during active board/card play even if websocket hiccups.
-  const gameStatePollMs = modeInitialized ? 500 : 1500;
-  const { state, connected, refresh, applyOptimistic, hydrated } = useGameState(gameStatePollMs);
+  // Initialize from storage after QR bootstrap so card claims never flash board+PIN.
+  const [modeInitialized, setModeInitialized] = useState(readModeInitialized);
+  const [appMode, setAppMode] = useState<AppMode>(readInitialAppMode);
+  const { state, connected, refresh, applyOptimistic, applyServerState, hydrated } = useGameState();
+  const {
+    boardAuthActive,
+    unlockOpen,
+    setUnlockOpen,
+    unlockPin,
+    setUnlockPin,
+    unlockError,
+    setUnlockError,
+    pendingMode,
+    setPendingMode,
+    requestUnlock,
+    unlockWithPin,
+    clearSession,
+    clearSessionForModeExit,
+    tryRefreshSession,
+  } = useBoardAuth();
   const {
     activeTheme: uiColorTheme,
     customColors: uiCustomColors,
@@ -83,43 +108,177 @@ export default function App() {
     setActiveTheme: setUiColorTheme,
     setCustomColor: setUiCustomColor,
   } = useBingoUiColors();
-  const [boardToken, setBoardToken] = useState<string | null>(null);
-  const [boardTokenExpiry, setBoardTokenExpiry] = useState<number>(0);
-  const [boardAuthVerified, setBoardAuthVerified] = useState(false);
-  const [boardAuthChecking, setBoardAuthChecking] = useState(hasStoredBoardToken);
-  const [unlockOpen, setUnlockOpen] = useState(false);
-  const [unlockPin, setUnlockPin] = useState("");
-  const [unlockError, setUnlockError] = useState<string | null>(null);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [cardOddsGameType, setCardOddsGameType] = useState<GameType>("traditional");
   const [cardAutoSyncEnabled, setCardAutoSyncEnabled] = useState<boolean>(() => readStoredAutoSync());
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() => isFullscreenNow());
-  const [secondsDraft, setSecondsDraft] = useState<string>("30");
+  const [secondsDraft, setSecondsDraft] = useState<string>("10");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
-  const boardAuthRestoreEpochRef = useRef(0);
   const autoCallingBeforeWinnerRef = useRef<boolean | null>(null);
   const suppressAutoRestoreRef = useRef(false);
   const autoRunningRef = useRef(false);
   const [winnerDialogActive, setWinnerDialogActive] = useState(false);
-  const { theme, setTheme } = useTheme();
-  const boardAuthActive = Boolean(boardToken && boardTokenExpiry > Date.now() && boardAuthVerified);
-  const canOpenSettings = appMode !== "board" || (boardAuthActive && !boardAuthChecking);
-  const cardJoined = Boolean(localStorage.getItem("bingo-card-id"));
+  const [noWinnerOpen, setNoWinnerOpen] = useState(false);
+  const [cardNotAuthenticOpen, setCardNotAuthenticOpen] = useState(false);
+  const boardQrVerifyStartedRef = useRef(false);
+  const { theme, setTheme } = useTheme(appMode);
+  const canOpenSettings = appMode !== "board" || boardAuthActive;
+  const [cardJoined, setCardJoined] = useState(() => Boolean(localStorage.getItem("bingo-card-id")));
   const allowOddsGameTypeSelect = modeInitialized && appMode === "card" && (!cardJoined || !connected);
   const oddsGameType = allowOddsGameTypeSelect ? cardOddsGameType : state.gameType;
 
   const showAutoControls =
-    modeInitialized && appMode === "board" && boardAuthActive && !settingsOpen && state.callingStyle === "automatic";
+    modeInitialized && appMode === "board" && boardAuthActive && state.callingStyle === "automatic";
+
+  const callerSpeechActive =
+    modeInitialized && appMode === "board" && boardAuthActive && connected;
+  const {
+    speechOn,
+    jokesOn,
+    speechUnlocked,
+    speechSupported,
+    speechRate,
+    setSpeechRate,
+    toggleSpeech,
+    toggleJokes,
+    isAudioHoldActive,
+    prefetchNumberClip,
+    announceNumberNow,
+  } = useCallerSpeech({
+    active: callerSpeechActive,
+    called: state.called,
+    winnerDeclared: state.winnerDeclared,
+    hydrated,
+    autoCallingEnabled: Boolean(state.autoCallingEnabled),
+  });
+  const showCallerSpeechControl =
+    modeInitialized && appMode === "board" && boardAuthActive && speechSupported;
+  const callerSpeechLive = speechOn && speechUnlocked;
+  const callerSpeechLabel = !speechOn
+    ? "Unmute number caller"
+    : !speechUnlocked
+      ? "Tap to enable caller sound"
+      : "Mute number caller";
+  const callerSpeechMenuLabel = !speechOn
+    ? "Unmute caller"
+    : !speechUnlocked
+      ? "Enable caller sound"
+      : "Mute caller";
+  const jokesEnabled = callerSpeechLive;
+  const jokesLabel = !jokesEnabled
+    ? "Enable caller sound first"
+    : jokesOn
+      ? "Turn jokes off"
+      : "Turn jokes on";
+  const jokesMenuLabel = !jokesEnabled
+    ? "Enable caller first"
+    : jokesOn
+      ? "Jokes off"
+      : "Jokes on";
 
   useEffect(() => {
     const savedMode = sessionStorage.getItem(APP_MODE_STORAGE_KEY);
     if (savedMode === "board" || savedMode === "card") {
       setAppMode(savedMode);
       setModeInitialized(true);
+      // Card / player QR claims must never open the PIN unlock dialog.
+      if (savedMode === "card" || qrClaimRoute === "card") {
+        setUnlockOpen(false);
+        setPendingMode(null);
+        return;
+      }
+      if (savedMode === "board" && !isStoredBoardSessionActive()) {
+        requestUnlock("board");
+      }
       return;
     }
     setModeInitialized(false);
+  }, [requestUnlock, setUnlockOpen, setPendingMode]);
+
+  useEffect(() => {
+    if (appMode === "card") {
+      setUnlockOpen(false);
+      setPendingMode(null);
+    }
+  }, [appMode, setUnlockOpen, setPendingMode]);
+
+  useEffect(() => {
+    if (appMode === "board" && settingsOpen && !boardAuthActive) {
+      setSettingsOpen(false);
+    }
+  }, [appMode, settingsOpen, boardAuthActive]);
+
+  useEffect(() => {
+    if (!modeInitialized || appMode !== "board") return;
+    if (boardAuthActive || unlockOpen) return;
+    // Don't PIN-gate a player QR claim that was forced into card mode.
+    if (qrClaimRoute === "card") return;
+    requestUnlock("board");
+  }, [modeInitialized, appMode, boardAuthActive, unlockOpen, requestUnlock]);
+
+  useEffect(() => {
+    if (!modeInitialized || appMode !== "board" || !boardAuthActive || !connected) return;
+    if (state.boardAuthValid !== false) return;
+    void tryRefreshSession();
+  }, [modeInitialized, appMode, boardAuthActive, connected, state.boardAuthValid, tryRefreshSession]);
+
+  useEffect(() => {
+    if (!modeInitialized || appMode !== "board" || !boardAuthActive || !connected || !hydrated) return;
+    if (!isQrBoardVerifyPending()) return;
+    if (boardQrVerifyStartedRef.current) return;
+    boardQrVerifyStartedRef.current = true;
+
+    const claim = takeQrCardClaim();
+    clearQrBoardVerifyFlag();
+    if (!claim) {
+      boardQrVerifyStartedRef.current = false;
+      return;
+    }
+
+    void (async () => {
+      try {
+        const result = await api.claimPrintedCard(claim.numbers, claim.sig);
+        if (result.authentic !== true) {
+          try {
+            await api.leaveCard(result.cardId);
+          } catch {
+            // Best effort.
+          }
+          await refresh({ force: true });
+          setCardNotAuthenticOpen(true);
+          return;
+        }
+        if (result.winner) {
+          await refresh({ force: true });
+        } else {
+          try {
+            await api.leaveCard(result.cardId);
+          } catch {
+            // Best effort.
+          }
+          await refresh({ force: true });
+          setNoWinnerOpen(true);
+        }
+      } catch {
+        setNoWinnerOpen(true);
+      } finally {
+        boardQrVerifyStartedRef.current = false;
+      }
+    })();
+  }, [modeInitialized, appMode, boardAuthActive, connected, hydrated, refresh]);
+
+  const boardSessionStale =
+    modeInitialized &&
+    appMode === "board" &&
+    boardAuthActive &&
+    connected &&
+    state.boardAuthValid === false;
+
+  useEffect(() => {
+    const syncCardJoined = () => setCardJoined(Boolean(localStorage.getItem("bingo-card-id")));
+    window.addEventListener("bingo:card-session-changed", syncCardJoined);
+    return () => window.removeEventListener("bingo:card-session-changed", syncCardJoined);
   }, []);
 
   useEffect(() => {
@@ -136,137 +295,8 @@ export default function App() {
     return () => window.removeEventListener("bingo:card-auto-sync-changed", onCardAutoSyncChanged as EventListener);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function restoreBoardAuth() {
-      const restoreEpoch = boardAuthRestoreEpochRef.current;
-      const token = localStorage.getItem(BOARD_TOKEN_STORAGE_KEY);
-      const expiry = Number.parseInt(localStorage.getItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY) ?? "0", 10);
-      if (!token || Number.isNaN(expiry) || expiry <= Date.now()) {
-        api.setBoardToken(null);
-        localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
-        localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
-        if (!cancelled && restoreEpoch === boardAuthRestoreEpochRef.current) {
-          setBoardToken(null);
-          setBoardTokenExpiry(0);
-          setBoardAuthVerified(false);
-          setBoardAuthChecking(false);
-        }
-        return;
-      }
-
-      setBoardAuthChecking(true);
-      if (restoreEpoch === boardAuthRestoreEpochRef.current) {
-        setBoardToken(token);
-        setBoardTokenExpiry(expiry);
-      }
-      api.setBoardToken(token);
-
-      try {
-        const session = await api.refreshBoardAuth();
-        if (cancelled || restoreEpoch !== boardAuthRestoreEpochRef.current) return;
-        const nextExpiry = Date.now() + session.ttlMs;
-        setBoardToken(session.token);
-        setBoardTokenExpiry(nextExpiry);
-        setBoardAuthVerified(true);
-        api.setBoardToken(session.token);
-        localStorage.setItem(BOARD_TOKEN_STORAGE_KEY, session.token);
-        localStorage.setItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY, String(nextExpiry));
-      } catch {
-        if (cancelled || restoreEpoch !== boardAuthRestoreEpochRef.current) return;
-        setBoardToken(null);
-        setBoardTokenExpiry(0);
-        setBoardAuthVerified(false);
-        api.setBoardToken(null);
-        localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
-        localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
-      } finally {
-        if (!cancelled && restoreEpoch === boardAuthRestoreEpochRef.current) {
-          setBoardAuthChecking(false);
-        }
-      }
-    }
-
-    void restoreBoardAuth();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!boardToken || boardTokenExpiry <= 0) return;
-    const id = window.setInterval(() => {
-      if (Date.now() < boardTokenExpiry) return;
-      setBoardToken(null);
-      setBoardTokenExpiry(0);
-      setBoardAuthVerified(false);
-      api.setBoardToken(null);
-      localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
-      localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
-      setSettingsOpen(false);
-      if (appMode === "board") {
-        setPendingMode("board");
-        setUnlockError(null);
-        setUnlockPin("");
-        setUnlockOpen(true);
-      }
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [boardToken, boardTokenExpiry, appMode]);
-
-  useEffect(() => {
-    const clearBoardAuth = () => {
-      boardAuthRestoreEpochRef.current += 1;
-      setBoardToken(null);
-      setBoardTokenExpiry(0);
-      setBoardAuthVerified(false);
-      api.setBoardToken(null);
-      localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
-      localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
-      setSettingsOpen(false);
-      if (appMode === "board") {
-        setPendingMode("board");
-        setUnlockError(null);
-        setUnlockPin("");
-        setUnlockOpen(true);
-      }
-    };
-    window.addEventListener("bingo:board-auth-invalid", clearBoardAuth as EventListener);
-    return () => window.removeEventListener("bingo:board-auth-invalid", clearBoardAuth as EventListener);
-  }, [appMode]);
-
-  useEffect(() => {
-    if (appMode !== "board") return;
-    if (boardAuthChecking) return;
-    if (settingsOpen && !boardAuthActive) {
-      setSettingsOpen(false);
-    }
-  }, [appMode, boardAuthChecking, settingsOpen, boardAuthActive]);
-
-  useEffect(() => {
-    if (!modeInitialized) return;
-    if (appMode !== "board") return;
-    if (boardAuthChecking) return;
-    if (boardAuthActive) return;
-    if (unlockOpen) return;
-    const id = window.setTimeout(() => {
-      // Debounce board->card ejection so transient auth/state blips don't flip mode.
-      if (!modeInitialized) return;
-      if (appMode !== "board") return;
-      if (boardAuthChecking) return;
-      if (boardAuthActive) return;
-      if (unlockOpen) return;
-      setPendingMode("board");
-      setUnlockError(null);
-      setUnlockPin("");
-      setUnlockOpen(true);
-    }, 1500);
-    return () => window.clearTimeout(id);
-  }, [modeInitialized, appMode, boardAuthActive, boardAuthChecking, unlockOpen]);
-
   const autoRunning = Boolean(state.autoCallingEnabled);
-  const autoSeconds = Math.max(1, Math.min(600, state.autoCallingSeconds ?? 30));
+  const autoSeconds = Math.max(1, Math.min(600, state.autoCallingSeconds ?? 10));
 
   useEffect(() => {
     autoRunningRef.current = autoRunning;
@@ -281,7 +311,7 @@ export default function App() {
       autoCallingBeforeWinnerRef.current = wasRunning;
       if (wasRunning) {
         void api.setAutoCallingEnabled(false).catch((e: unknown) => {
-          if (e instanceof Error && e.message.includes("401")) {
+          if (isBoardAuthHttpError(e)) {
             window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
           }
         });
@@ -293,7 +323,7 @@ export default function App() {
     autoCallingBeforeWinnerRef.current = null;
     if (shouldRestore && !suppressAutoRestoreRef.current) {
       void api.setAutoCallingEnabled(true).catch((e: unknown) => {
-        if (e instanceof Error && e.message.includes("401")) {
+        if (isBoardAuthHttpError(e)) {
           window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
         }
       });
@@ -304,59 +334,10 @@ export default function App() {
   const handleSuppressAutoRestore = useCallback(() => {
     suppressAutoRestoreRef.current = true;
   }, []);
-  const progressRemaining = autoRunning
-    ? Math.max(
-      0,
-      Math.min(1, (state.autoCallingRemainingMs ?? 0) / Math.max(1, autoSeconds * 1000))
-    )
-    : 1;
-  const [smoothProgressRemaining, setSmoothProgressRemaining] = useState(progressRemaining);
-  const autoProgressAnchorRef = useRef<{ remainingMs: number; at: number }>({
-    remainingMs: Math.max(0, state.autoCallingRemainingMs ?? 0),
-    at: performance.now(),
-  });
-  const autoProgressRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     setSecondsDraft(String(autoSeconds));
   }, [autoSeconds]);
-
-  useEffect(() => {
-    autoProgressAnchorRef.current = {
-      remainingMs: Math.max(0, state.autoCallingRemainingMs ?? 0),
-      at: performance.now(),
-    };
-    if (!autoRunning || !showAutoControls) {
-      setSmoothProgressRemaining(1);
-      return;
-    }
-    setSmoothProgressRemaining(progressRemaining);
-  }, [autoRunning, showAutoControls, state.autoCallingRemainingMs, autoSeconds, progressRemaining]);
-
-  useEffect(() => {
-    if (autoProgressRafRef.current !== null) {
-      cancelAnimationFrame(autoProgressRafRef.current);
-      autoProgressRafRef.current = null;
-    }
-    if (!autoRunning || !showAutoControls) return;
-
-    const tick = () => {
-      const anchor = autoProgressAnchorRef.current;
-      const elapsed = Math.max(0, performance.now() - anchor.at);
-      const estimatedRemainingMs = Math.max(0, anchor.remainingMs - elapsed);
-      const ratio = Math.max(0, Math.min(1, estimatedRemainingMs / Math.max(1, autoSeconds * 1000)));
-      setSmoothProgressRemaining(ratio);
-      autoProgressRafRef.current = requestAnimationFrame(tick);
-    };
-
-    autoProgressRafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (autoProgressRafRef.current !== null) {
-        cancelAnimationFrame(autoProgressRafRef.current);
-        autoProgressRafRef.current = null;
-      }
-    };
-  }, [autoRunning, showAutoControls, autoSeconds]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -383,6 +364,7 @@ export default function App() {
         // Best effort cleanup only.
       });
       localStorage.removeItem("bingo-card-id");
+      notifyCardSessionChanged();
     }
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       // Browser-native confirmation for page refresh/close in board mode.
@@ -401,37 +383,38 @@ export default function App() {
     }
     const clamped = Math.max(1, Math.min(600, parsed));
     setSecondsDraft(String(clamped));
-    void api.setAutoCallingSeconds(clamped)
-      .then(() => refresh())
-      .catch((e: unknown) => {
-        if (e instanceof Error && e.message.includes("401")) {
-          window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
-        }
-      });
+    void api.setAutoCallingSeconds(clamped).catch((e: unknown) => {
+      if (isBoardAuthHttpError(e)) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+      }
+      void refresh({ force: true });
+    });
   };
 
   const toggleAuto = () => {
     const next = !autoRunning;
-    void api.setAutoCallingEnabled(next)
-      .then(() => refresh())
+    void api
+      .setAutoCallingEnabled(next)
+      .then((s) => {
+        if (s && typeof s === "object" && "called" in s) {
+          applyServerState(s as typeof state);
+        } else {
+          void refresh({ force: true });
+        }
+      })
       .catch((e: unknown) => {
-        if (e instanceof Error && e.message.includes("401")) {
+        if (isBoardAuthHttpError(e)) {
           window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
         }
+        void refresh({ force: true });
       });
   };
 
   const toggleSettingsPanel = useCallback(() => {
-    if (appMode === "board") {
-      if (boardAuthChecking) return;
-      if (!boardAuthActive) {
-        setSettingsOpen(false);
-        setPendingMode("board");
-        setUnlockError(null);
-        setUnlockPin("");
-        setUnlockOpen(true);
-        return;
-      }
+    if (appMode === "board" && !boardAuthActive) {
+      setSettingsOpen(false);
+      requestUnlock("board");
+      return;
     }
     setSettingsOpen((open) => {
       const nextOpen = !open;
@@ -440,7 +423,7 @@ export default function App() {
       }
       return nextOpen;
     });
-  }, [appMode, boardAuthActive, boardAuthChecking]);
+  }, [appMode, boardAuthActive, requestUnlock]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -497,6 +480,7 @@ export default function App() {
     setModeInitialized(true);
     setSettingsOpen(false);
     sessionStorage.setItem(APP_MODE_STORAGE_KEY, mode);
+    notifyAppModeChanged();
   };
 
   const requestModeChange = (mode: AppMode) => {
@@ -504,15 +488,11 @@ export default function App() {
       setMode("card");
       return;
     }
-    if (boardAuthChecking) return;
     if (boardAuthActive) {
       setMode("board");
       return;
     }
-    setPendingMode("board");
-    setUnlockError(null);
-    setUnlockPin("");
-    setUnlockOpen(true);
+    requestUnlock("board");
   };
 
   const handleExitToModeChooser = () => {
@@ -520,37 +500,24 @@ export default function App() {
     setOddsOpen(false);
     setModeInitialized(false);
     setExitConfirmOpen(false);
+    sessionStorage.removeItem(APP_MODE_STORAGE_KEY);
+    void clearSessionForModeExit();
   };
 
   const handleUnlockBoard = async () => {
-    try {
-      boardAuthRestoreEpochRef.current += 1;
-      const session = await api.unlockBoard(unlockPin.trim());
-      api.setBoardToken(session.token);
-      await refresh();
-      const expiry = Date.now() + session.ttlMs;
-      setBoardToken(session.token);
-      setBoardTokenExpiry(expiry);
-      setBoardAuthVerified(true);
-      localStorage.setItem(BOARD_TOKEN_STORAGE_KEY, session.token);
-      localStorage.setItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY, String(expiry));
-      setUnlockOpen(false);
-      setUnlockError(null);
-      if (pendingMode === "board") setMode("board");
-      setPendingMode(null);
-    } catch {
-      setUnlockError("Invalid board PIN.");
-    }
+    const ok = await unlockWithPin(unlockPin);
+    if (!ok) return;
+    await refresh({ force: true });
+    if (pendingMode === "board") setMode("board");
   };
 
   const handleBoardLock = async () => {
-    await api.lockBoard();
-    setBoardToken(null);
-    setBoardTokenExpiry(0);
-    setBoardAuthVerified(false);
-    api.setBoardToken(null);
-    localStorage.removeItem(BOARD_TOKEN_STORAGE_KEY);
-    localStorage.removeItem(BOARD_TOKEN_EXPIRY_STORAGE_KEY);
+    try {
+      await api.lockBoard();
+    } catch {
+      // Still clear local session if the board is unreachable.
+    }
+    clearSession({ promptUnlock: false });
     setMode("card");
   };
 
@@ -568,12 +535,7 @@ export default function App() {
         </p>
         <Button
           type="button"
-          onClick={() => {
-            setPendingMode("board");
-            setUnlockError(null);
-            setUnlockPin("");
-            setUnlockOpen(true);
-          }}
+          onClick={() => requestUnlock("board")}
           className="text-white"
           style={{ backgroundColor: uiLetterColors.N }}
         >
@@ -611,14 +573,10 @@ export default function App() {
               {modeInitialized && canOpenSettings && (
                 <button
                   type="button"
-                  className={cn(
-                    "px-3 py-1.5 rounded-md text-sm font-medium transition-colors inline-flex items-center",
-                    settingsOpen
-                      ? "text-white"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                  )}
-                  style={settingsOpen ? { backgroundColor: uiLetterColors.N } : undefined}
-                  aria-label="Toggle settings"
+                  className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
+                  aria-label={settingsOpen ? "Close settings" : "Open settings"}
+                  aria-pressed={settingsOpen}
+                  title={settingsOpen ? "Close settings" : "Settings"}
                   onClick={toggleSettingsPanel}
                 >
                   <Settings2 className="h-4 w-4" />
@@ -633,6 +591,45 @@ export default function App() {
                   onClick={() => setOddsOpen((open) => !open)}
                 >
                   <Dices className="h-4 w-4" />
+                </button>
+              )}
+              {showCallerSpeechControl && (
+                <button
+                  type="button"
+                  className={cn(
+                    "h-8 w-8 rounded-md inline-flex items-center justify-center transition-colors",
+                    callerSpeechLive
+                      ? "text-foreground hover:bg-accent"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                    speechOn && !speechUnlocked && "animate-pulse"
+                  )}
+                  style={callerSpeechLive ? { color: uiLetterColors.N } : undefined}
+                  aria-label={callerSpeechLabel}
+                  aria-pressed={callerSpeechLive}
+                  title={callerSpeechLabel}
+                  onClick={toggleSpeech}
+                >
+                  {callerSpeechLive ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                </button>
+              )}
+              {showCallerSpeechControl && (
+                <button
+                  type="button"
+                  disabled={!jokesEnabled}
+                  className={cn(
+                    "h-8 w-8 rounded-md inline-flex items-center justify-center transition-colors",
+                    jokesOn
+                      ? "text-foreground hover:bg-accent"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                    !jokesEnabled && "opacity-40 cursor-not-allowed hover:bg-transparent"
+                  )}
+                  style={jokesOn && jokesEnabled ? { color: uiLetterColors.G } : undefined}
+                  aria-label={jokesLabel}
+                  aria-pressed={jokesOn}
+                  title={jokesLabel}
+                  onClick={toggleJokes}
+                >
+                  <Laugh className="h-4 w-4" />
                 </button>
               )}
               <button
@@ -653,59 +650,115 @@ export default function App() {
             <div className="md:hidden relative" ref={mobileMenuRef}>
               <button
                 type="button"
-                className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
-                aria-label="Open menu"
-                title="Menu"
-                onClick={() => setMobileMenuOpen((open) => !open)}
+                className={cn(
+                  "h-8 w-8 rounded-md inline-flex items-center justify-center transition-colors",
+                  settingsOpen
+                    ? "text-white"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                )}
+                style={settingsOpen ? { backgroundColor: uiLetterColors.N } : undefined}
+                aria-label={settingsOpen ? "Close settings" : "Open menu"}
+                title={settingsOpen ? "Close settings" : "Menu"}
+                onClick={() => {
+                  if (settingsOpen) {
+                    setMobileMenuOpen(false);
+                    setSettingsOpen(false);
+                    return;
+                  }
+                  setMobileMenuOpen((open) => !open);
+                }}
               >
-                <Menu className="h-4 w-4" />
+                {settingsOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
               </button>
-              {mobileMenuOpen && (
-                <div className="absolute right-0 top-10 z-50 w-48 rounded-md border bg-card text-card-foreground p-1 shadow-md">
+              {mobileMenuOpen && !settingsOpen && (
+                <div className="absolute right-0 top-10 z-50 w-52 rounded-md border bg-card text-card-foreground p-1 shadow-md">
                   {modeInitialized && (appMode !== "board" || boardAuthActive) && (
                     <button
                       type="button"
-                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
                       onClick={() => {
                         setMobileMenuOpen(false);
                         setExitConfirmOpen(true);
                       }}
                     >
+                      <LogOut className="h-3.5 w-3.5 shrink-0" />
                       Exit to mode selection
                     </button>
                   )}
                   {modeInitialized && canOpenSettings && (
                     <button
                       type="button"
-                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
                       onClick={() => {
                         setMobileMenuOpen(false);
                         toggleSettingsPanel();
                       }}
                     >
+                      <Settings2 className="h-3.5 w-3.5 shrink-0" />
                       {settingsOpen ? "Hide settings" : "Show settings"}
                     </button>
                   )}
                   {modeInitialized && (appMode !== "board" || boardAuthActive) && (
                     <button
                       type="button"
-                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
                       onClick={() => {
                         setMobileMenuOpen(false);
                         setOddsOpen((open) => !open);
                       }}
                     >
+                      <Dices className="h-3.5 w-3.5 shrink-0" />
                       {oddsOpen ? "Hide odds" : "Show odds"}
+                    </button>
+                  )}
+                  {showCallerSpeechControl && (
+                    <button
+                      type="button"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        toggleSpeech();
+                      }}
+                    >
+                      {callerSpeechLive ? (
+                        <Volume2 className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <VolumeX className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      {callerSpeechMenuLabel}
+                    </button>
+                  )}
+                  {showCallerSpeechControl && (
+                    <button
+                      type="button"
+                      disabled={!jokesEnabled}
+                      className={cn(
+                        "w-full rounded-sm px-2 py-1.5 text-left text-sm inline-flex items-center gap-2",
+                        jokesEnabled ? "hover:bg-accent" : "opacity-40 cursor-not-allowed"
+                      )}
+                      onClick={() => {
+                        if (!jokesEnabled) return;
+                        setMobileMenuOpen(false);
+                        toggleJokes();
+                      }}
+                    >
+                      <Laugh className="h-3.5 w-3.5 shrink-0" />
+                      {jokesMenuLabel}
                     </button>
                   )}
                   <button
                     type="button"
-                    className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
                     onClick={() => {
                       setMobileMenuOpen(false);
                       void handleToggleFullscreen();
                     }}
                   >
+                    {isFullscreen ? (
+                      <Minimize2 className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+                    )}
                     {isFullscreen ? "Exit full screen" : "Enter full screen"}
                   </button>
                   <button
@@ -716,7 +769,11 @@ export default function App() {
                       setTheme(theme === "dark" ? "light" : "dark");
                     }}
                   >
-                    {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                    {theme === "dark" ? (
+                      <Sun className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <Moon className="h-3.5 w-3.5 shrink-0" />
+                    )}
                     {theme === "dark" ? "Light mode" : "Dark mode"}
                   </button>
                 </div>
@@ -788,15 +845,14 @@ export default function App() {
           </div>
         </div>
         {showAutoControls && autoRunning && (
-          <div className="absolute left-0 right-0 top-0 h-0.5 bg-transparent pointer-events-none">
-            <div
-              className="h-full ml-auto"
-              style={{
-                width: `${Math.max(0, Math.min(1, smoothProgressRemaining)) * 100}%`,
-                backgroundColor: rgbaFromHex(uiLetterColors.N, 0.7),
-              }}
-            />
-          </div>
+          <AutoCallingProgressBar
+            running={autoRunning}
+            intervalSeconds={autoSeconds}
+            remainingMs={state.autoCallingRemainingMs ?? 0}
+            serverHold={Boolean(state.autoCallingHold)}
+            isAudioHold={isAudioHoldActive}
+            color={rgbaFromHex(uiLetterColors.N, 0.7)}
+          />
         )}
       </header>
 
@@ -807,6 +863,21 @@ export default function App() {
           modeInitialized && (appMode === "board" || appMode === "card") && "pb-16"
         )}
       >
+        {boardSessionStale && (
+          <div className="mb-4 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+            Board session expired on the flashboard. Unlock with your PIN again — until then, reset and draw
+            won&apos;t update the physical LEDs.
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="ml-3 h-7"
+              onClick={() => requestUnlock("board")}
+            >
+              Unlock board
+            </Button>
+          </div>
+        )}
         {!modeInitialized ? (
           <ModeChooser onSelect={requestModeChange} />
         ) : (
@@ -818,6 +889,9 @@ export default function App() {
                     state={state}
                     onRefresh={refresh}
                     onApplyOptimistic={applyOptimistic}
+                    onApplyServerState={applyServerState}
+                    onPrefetchCallNumber={prefetchNumberClip}
+                    onAnnounceCallNumber={announceNumberNow}
                     onWinnerDialogActiveChange={handleWinnerDialogActiveChange}
                     onSuppressAutoRestore={handleSuppressAutoRestore}
                     uiLetterColors={uiLetterColors}
@@ -835,13 +909,14 @@ export default function App() {
                 renderBoardLockedState()
               ) : (
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="md:hidden">
                     <CardTitle>Settings</CardTitle>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="md:pt-6">
                     <Settings
                       settingsOpen={settingsOpen}
                       settingsMode={appMode}
+                      onClose={() => setSettingsOpen(false)}
                       brightness={state.brightness}
                       ledVibrance={state.ledVibrance}
                       theme={state.theme}
@@ -855,7 +930,10 @@ export default function App() {
                       screensaverSpeedMs={state.screensaverSpeedMs}
                       screensaverColor={state.screensaverColor}
                       ledLetterColors={state.ledLetterColors}
-                      ledBoardSectionOrder={state.ledBoardSectionOrder}
+                      letterFullMode={state.letterFullMode}
+                      currentNumberEffect={state.currentNumberEffect}
+                      currentNumberColor={state.currentNumberColor}
+                      calledNumberBanner={state.calledNumberBanner}
                       wifiSsid={state.wifiSsid}
                       wifiConfigured={state.wifiConfigured}
                       wifiConnected={state.wifiConnected}
@@ -867,6 +945,8 @@ export default function App() {
                       letterColors={uiLetterColors}
                       onUiColorThemeChange={setUiColorTheme}
                       onUiCustomColorChange={setUiCustomColor}
+                      callerSpeechRate={speechRate}
+                      onCallerSpeechRateChange={setSpeechRate}
                       onRefresh={refresh}
                     />
                   </CardContent>
@@ -886,7 +966,16 @@ export default function App() {
           onGameTypeChange={setCardOddsGameType}
         />
       )}
-      <Dialog open={unlockOpen} onOpenChange={setUnlockOpen}>
+      <Dialog
+        open={unlockOpen && appMode === "board"}
+        onOpenChange={(open) => {
+          if (appMode === "card") {
+            setUnlockOpen(false);
+            return;
+          }
+          setUnlockOpen(open);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -947,6 +1036,33 @@ export default function App() {
               Cancel
             </Button>
             <Button onClick={handleExitToModeChooser}>Exit</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={cardNotAuthenticOpen} onOpenChange={setCardNotAuthenticOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Invalid Card</DialogTitle>
+            <DialogDescription>
+              This card is not valid on this device. Its security hash does not match this bingo
+              board, so it was not generated here (or the QR was altered).
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setCardNotAuthenticOpen(false)}>OK</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={noWinnerOpen} onOpenChange={setNoWinnerOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>No Winner Identified!</DialogTitle>
+            <DialogDescription>
+              This scanned card is not a bingo for the numbers called and the current game type.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setNoWinnerOpen(false)}>OK</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

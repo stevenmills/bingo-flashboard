@@ -1,5 +1,5 @@
 /**
- * Bingo Flashboard – ESP32 + 105-LED WS2811 + WiFi AP
+ * Bingo Flashboard – AITRIP 30-pin ESP-WROOM-32 + 105-LED WS2811 + WiFi AP
  * Plan: arduino_bingo_led_board_179bac68.plan.md
  */
 
@@ -15,25 +15,39 @@
 #include <nvs_flash.h>
 #include <ctype.h>
 #include <string.h>
+#include "mbedtls/md.h"
+#include "driver/gpio.h"
 #include "config.h"
 #include "led_map.h"
 
 // --- LED strip ---
 CRGB leds[NUM_LEDS];
-#if STATUS_LED_ENABLED
-CRGB statusLed[STATUS_LED_COUNT];
-#endif
-uint8_t brightness = 128;
-const uint8_t DEFAULT_BRIGHTNESS = 128;
-uint8_t ledVibrance = 70;  // 0..100
-const uint8_t DEFAULT_LED_VIBRANCE = 70;
+uint8_t brightness = 255;
+const uint8_t DEFAULT_BRIGHTNESS = 255;
+uint8_t ledVibrance = 75;  // 0..100
+const uint8_t DEFAULT_LED_VIBRANCE = 75;
 bool screensaverEnabled = false;
-uint8_t screensaverType = 0;  // 0=text, 1=rainbow, 2=solid
+// Screensaver types:
+// 0=text, 1=rainbow, 2=solid, 3=fire_matrix, 4=pacifica, 5=pride,
+// 6=twinkle_fox, 7=cylon, 8=noise_palette, 9=sinelon, 10=juggle,
+// 11=confetti, 12=fire2012
+uint8_t screensaverType = 1;  // rainbow
 char screensaverText[81] = "BINGO";
-uint32_t screensaverColor = 0x00FF00;
-uint16_t screensaverSpeedMs = 90;
+uint32_t screensaverColor = 0x4E7A27;
+uint16_t screensaverSpeedMs = 230;
 unsigned long screensaverLastStepMs = 0;
 int screensaverOffsetCols = 0;
+int8_t screensaverCylonDir = 1;
+uint8_t screensaverHue = 0;
+CRGB screensaverBuf[NUM_LEDS];
+uint8_t screensaverNoise[21][5];
+uint16_t screensaverNoiseX = 0;
+uint16_t screensaverNoiseY = 0;
+uint16_t screensaverNoiseZ = 0;
+uint8_t screensaverFireHeat[21][5];
+CRGBPalette16 screensaverTwinklePal;
+CRGBPalette16 screensaverTwinkleTarget;
+bool screensaverTwinklePalInit = false;
 enum WinnerAnimPhase : uint8_t { WINNER_PHASE_BOARD = 0, WINNER_PHASE_SCROLL = 1 };
 WinnerAnimPhase winnerAnimPhase = WINNER_PHASE_BOARD;
 bool winnerAnimActive = false;
@@ -44,8 +58,12 @@ bool winnerScrollShownThisRound = false;
 const unsigned long WINNER_BOARD_PHASE_MS = 2000;
 const uint16_t WINNER_SCROLL_SPEED_MS = 90;
 bool autoCallingEnabled = false;
-uint16_t autoCallingSeconds = 30;
+bool autoCallingHold = false;          // Pause countdown while board UI plays call-out audio
+bool autoCallingWaitForAudio = false;  // Board UI has caller sound live
+static bool deferResetPersistence = false;
+uint16_t autoCallingSeconds = 10;
 unsigned long autoCallingNextDrawMs = 0;
+unsigned long autoCallingHoldSinceMs = 0;
 
 // --- Game state ---
 bool called[76];  // 1..75; [0] unused
@@ -57,11 +75,13 @@ int callOrderCount = 0;
 static char callingStyleBuf[12] = "automatic";
 const char* callingStyle = callingStyleBuf;
 bool gameEstablished = false;
-static char gameTypeBuf[20] = "traditional";
+static char gameTypeBuf[20] = "cover_all";
 const char* gameType = gameTypeBuf;
 bool winnerDeclared = false;
 bool manualWinnerDeclared = false;
 bool winnerSuppressed = false;
+bool pendingWinnerActivation = false;
+bool pendingWinnerEventBump = false;
 int winnerCount = 0;
 uint32_t winnerEventId = 0;
 uint16_t boardSeed = 1000; // 4-digit game/board join code
@@ -69,8 +89,16 @@ int themeId = 0;  // 0..n
 static char colorModeBuf[8] = "theme";
 const char* colorMode = colorModeBuf;
 uint32_t staticColor = 0x00FF00;  // RGB for FastLED
-uint32_t letterHeaderColor = 0xFF0000;  // BINGO header LEDs default red
+uint32_t letterHeaderColor = 0xFFD8A8;  // Warm white — BINGO header LEDs
 uint32_t gameTypeLedColor = 0xFFD8A8;  // Warm white default for game type indicator LEDs
+uint32_t currentNumberColor = 0xFFFFFF;  // Current-number beacon color
+bool calledNumberBannerEnabled = false;
+int calledNumberBannerNumber = 0;
+unsigned long calledNumberBannerUntilMs = 0;
+static char letterFullModeBuf[16] = "on";  // on | off | number_theme
+const char* letterFullMode = letterFullModeBuf;
+static char currentNumberEffectBuf[12] = "flash";  // flash | pulse | strobe
+const char* currentNumberEffect = currentNumberEffectBuf;
 unsigned long letterHeaderPreviewUntilMs = 0;
 // Custom hardware LED colors for B/I/N/G/O.
 uint32_t customLetterColors[5] = {
@@ -81,10 +109,12 @@ uint32_t customLetterColors[5] = {
   0xA855F7, // O
 };
 static char boardPinBuf[12] = BOARD_DEFAULT_PIN;
+/** Stable per-board id used as HMAC salt for printable-card authenticity. */
+static char deviceIdBuf[33] = "";
 
-// --- LED board section layout (left-to-right) ---
-uint8_t boardSectionOrder[3] = {SEC_GAME_TYPE, SEC_LETTERS, SEC_NUMBERS};
-int sectionStartCol[3] = {0, 5, 6};
+// --- LED board section layout (fixed left-to-right: letters, numbers, game type) ---
+uint8_t boardSectionOrder[3] = {SEC_LETTERS, SEC_NUMBERS, SEC_GAME_TYPE};
+int sectionStartCol[3] = {0, 1, 16};
 
 // --- WiFi STA credentials ---
 static char staSsidBuf[WIFI_SSID_MAX_LEN + 1] = "";
@@ -94,6 +124,8 @@ bool wifiStaConnected = false;
 // --- Board auth ---
 static char boardAuthToken[33] = "";
 unsigned long boardAuthExpiryMs = 0;
+static uint8_t boardUnlockFailCount = 0;
+static unsigned long boardUnlockLockoutUntilMs = 0;
 
 // --- Shared card sessions ---
 const int MAX_CARD_SESSIONS = 32;
@@ -121,6 +153,7 @@ struct WsSubscription {
   bool active;
   uint32_t clientId;
   bool boardMode;
+  bool boardAuthOk;
   char cardId[17];
 };
 WsSubscription wsSubscriptions[MAX_WS_SUBSCRIPTIONS];
@@ -131,15 +164,12 @@ const size_t STATE_WS_ENV_DOC_CAPACITY = 4608;
 
 // --- LED board test mode ---
 bool ledTestMode = false;
-int ledTestSequence[NUM_LEDS];
-int ledTestSequenceLen = 0;
+int ledTestPhase = 0;          // 0=letters, 1=numbers, 2=game_type, 3=all
 int ledTestStepIdx = 0;
-bool ledTestFlashPhase = false;
-bool ledTestFlashOn = false;
-uint8_t ledTestFlashCount = 0;
 unsigned long ledTestLastStepMs = 0;
-const unsigned long LED_TEST_STEP_MS = 140;
-const unsigned long LED_TEST_FLASH_MS = 160;
+unsigned long ledTestPhaseStartedMs = 0;
+const unsigned long LED_TEST_STEP_MS = 120;
+const unsigned long LED_TEST_ALL_HOLD_MS = 1600;
 
 // --- Physical buttons ---
 const unsigned long DEBOUNCE_MS = 50;
@@ -205,26 +235,36 @@ uint32_t wsSeq = 0;
 
 // --- Forward declarations ---
 void updateAllLeds();
-void updateStatusLed();
 void loadNvs();
 void saveNvsSettings();
+void saveNvsGameTypeOnly();
+void saveNvsCallingStyleOnly();
+void saveNvsScreensaverEnabledOnly();
 void setupWiFi();
 void startMdns();
-bool applyLedBoardSectionOrder(const uint8_t order[3]);
-void appendLedBoardSectionOrderJson(JsonArray arr);
-int sectionIdFromString(const char* value);
 void saveGameStateSnapshot();
 bool loadGameStateSnapshot();
+void flushDeferredResetWork();
 int drawNext();
 void doReset();
+void applyAutoCallingEnabled(bool enabled);
 void applyGameTypeToMatrix();
 void initLedTestSequence();
 void resetLedTestSequence();
 void updateLedTestMode();
 bool isBoardAuthValid();
 bool requireBoardAuth(AsyncWebServerRequest* req);
+bool boardUnlockIsLockedOut();
+void registerBoardUnlockFailure();
+void clearBoardUnlockFailures();
 void issueBoardAuthToken();
 void syncWinnerDeclared();
+void startCalledNumberBanner(int n);
+void clearCalledNumberBanner();
+bool calledNumberBannerActive();
+void clearCalledNumberBannerRegion();
+void renderCalledNumberBannerFrame(int n);
+char bingoLetterForNumber(int n);
 void recomputeCardWinners();
 int letterIndex(char letter);
 CRGB customLetterColorForLetter(char letter);
@@ -237,10 +277,24 @@ CRGB colorForLetter(char letter);
 CRGB goldShimmerColor(uint8_t salt);
 CRGB screensaverPixelColor(int x, int y);
 void resetScreensaverAnim();
+void disableScreensaverForDraw();
+void applyScreensaverEnabled(bool enabled);
 void renderTextScreensaver();
 void renderRainbowScreensaver();
 void renderSolidScreensaver();
+void renderFireMatrixScreensaver();
+void renderPacificaScreensaver();
+void renderPrideScreensaver();
+void renderTwinkleFoxScreensaver();
+void renderCylonScreensaver();
+void renderNoisePaletteScreensaver();
+void renderSinelonScreensaver();
+void renderJuggleScreensaver();
+void renderConfettiScreensaver();
+void renderFire2012Screensaver();
 void renderScreensaverFrame();
+void screensaverBufToLeds();
+void clearScreensaverBuf(CRGB color = CRGB::Black);
 void renderWinnerShimmerAll();
 void renderGameBoardFrame();
 bool renderWinnerScrollFrame(const char* text);
@@ -256,7 +310,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj);
 void clearWsSubscription(WsSubscription& sub);
 void clearAllWsSubscriptions();
 void removeWsSubscription(uint32_t clientId);
-void setWsSubscription(uint32_t clientId, bool boardMode, const char* cardId);
+void setWsSubscription(uint32_t clientId, bool boardMode, bool boardAuthOk, const char* cardId);
 bool wsCanReceiveState(uint32_t clientId);
 bool wsCanReceiveCardState(uint32_t clientId, const char* cardId);
 uint32_t uniformRandomBelow(uint32_t maxExclusive);
@@ -374,7 +428,7 @@ static void glyph5x5(char c, uint8_t out[5]) {
     case 'X': { uint8_t p[5] = {0x11,0x0A,0x04,0x0A,0x11}; memcpy(out,p,5); return; }
     case 'Y': { uint8_t p[5] = {0x11,0x0A,0x04,0x04,0x04}; memcpy(out,p,5); return; }
     case 'Z': { uint8_t p[5] = {0x1F,0x02,0x04,0x08,0x1F}; memcpy(out,p,5); return; }
-    case '0': { uint8_t p[5] = {0x0E,0x13,0x15,0x19,0x0E}; memcpy(out,p,5); return; }
+    case '0': { uint8_t p[5] = {0x0E,0x11,0x11,0x11,0x0E}; memcpy(out,p,5); return; }
     case '1': { uint8_t p[5] = {0x04,0x0C,0x04,0x04,0x0E}; memcpy(out,p,5); return; }
     case '2': { uint8_t p[5] = {0x0E,0x11,0x02,0x04,0x1F}; memcpy(out,p,5); return; }
     case '3': { uint8_t p[5] = {0x1F,0x02,0x06,0x01,0x1E}; memcpy(out,p,5); return; }
@@ -404,7 +458,39 @@ CRGB screensaverPixelColor(int x, int y) {
 
 void resetScreensaverAnim() {
   screensaverOffsetCols = 0;
+  screensaverCylonDir = 1;
+  screensaverHue = 0;
   screensaverLastStepMs = millis();
+  screensaverNoiseX = random16();
+  screensaverNoiseY = random16();
+  screensaverNoiseZ = random16();
+  memset(screensaverNoise, 0, sizeof(screensaverNoise));
+  memset(screensaverFireHeat, 0, sizeof(screensaverFireHeat));
+  fill_solid(screensaverBuf, NUM_LEDS, CRGB::Black);
+  if (!screensaverTwinklePalInit) {
+    screensaverTwinklePal = PartyColors_p;
+    screensaverTwinkleTarget = PartyColors_p;
+    screensaverTwinklePalInit = true;
+  }
+}
+
+void disableScreensaverForDraw() {
+  if (!screensaverEnabled) return;
+  screensaverEnabled = false;
+  resetScreensaverAnim();
+  saveNvsScreensaverEnabledOnly();
+}
+
+void applyScreensaverEnabled(bool enabled) {
+  screensaverEnabled = enabled;
+  if (screensaverEnabled && ledTestMode) {
+    ledTestMode = false;
+    resetLedTestSequence();
+  }
+  resetScreensaverAnim();
+  updateAllLeds();
+  saveNvsScreensaverEnabledOnly();
+  broadcastStateWs("screensaver_changed");
 }
 
 // Lower screensaverSpeedMs => faster animation (matches text scroll semantics).
@@ -419,6 +505,16 @@ const char* screensaverTypeToString(uint8_t type) {
   switch (type) {
     case 1: return "rainbow";
     case 2: return "solid";
+    case 3: return "fire_matrix";
+    case 4: return "pacifica";
+    case 5: return "pride";
+    case 6: return "twinkle_fox";
+    case 7: return "cylon";
+    case 8: return "noise_palette";
+    case 9: return "sinelon";
+    case 10: return "juggle";
+    case 11: return "confetti";
+    case 12: return "fire2012";
     default: return "text";
   }
 }
@@ -427,7 +523,30 @@ int screensaverTypeFromString(const char* value) {
   if (!value) return 0;
   if (strcmp(value, "rainbow") == 0) return 1;
   if (strcmp(value, "solid") == 0) return 2;
+  if (strcmp(value, "fire_matrix") == 0) return 3;
+  if (strcmp(value, "pacifica") == 0) return 4;
+  if (strcmp(value, "pride") == 0) return 5;
+  if (strcmp(value, "twinkle_fox") == 0) return 6;
+  if (strcmp(value, "cylon") == 0) return 7;
+  if (strcmp(value, "noise_palette") == 0) return 8;
+  if (strcmp(value, "sinelon") == 0) return 9;
+  if (strcmp(value, "juggle") == 0) return 10;
+  if (strcmp(value, "confetti") == 0) return 11;
+  if (strcmp(value, "fire2012") == 0) return 12;
   return 0;
+}
+
+void clearScreensaverBuf(CRGB color) {
+  fill_solid(screensaverBuf, NUM_LEDS, color);
+}
+
+void screensaverBufToLeds() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    const int row = i / 21;
+    const int col = i % 21;
+    const int p = matrix21x5ToPhysical(row, col);
+    if (p >= 0 && p < NUM_LEDS) leds[p] = screensaverBuf[i];
+  }
 }
 
 void renderTextScreensaver() {
@@ -503,10 +622,431 @@ void renderSolidScreensaver() {
   }
 }
 
+// Fire palette from FastLED FireMatrix example (Yaroslaw Turbin / ldirko).
+DEFINE_GRADIENT_PALETTE(fireMatrixPal_gp){
+  0,   0,   0,   0,   // black (space above fire)
+  32,  255, 0,   0,   // red (tips of flames)
+  190, 255, 255, 0,   // yellow (middle of flames)
+  255, 255, 255, 255  // white (hottest part / base)
+};
+
+// Perlin-noise fire matrix (adapted from FastLED FireMatrix example).
+// Visual coords: row 0 = top, row 4 = bottom. Flames rise from the bottom.
+void renderFireMatrixScreensaver() {
+  const int width = 21;
+  const int height = 5;
+  static CRGBPalette16 firePal = fireMatrixPal_gp;
+
+  const uint32_t now = millis();
+  // Lower screensaverSpeedMs => faster rise / pattern change.
+  const uint8_t rate = screensaverAnimRate();  // 8..96
+  const uint32_t ySpeed = now * (uint32_t)rate / 4UL;
+  const uint16_t z = (uint16_t)(now / (uint32_t)map(rate, 8, 96, 40, 8));
+  // Scale tuned for a wide, short 21x5 matrix.
+  const uint16_t scale = 48;
+
+  for (int row = 0; row < height; row++) {
+    for (int col = 0; col < width; col++) {
+      int p = matrix21x5ToPhysical(row, col);
+      if (p < 0 || p >= NUM_LEDS) continue;
+
+      // Fire-space j: 0 at bottom (hottest), height-1 at top (coolest).
+      const int j = (height - 1) - row;
+      const uint16_t x = (uint16_t)(col * scale);
+      const uint32_t y = (uint32_t)(j * scale) + ySpeed;
+      const uint16_t noise16 = inoise16((uint32_t)x << 8, y << 8, (uint32_t)z << 8);
+      const uint8_t noiseVal = (uint8_t)(noise16 >> 8);
+
+      // Fade palette index toward black toward the top of the board.
+      // Cap below 255 so the short matrix still shows flame color on upper rows.
+      const uint8_t subtraction = (uint8_t)((j * 200) / (height - 1));
+      const uint8_t paletteIndex = qsub8(noiseVal, subtraction);
+      leds[p] = ColorFromPalette(firePal, paletteIndex, 255, LINEARBLEND);
+    }
+  }
+}
+
+// Pacifica — gentle ocean waves (Mark Kriegsman / Mary Corey March).
+static CRGBPalette16 pacificaPalette1(
+  0x000507, 0x000409, 0x00030B, 0x00030D, 0x000210, 0x000212, 0x000114, 0x000117,
+  0x000019, 0x00001C, 0x000026, 0x000031, 0x00003B, 0x000046, 0x14554B, 0x28AA50
+);
+static CRGBPalette16 pacificaPalette2(
+  0x000507, 0x000409, 0x00030B, 0x00030D, 0x000210, 0x000212, 0x000114, 0x000117,
+  0x000019, 0x00001C, 0x000026, 0x000031, 0x00003B, 0x000046, 0x0C5F52, 0x19BE5F
+);
+static CRGBPalette16 pacificaPalette3(
+  0x000208, 0x00030E, 0x000514, 0x00061A, 0x000820, 0x000927, 0x000B2D, 0x000C33,
+  0x000E39, 0x001040, 0x001450, 0x001860, 0x001C70, 0x002080, 0x1040BF, 0x2060FF
+);
+
+void pacificaOneLayer(CRGBPalette16& p, uint16_t cistart, uint16_t wavescale, uint8_t bri, uint16_t ioff) {
+  uint16_t ci = cistart;
+  uint16_t waveangle = ioff;
+  uint16_t wavescaleHalf = (wavescale / 2) + 20;
+  for (uint16_t i = 0; i < NUM_LEDS; i++) {
+    waveangle += 250;
+    uint16_t s16 = sin16(waveangle) + 32768;
+    uint16_t cs = scale16(s16, wavescaleHalf) + wavescaleHalf;
+    ci += cs;
+    uint16_t sindex16 = sin16(ci) + 32768;
+    uint8_t sindex8 = scale16(sindex16, 240);
+    screensaverBuf[i] += ColorFromPalette(p, sindex8, bri, LINEARBLEND);
+  }
+}
+
+void renderPacificaScreensaver() {
+  static uint16_t sCIStart1 = 0, sCIStart2 = 0, sCIStart3 = 0, sCIStart4 = 0;
+  static uint32_t sLastMs = 0;
+  uint32_t ms = millis();
+  uint32_t deltams = ms - sLastMs;
+  sLastMs = ms;
+
+  // Speed slider scales wave motion.
+  const uint8_t rate = screensaverAnimRate();
+  deltams = (deltams * rate) / 40;
+  if (deltams == 0) deltams = 1;
+
+  uint16_t speedfactor1 = beatsin16(3, 179, 269);
+  uint16_t speedfactor2 = beatsin16(4, 179, 269);
+  uint32_t deltams1 = (deltams * speedfactor1) / 256;
+  uint32_t deltams2 = (deltams * speedfactor2) / 256;
+  uint32_t deltams21 = (deltams1 + deltams2) / 2;
+  sCIStart1 += (deltams1 * beatsin88(1011, 10, 13));
+  sCIStart2 -= (deltams21 * beatsin88(777, 8, 11));
+  sCIStart3 -= (deltams1 * beatsin88(501, 5, 7));
+  sCIStart4 -= (deltams2 * beatsin88(257, 4, 6));
+
+  clearScreensaverBuf(CRGB(2, 6, 10));
+  pacificaOneLayer(pacificaPalette1, sCIStart1, beatsin16(3, 11 * 256, 14 * 256), beatsin8(10, 70, 130), 0 - beat16(301));
+  pacificaOneLayer(pacificaPalette2, sCIStart2, beatsin16(4, 6 * 256, 9 * 256), beatsin8(17, 40, 80), beat16(401));
+  pacificaOneLayer(pacificaPalette3, sCIStart3, 6 * 256, beatsin8(9, 10, 38), 0 - beat16(503));
+  pacificaOneLayer(pacificaPalette3, sCIStart4, 5 * 256, beatsin8(8, 10, 28), beat16(601));
+
+  uint8_t basethreshold = beatsin8(9, 55, 65);
+  uint8_t wave = beat8(7);
+  for (uint16_t i = 0; i < NUM_LEDS; i++) {
+    uint8_t threshold = scale8(sin8(wave), 20) + basethreshold;
+    wave += 7;
+    uint8_t l = screensaverBuf[i].getAverageLight();
+    if (l > threshold) {
+      uint8_t overage = l - threshold;
+      uint8_t overage2 = qadd8(overage, overage);
+      screensaverBuf[i] += CRGB(overage, overage2, qadd8(overage2, overage2));
+    }
+  }
+  for (uint16_t i = 0; i < NUM_LEDS; i++) {
+    screensaverBuf[i].blue = scale8(screensaverBuf[i].blue, 145);
+    screensaverBuf[i].green = scale8(screensaverBuf[i].green, 200);
+    screensaverBuf[i] |= CRGB(2, 5, 7);
+  }
+  screensaverBufToLeds();
+}
+
+// Pride2015 — animated rainbows (Mark Kriegsman).
+void renderPrideScreensaver() {
+  static uint16_t sPseudotime = 0;
+  static uint16_t sLastMillis = 0;
+  static uint16_t sHue16 = 0;
+
+  uint8_t sat8 = beatsin88(87, 220, 250);
+  uint8_t brightdepth = beatsin88(341, 96, 224);
+  uint16_t brightnessthetainc16 = beatsin88(203, (25 * 256), (40 * 256));
+  uint8_t msmultiplier = beatsin88(147, 23, 60);
+  // Speed slider scales motion.
+  msmultiplier = (uint8_t)scale8(msmultiplier, screensaverAnimRate() + 32);
+
+  uint16_t hue16 = sHue16;
+  uint16_t hueinc16 = beatsin88(113, 1, 3000);
+  uint16_t ms = (uint16_t)millis();
+  uint16_t deltams = ms - sLastMillis;
+  sLastMillis = ms;
+  sPseudotime += deltams * msmultiplier;
+  sHue16 += deltams * beatsin88(400, 5, 9);
+  uint16_t brightnesstheta16 = sPseudotime;
+
+  for (uint16_t i = 0; i < NUM_LEDS; i++) {
+    hue16 += hueinc16;
+    uint8_t hue8 = hue16 / 256;
+    brightnesstheta16 += brightnessthetainc16;
+    uint16_t b16 = sin16(brightnesstheta16) + 32768;
+    uint16_t bri16 = (uint32_t)((uint32_t)b16 * (uint32_t)b16) / 65536;
+    uint8_t bri8 = (uint32_t)(((uint32_t)bri16) * brightdepth) / 65536;
+    bri8 += (255 - brightdepth);
+    CRGB newcolor = CHSV(hue8, sat8, bri8);
+    nblend(screensaverBuf[(NUM_LEDS - 1) - i], newcolor, 64);
+  }
+  screensaverBufToLeds();
+}
+
+// TwinkleFox — holiday twinkles (Mark Kriegsman), simplified with built-in palettes.
+static uint8_t attackDecayWave8(uint8_t i) {
+  if (i < 86) return i * 3;
+  i -= 86;
+  return 255 - (i + (i / 2));
+}
+
+static void coolLikeIncandescent(CRGB& c, uint8_t phase) {
+  if (phase < 128) return;
+  uint8_t cooling = (phase - 128) >> 4;
+  c.g = qsub8(c.g, cooling);
+  c.b = qsub8(c.b, cooling * 2);
+}
+
+static CRGB computeOneTwinkle(uint32_t ms, uint8_t salt, uint8_t speed, uint8_t density) {
+  uint16_t ticks = ms >> (8 - speed);
+  uint8_t fastcycle8 = (uint8_t)ticks;
+  uint16_t slowcycle16 = (ticks >> 8) + salt;
+  slowcycle16 += sin8((uint8_t)slowcycle16);
+  slowcycle16 = (slowcycle16 * 2053) + 1384;
+  uint8_t slowcycle8 = (uint8_t)((slowcycle16 & 0xFF) + (slowcycle16 >> 8));
+
+  uint8_t bright = 0;
+  if (((slowcycle8 & 0x0E) / 2) < density) {
+    bright = attackDecayWave8(fastcycle8);
+  }
+
+  uint8_t hue = slowcycle8 - salt;
+  if (bright == 0) return CRGB::Black;
+  CRGB c = ColorFromPalette(screensaverTwinklePal, hue, bright, NOBLEND);
+  coolLikeIncandescent(c, fastcycle8);
+  return c;
+}
+
+void renderTwinkleFoxScreensaver() {
+  if (!screensaverTwinklePalInit) {
+    screensaverTwinklePal = PartyColors_p;
+    screensaverTwinkleTarget = PartyColors_p;
+    screensaverTwinklePalInit = true;
+  }
+
+  static uint8_t whichPalette = 0;
+  static unsigned long lastPaletteMs = 0;
+  const unsigned long now = millis();
+  if (now - lastPaletteMs > 30000UL) {
+    lastPaletteMs = now;
+    whichPalette = (uint8_t)((whichPalette + 1) % 7);
+    switch (whichPalette) {
+      case 0: screensaverTwinkleTarget = PartyColors_p; break;
+      case 1: screensaverTwinkleTarget = RainbowColors_p; break;
+      case 2: screensaverTwinkleTarget = OceanColors_p; break;
+      case 3: screensaverTwinkleTarget = LavaColors_p; break;
+      case 4: screensaverTwinkleTarget = ForestColors_p; break;
+      case 5: screensaverTwinkleTarget = CloudColors_p; break;
+      default: screensaverTwinkleTarget = HeatColors_p; break;
+    }
+  }
+  nblendPaletteTowardPalette(screensaverTwinklePal, screensaverTwinkleTarget, 12);
+
+  // Map speed slider: rate 8..96 => twinkle speed 2..7, density 4..7
+  const uint8_t rate = screensaverAnimRate();
+  const uint8_t speed = (uint8_t)map(rate, 8, 96, 2, 7);
+  const uint8_t density = (uint8_t)map(rate, 8, 96, 4, 7);
+
+  uint16_t prng16 = 11337;
+  uint32_t clock32 = now;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    prng16 = (uint16_t)(prng16 * 2053) + 1384;
+    uint16_t myclockoffset16 = prng16;
+    prng16 = (uint16_t)(prng16 * 2053) + 1384;
+    uint8_t myspeedmultiplierQ5_3 = (uint8_t)(((((prng16 & 0xFF) >> 4) + (prng16 & 0x0F)) & 0x0F) + 0x08);
+    uint32_t myclock30 = (uint32_t)((clock32 * myspeedmultiplierQ5_3) >> 3) + myclockoffset16;
+    uint8_t myunique8 = (uint8_t)(prng16 >> 8);
+    screensaverBuf[i] = computeOneTwinkle(myclock30, myunique8, speed, density);
+  }
+  screensaverBufToLeds();
+}
+
+// Cylon / Larson scanner — full-column bounce across the 21-wide board.
+void renderCylonScreensaver() {
+  const int width = 21;
+  const int height = 5;
+  const uint8_t rate = screensaverAnimRate();
+  const uint16_t stepMs = (uint16_t)map(rate, 8, 96, 90, 18);
+  const unsigned long now = millis();
+  if ((now - screensaverLastStepMs) >= stepMs) {
+    screensaverLastStepMs = now;
+    screensaverOffsetCols += screensaverCylonDir;
+    if (screensaverOffsetCols >= width - 1) {
+      screensaverOffsetCols = width - 1;
+      screensaverCylonDir = -1;
+    } else if (screensaverOffsetCols <= 0) {
+      screensaverOffsetCols = 0;
+      screensaverCylonDir = 1;
+    }
+    screensaverHue++;
+  }
+
+  for (int i = 0; i < NUM_LEDS; i++) screensaverBuf[i].nscale8(200);
+  for (int row = 0; row < height; row++) {
+    screensaverBuf[row * width + screensaverOffsetCols] = CHSV(screensaverHue, 255, 255);
+  }
+  screensaverBufToLeds();
+}
+
+// NoisePlusPalette — organic palette-mapped Perlin noise.
+void renderNoisePaletteScreensaver() {
+  const int width = 21;
+  const int height = 5;
+  static CRGBPalette16 currentPalette;
+  static bool paletteInit = false;
+  static uint8_t colorLoop = 1;
+  static uint8_t ihue = 0;
+  static uint8_t lastSecond = 99;
+  static uint8_t scale = 40;
+
+  if (!paletteInit) {
+    currentPalette = OceanColors_p;
+    paletteInit = true;
+  }
+
+  const uint8_t rate = screensaverAnimRate();
+  uint8_t speed = (uint8_t)map(rate, 8, 96, 4, 40);
+
+  uint8_t secondHand = (uint8_t)((millis() / 1000UL) % 60UL);
+  if (lastSecond != secondHand) {
+    lastSecond = secondHand;
+    if (secondHand == 0) { currentPalette = RainbowColors_p; colorLoop = 1; scale = 30; }
+    else if (secondHand == 10) { currentPalette = OceanColors_p; colorLoop = 0; scale = 50; }
+    else if (secondHand == 20) { currentPalette = LavaColors_p; colorLoop = 0; scale = 40; }
+    else if (secondHand == 30) { currentPalette = ForestColors_p; colorLoop = 0; scale = 60; }
+    else if (secondHand == 40) { currentPalette = CloudColors_p; colorLoop = 0; scale = 30; }
+    else if (secondHand == 50) { currentPalette = PartyColors_p; colorLoop = 1; scale = 30; }
+  }
+
+  uint8_t dataSmoothing = 0;
+  if (speed < 50) dataSmoothing = 200 - (speed * 4);
+
+  for (int col = 0; col < width; col++) {
+    int ioffset = scale * col;
+    for (int row = 0; row < height; row++) {
+      int joffset = scale * row;
+      uint8_t data = inoise8(screensaverNoiseX + ioffset, screensaverNoiseY + joffset, screensaverNoiseZ);
+      data = qsub8(data, 16);
+      data = qadd8(data, scale8(data, 39));
+      if (dataSmoothing) {
+        uint8_t olddata = screensaverNoise[col][row];
+        data = scale8(olddata, dataSmoothing) + scale8(data, 256 - dataSmoothing);
+      }
+      screensaverNoise[col][row] = data;
+    }
+  }
+  screensaverNoiseZ += speed;
+  screensaverNoiseX += speed / 8;
+  screensaverNoiseY -= speed / 16;
+
+  for (int col = 0; col < width; col++) {
+    for (int row = 0; row < height; row++) {
+      uint8_t index = screensaverNoise[col][row];
+      // Second noise sample for brightness (flipped axes, classic NoisePlusPalette trick).
+      uint8_t bri = inoise8(
+        screensaverNoiseY + (uint16_t)row * scale,
+        screensaverNoiseX + (uint16_t)col * scale,
+        screensaverNoiseZ
+      );
+      bri = qsub8(bri, 16);
+      bri = qadd8(bri, scale8(bri, 39));
+      if (colorLoop) index += ihue;
+      if (bri > 127) bri = 255;
+      else bri = dim8_raw(bri * 2);
+      screensaverBuf[row * width + col] = ColorFromPalette(currentPalette, index, bri);
+    }
+  }
+  ihue++;
+  screensaverBufToLeds();
+}
+
+// Sinelon — colored comet with trails (DemoReel100).
+void renderSinelonScreensaver() {
+  const uint8_t rate = screensaverAnimRate();
+  fadeToBlackBy(screensaverBuf, NUM_LEDS, (uint8_t)map(rate, 8, 96, 10, 40));
+  int pos = beatsin16((uint8_t)map(rate, 8, 96, 6, 24), 0, NUM_LEDS - 1);
+  screensaverBuf[pos] += CHSV(screensaverHue, 255, 192);
+  EVERY_N_MILLISECONDS(20) { screensaverHue++; }
+  screensaverBufToLeds();
+}
+
+// Juggle — multiple colored dots weaving (DemoReel100).
+void renderJuggleScreensaver() {
+  const uint8_t rate = screensaverAnimRate();
+  fadeToBlackBy(screensaverBuf, NUM_LEDS, (uint8_t)map(rate, 8, 96, 10, 40));
+  uint8_t dothue = 0;
+  uint8_t baseBpm = (uint8_t)map(rate, 8, 96, 5, 14);
+  for (int i = 0; i < 8; i++) {
+    screensaverBuf[beatsin16(i + baseBpm, 0, NUM_LEDS - 1)] |= CHSV(dothue, 200, 255);
+    dothue += 32;
+  }
+  screensaverBufToLeds();
+}
+
+// Confetti — random colored speckles (DemoReel100).
+void renderConfettiScreensaver() {
+  const uint8_t rate = screensaverAnimRate();
+  fadeToBlackBy(screensaverBuf, NUM_LEDS, (uint8_t)map(rate, 8, 96, 6, 20));
+  int pos = random16(NUM_LEDS);
+  screensaverBuf[pos] += CHSV(screensaverHue + random8(64), 200, 255);
+  EVERY_N_MILLISECONDS(20) { screensaverHue++; }
+  screensaverBufToLeds();
+}
+
+// Fire2012WithPalette — classic heat-cell fire, one column at a time.
+void renderFire2012Screensaver() {
+  const int width = 21;
+  const int height = 5;
+  static CRGBPalette16 firePal;
+  static bool firePalInit = false;
+  if (!firePalInit) {
+    firePal = HeatColors_p;
+    firePalInit = true;
+  }
+  const uint8_t rate = screensaverAnimRate();
+  const uint8_t cooling = (uint8_t)map(rate, 8, 96, 70, 40);
+  const uint8_t sparking = (uint8_t)map(rate, 8, 96, 80, 160);
+
+  random16_add_entropy(random16());
+
+  for (int col = 0; col < width; col++) {
+    // Step 1: cool
+    for (int i = 0; i < height; i++) {
+      screensaverFireHeat[col][i] = qsub8(
+        screensaverFireHeat[col][i],
+        random8(0, ((cooling * 10) / height) + 2)
+      );
+    }
+    // Step 2: heat rises (index 0 = bottom)
+    for (int k = height - 1; k >= 2; k--) {
+      screensaverFireHeat[col][k] =
+        (screensaverFireHeat[col][k - 1] + screensaverFireHeat[col][k - 2] + screensaverFireHeat[col][k - 2]) / 3;
+    }
+    // Step 3: spark at bottom
+    if (random8() < sparking) {
+      int y = random8(2);
+      screensaverFireHeat[col][y] = qadd8(screensaverFireHeat[col][y], random8(160, 255));
+    }
+    // Step 4: map heat to colors (row 4 = bottom visually)
+    for (int j = 0; j < height; j++) {
+      uint8_t colorindex = scale8(screensaverFireHeat[col][j], 240);
+      int row = (height - 1) - j;
+      screensaverBuf[row * width + col] = ColorFromPalette(firePal, colorindex);
+    }
+  }
+  screensaverBufToLeds();
+}
+
 void renderScreensaverFrame() {
   switch (screensaverType) {
     case 1: renderRainbowScreensaver(); return;
     case 2: renderSolidScreensaver(); return;
+    case 3: renderFireMatrixScreensaver(); return;
+    case 4: renderPacificaScreensaver(); return;
+    case 5: renderPrideScreensaver(); return;
+    case 6: renderTwinkleFoxScreensaver(); return;
+    case 7: renderCylonScreensaver(); return;
+    case 8: renderNoisePaletteScreensaver(); return;
+    case 9: renderSinelonScreensaver(); return;
+    case 10: renderJuggleScreensaver(); return;
+    case 11: renderConfettiScreensaver(); return;
+    case 12: renderFire2012Screensaver(); return;
     default: renderTextScreensaver(); return;
   }
 }
@@ -517,38 +1057,191 @@ void renderWinnerShimmerAll() {
   }
 }
 
+char bingoLetterForNumber(int n) {
+  if (n < 1 || n > 75) return '?';
+  if (n <= 15) return 'B';
+  if (n <= 30) return 'I';
+  if (n <= 45) return 'N';
+  if (n <= 60) return 'G';
+  return 'O';
+}
+
+void clearCalledNumberBanner() {
+  calledNumberBannerUntilMs = 0;
+  calledNumberBannerNumber = 0;
+}
+
+void startCalledNumberBanner(int n) {
+  if (!calledNumberBannerEnabled || n < 1 || n > 75) {
+    clearCalledNumberBanner();
+    return;
+  }
+  calledNumberBannerNumber = n;
+  calledNumberBannerUntilMs = millis() + 3000UL;
+}
+
+bool calledNumberBannerActive() {
+  if (!calledNumberBannerEnabled || calledNumberBannerNumber < 1 || calledNumberBannerNumber > 75) {
+    return false;
+  }
+  if (calledNumberBannerUntilMs == 0) return false;
+  if ((long)(calledNumberBannerUntilMs - millis()) <= 0) {
+    clearCalledNumberBanner();
+    return false;
+  }
+  return true;
+}
+
+void clearCalledNumberBannerRegion() {
+  // Clear both number and game-type columns (banner borrows game-type space).
+  for (int sec = 0; sec < 3; sec++) {
+    if (sec != SEC_NUMBERS && sec != SEC_GAME_TYPE) continue;
+    const int startCol = sectionStartCol[sec];
+    const int width = SECTION_WIDTH[sec];
+    for (int row = 0; row < 5; row++) {
+      for (int localCol = 0; localCol < width; localCol++) {
+        int p = matrix21x5ToPhysical(row, startCol + localCol);
+        if (p >= 0 && p < NUM_LEDS) leds[p] = CRGB::Black;
+      }
+    }
+  }
+}
+
+/** Plot a full 5×5 glyph starting at an absolute board column. */
+void plotBannerGlyph(char ch, int startAbsCol, CRGB color) {
+  uint8_t rows[5];
+  glyph5x5(ch, rows);
+  const int glyphWidth = 5;
+  for (int row = 0; row < 5; row++) {
+    for (int col = 0; col < glyphWidth; col++) {
+      bool on = ((rows[row] >> (glyphWidth - 1 - col)) & 0x01) != 0;
+      if (!on) continue;
+      int p = matrix21x5ToPhysical(row, startAbsCol + col);
+      if (p >= 0 && p < NUM_LEDS) leds[p] = color;
+    }
+  }
+}
+
+/**
+ * Draw letter+digits centered across the number + game-type sections (20 cols).
+ * Letter column stays normal; after the banner timer, game type redraws as usual.
+ */
+void renderCalledNumberBannerFrame(int n) {
+  char letter = bingoLetterForNumber(n);
+  char digits[3];
+  if (n >= 10) {
+    digits[0] = (char)('0' + (n / 10));
+    digits[1] = (char)('0' + (n % 10));
+    digits[2] = '\0';
+  } else {
+    digits[0] = (char)('0' + n);
+    digits[1] = '\0';
+  }
+  const int digitCount = (int)strlen(digits);
+  const int glyphW = 5;
+  const int gap = 1;  // between letter and digits, and between digits
+
+  // Contiguous span covering both remapped sections (order: letters | numbers | game type).
+  const int numsStart = sectionStartCol[SEC_NUMBERS];
+  const int gtStart = sectionStartCol[SEC_GAME_TYPE];
+  const int bannerStart =
+    (numsStart < gtStart) ? numsStart : gtStart;
+  const int bannerWidth = SECTION_WIDTH[SEC_NUMBERS] + SECTION_WIDTH[SEC_GAME_TYPE];
+
+  // Letter + gaps + digits, all full 5-wide glyphs.
+  int contentWidth = glyphW;
+  contentWidth += gap;
+  contentWidth += digitCount * glyphW;
+  if (digitCount > 1) contentWidth += gap * (digitCount - 1);
+
+  int startLocal = (bannerWidth - contentWidth) / 2;
+  if (startLocal < 0) startLocal = 0;
+
+  clearCalledNumberBannerRegion();
+  CRGB color = colorForCalledNumber(n);
+
+  int absCol = bannerStart + startLocal;
+  plotBannerGlyph(letter, absCol, color);
+  absCol += glyphW + gap;
+  for (int i = 0; i < digitCount; i++) {
+    if (i > 0) absCol += gap;
+    plotBannerGlyph(digits[i], absCol, color);
+    absCol += glyphW;
+  }
+}
+
 void renderGameBoardFrame() {
   if (winnerDeclared) {
     renderWinnerShimmerAll();
     return;
   }
 
-  for (int n = 1; n <= 75; n++) {
-    if (!called[n]) continue;
-    int p = numberToPhysical(n);
-    if (p >= 0) {
-      if (!winnerDeclared && n == currentNumber) {
-        // Current number should read as an obvious beacon.
-        uint8_t phase = beat8(96);
-        uint8_t flash = (phase < 128) ? 255 : 24;
-        leds[p] = CRGB(flash, flash, flash);
-      } else {
-        leds[p] = colorForCalledNumber(n);
+  const bool showBanner = calledNumberBannerActive();
+  if (!showBanner) {
+    for (int n = 1; n <= 75; n++) {
+      if (!called[n]) continue;
+      int p = numberToPhysical(n);
+      if (p >= 0) {
+        if (n == currentNumber) {
+          CRGB base((currentNumberColor >> 16) & 0xFF,
+                    (currentNumberColor >> 8) & 0xFF,
+                    currentNumberColor & 0xFF);
+          uint8_t bri = 255;
+          if (strcmp(currentNumberEffect, "pulse") == 0) {
+            // Same tempo as flash (beat8(96)); gentle sine fade.
+            bri = beatsin8(96, 24, 255);
+          } else if (strcmp(currentNumberEffect, "strobe") == 0) {
+            uint8_t phase = beat8(255);
+            bri = (phase < 128) ? 255 : 0;
+          } else {
+            // flash (default)
+            uint8_t phase = beat8(96);
+            bri = (phase < 128) ? 255 : 24;
+          }
+          base.nscale8(bri);
+          leds[p] = base;
+        } else {
+          leds[p] = colorForCalledNumber(n);
+        }
       }
     }
+  } else {
+    renderCalledNumberBannerFrame(calledNumberBannerNumber);
   }
 
   // Letters on when column has at least one call.
+  // When column is full (all 15), letterFullMode controls: on / off / number_theme.
   const char* letters = "BINGO";
   for (int col = 0; col < 5; col++) {
     int low = col * 15 + 1, high = col * 15 + 15;
     bool any = false;
-    for (int n = low; n <= high; n++) if (called[n]) { any = true; break; }
+    bool allFull = true;
+    for (int n = low; n <= high; n++) {
+      if (called[n]) any = true;
+      else allFull = false;
+    }
     bool preview = millis() < letterHeaderPreviewUntilMs;
     int letterP = letterToPhysical(letters[col]);
-    if (letterP >= 0) leds[letterP] = (any || preview) ? colorForLetter(letters[col]) : CRGB::Black;
+    if (letterP < 0) continue;
+    if (preview) {
+      leds[letterP] = colorForLetter(letters[col]);
+    } else if (!any) {
+      leds[letterP] = CRGB::Black;
+    } else if (allFull) {
+      if (strcmp(letterFullMode, "off") == 0) {
+        leds[letterP] = CRGB::Black;
+      } else if (strcmp(letterFullMode, "number_theme") == 0) {
+        // Representative number in this column so theme/custom/solid match the board.
+        leds[letterP] = colorForCalledNumber(low + 7);
+      } else {
+        leds[letterP] = colorForLetter(letters[col]);
+      }
+    } else {
+      leds[letterP] = colorForLetter(letters[col]);
+    }
   }
-  applyGameTypeToMatrix();
+  // Game-type matrix is borrowed by the banner; restore it after the banner ends.
+  if (!showBanner) applyGameTypeToMatrix();
 }
 
 bool renderWinnerScrollFrame(const char* text) {
@@ -595,6 +1288,27 @@ bool isBoardAuthValid() {
   return remaining > 0;
 }
 
+void persistBoardAuthToken() {
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+  if (boardAuthToken[0] == '\0') {
+    nvs_erase_key(nvs, NVS_BOARD_TOKEN);
+    nvs_erase_key(nvs, NVS_BOARD_TOKEN_REMAINING);
+  } else {
+    nvs_set_str(nvs, NVS_BOARD_TOKEN, boardAuthToken);
+    long remaining = (long)(boardAuthExpiryMs - millis());
+    if (remaining < 0) remaining = 0;
+    nvs_set_u32(nvs, NVS_BOARD_TOKEN_REMAINING, (uint32_t)remaining);
+  }
+  nvs_commit(nvs);
+  nvs_close(nvs);
+}
+
+void clearBoardAuthToken() {
+  boardAuthToken[0] = '\0';
+  boardAuthExpiryMs = 0;
+  persistBoardAuthToken();
+}
+
 void issueBoardAuthToken() {
   const char* hex = "0123456789abcdef";
   for (int i = 0; i < 32; i++) {
@@ -602,6 +1316,7 @@ void issueBoardAuthToken() {
   }
   boardAuthToken[32] = '\0';
   boardAuthExpiryMs = millis() + BOARD_AUTH_TTL_MS;
+  persistBoardAuthToken();
 }
 
 bool requireBoardAuth(AsyncWebServerRequest* req) {
@@ -619,6 +1334,28 @@ bool requireBoardAuth(AsyncWebServerRequest* req) {
     return false;
   }
   return true;
+}
+
+bool boardUnlockIsLockedOut() {
+  if (boardUnlockLockoutUntilMs == 0) return false;
+  unsigned long now = millis();
+  if ((long)(boardUnlockLockoutUntilMs - now) > 0) return true;
+  boardUnlockLockoutUntilMs = 0;
+  boardUnlockFailCount = 0;
+  return false;
+}
+
+void registerBoardUnlockFailure() {
+  if (boardUnlockFailCount < 255) boardUnlockFailCount++;
+  if (boardUnlockFailCount >= BOARD_UNLOCK_MAX_FAILURES) {
+    boardUnlockLockoutUntilMs = millis() + BOARD_UNLOCK_LOCKOUT_MS;
+    boardUnlockFailCount = 0;
+  }
+}
+
+void clearBoardUnlockFailures() {
+  boardUnlockFailCount = 0;
+  boardUnlockLockoutUntilMs = 0;
 }
 
 String normalizedPin(const char* raw) {
@@ -675,10 +1412,99 @@ void generateCardId(char* out, size_t len) {
   out[16] = '\0';
 }
 
+void generateDeviceId(char* out, size_t len) {
+  const char* hex = "0123456789abcdef";
+  if (len < 33) return;
+  for (int i = 0; i < 32; i++) out[i] = hex[esp_random() & 0x0F];
+  out[32] = '\0';
+}
+
+void ensureDeviceIdLoaded() {
+  if (deviceIdBuf[0] != '\0') return;
+  generateDeviceId(deviceIdBuf, sizeof(deviceIdBuf));
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+    nvs_set_str(nvs, NVS_DEVICE_ID, deviceIdBuf);
+    nvs_commit(nvs);
+    nvs_close(nvs);
+  }
+}
+
+/** Message: for each non-FREE cell, byte(index) then byte(number). */
+void buildCardAuthMessage(const int nums[25], uint8_t* out, size_t* outLen) {
+  size_t n = 0;
+  for (int idx = 0; idx < 25; idx++) {
+    if (idx == 12) continue;
+    out[n++] = (uint8_t)idx;
+    out[n++] = (uint8_t)(nums[idx] & 0xFF);
+  }
+  *outLen = n;
+}
+
+bool hmacSha256Card(const int nums[25], uint8_t out[32]) {
+  ensureDeviceIdLoaded();
+  uint8_t msg[48];
+  size_t msgLen = 0;
+  buildCardAuthMessage(nums, msg, &msgLen);
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!info) return false;
+  return mbedtls_md_hmac(
+           info,
+           (const unsigned char*)deviceIdBuf,
+           strlen(deviceIdBuf),
+           msg,
+           msgLen,
+           out) == 0;
+}
+
+void bytesToHex(const uint8_t* in, size_t inLen, char* out, size_t outLen) {
+  static const char* hex = "0123456789abcdef";
+  if (outLen < inLen * 2 + 1) {
+    out[0] = '\0';
+    return;
+  }
+  for (size_t i = 0; i < inLen; i++) {
+    out[i * 2] = hex[(in[i] >> 4) & 0x0F];
+    out[i * 2 + 1] = hex[in[i] & 0x0F];
+  }
+  out[inLen * 2] = '\0';
+}
+
+int hexNibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool decodeHexToBytes(const char* in, uint8_t* out, size_t outLen) {
+  if (!in) return false;
+  size_t len = strlen(in);
+  if (len != outLen * 2) return false;
+  for (size_t i = 0; i < outLen; i++) {
+    int hi = hexNibble(in[i * 2]);
+    int lo = hexNibble(in[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = (uint8_t)((hi << 4) | lo);
+  }
+  return true;
+}
+
+bool verifyCardSignature(const int nums[25], const char* sig) {
+  if (!sig || !*sig) return false;
+  uint8_t mac[32];
+  if (!hmacSha256Card(nums, mac)) return false;
+  uint8_t got[16];
+  if (!decodeHexToBytes(sig, got, 16)) return false;
+  uint8_t diff = 0;
+  for (int i = 0; i < 16; i++) diff |= (uint8_t)(mac[i] ^ got[i]);
+  return diff == 0;
+}
+
 void clearWsSubscription(WsSubscription& sub) {
   sub.active = false;
   sub.clientId = 0;
   sub.boardMode = false;
+  sub.boardAuthOk = false;
   sub.cardId[0] = '\0';
 }
 
@@ -701,6 +1527,7 @@ WsSubscription* ensureWsSubscription(uint32_t clientId) {
       wsSubscriptions[i].active = true;
       wsSubscriptions[i].clientId = clientId;
       wsSubscriptions[i].boardMode = false;
+      wsSubscriptions[i].boardAuthOk = false;
       wsSubscriptions[i].cardId[0] = '\0';
       return &wsSubscriptions[i];
     }
@@ -713,10 +1540,11 @@ void removeWsSubscription(uint32_t clientId) {
   if (sub) clearWsSubscription(*sub);
 }
 
-void setWsSubscription(uint32_t clientId, bool boardMode, const char* cardId) {
+void setWsSubscription(uint32_t clientId, bool boardMode, bool boardAuthOk, const char* cardId) {
   WsSubscription* sub = ensureWsSubscription(clientId);
   if (!sub) return;
   sub->boardMode = boardMode;
+  sub->boardAuthOk = boardAuthOk;
   sub->cardId[0] = '\0';
   if (!boardMode && cardId && *cardId) {
     CardSession* card = findCardSessionById(cardId);
@@ -727,10 +1555,73 @@ void setWsSubscription(uint32_t clientId, bool boardMode, const char* cardId) {
   }
 }
 
+bool canChangeGameTypeNow() {
+  return !gameEstablished || winnerDeclared;
+}
+
+bool isBoardTokenValid(const char* token) {
+  if (!isBoardAuthValid()) return false;
+  if (!token || token[0] == '\0') return false;
+  return strcmp(token, boardAuthToken) == 0;
+}
+
+bool validateBingoCardNumbers(const int nums[25]) {
+  static const int colMin[5] = {1, 16, 31, 46, 61};
+  static const int colMax[5] = {15, 30, 45, 60, 75};
+  for (int col = 0; col < 5; col++) {
+    bool seen[15] = {false};
+    for (int row = 0; row < 5; row++) {
+      const int idx = row * 5 + col;
+      if (idx == 12) continue;
+      const int n = nums[idx];
+      if (n < colMin[col] || n > colMax[col]) return false;
+      const int offset = n - colMin[col];
+      if (offset < 0 || offset >= 15 || seen[offset]) return false;
+      seen[offset] = true;
+    }
+  }
+  return true;
+}
+
+/** Content-addressed id from card numbers — QR payload is the identity; no print registry. */
+void cardIdFromCardNumbers(const int nums[25], char* out, size_t len) {
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < 25; i++) {
+    if (i == 12) continue;
+    h ^= (uint8_t)(nums[i] & 0xFF);
+    h *= 16777619u;
+  }
+  snprintf(out, len, "c%08x", (unsigned)h);
+}
+
+void syncSessionMarksFromCalled(CardSession& s) {
+  for (int i = 0; i < 25; i++) {
+    if (i == 12) {
+      s.marks[i] = true;
+      continue;
+    }
+    const int n = s.numbers[i];
+    s.marks[i] = (n >= 1 && n <= 75 && called[n]);
+  }
+}
+
+void resetSessionClaimedMasks(CardSession& s) {
+  s.claimedTraditionalMask = 0;
+  s.claimedFourCornersMask = 0;
+  s.claimedPostageMask = 0;
+  s.claimedCoverAllMask = 0;
+  s.claimedXMask = 0;
+  s.claimedYMask = 0;
+  s.claimedFrameOutsideMask = 0;
+  s.claimedFrameInsideMask = 0;
+  s.claimedPlusSignMask = 0;
+  s.claimedFieldGoalMask = 0;
+}
+
 bool wsCanReceiveState(uint32_t clientId) {
   WsSubscription* sub = findWsSubscription(clientId);
   if (!sub) return false;
-  if (sub->boardMode) return true;
+  if (sub->boardMode) return sub->boardAuthOk;
   if (sub->cardId[0] == '\0') return false;
   return findCardSessionById(sub->cardId) != nullptr;
 }
@@ -738,7 +1629,7 @@ bool wsCanReceiveState(uint32_t clientId) {
 bool wsCanReceiveCardState(uint32_t clientId, const char* cardId) {
   WsSubscription* sub = findWsSubscription(clientId);
   if (!sub) return false;
-  if (sub->boardMode) return true;
+  if (sub->boardMode) return sub->boardAuthOk;
   if (!cardId || !*cardId) return false;
   return strcmp(sub->cardId, cardId) == 0 && findCardSessionById(cardId) != nullptr;
 }
@@ -887,7 +1778,37 @@ void claimCurrentWinningPatterns(CardSession& s) {
 }
 
 void syncWinnerDeclared() {
-  winnerDeclared = !winnerSuppressed && (manualWinnerDeclared || (winnerCount > 0));
+  const bool want = !winnerSuppressed && (manualWinnerDeclared || (winnerCount > 0));
+  if (!want) {
+    winnerDeclared = false;
+    pendingWinnerActivation = false;
+    pendingWinnerEventBump = false;
+    return;
+  }
+  // When the board is mid call-out (hold + wait-for-audio), defer winner mode so
+  // the number finishes speaking before bingo audio / sparkle / dialog.
+  if (autoCallingWaitForAudio && autoCallingHold && !winnerDeclared) {
+    pendingWinnerActivation = true;
+    return;
+  }
+  winnerDeclared = true;
+  pendingWinnerActivation = false;
+}
+
+void flushPendingWinnerActivation() {
+  if (!pendingWinnerActivation) return;
+  pendingWinnerActivation = false;
+  const bool want = !winnerSuppressed && (manualWinnerDeclared || (winnerCount > 0));
+  if (!want) {
+    pendingWinnerEventBump = false;
+    winnerDeclared = false;
+    return;
+  }
+  if (pendingWinnerEventBump) {
+    winnerEventId++;
+    pendingWinnerEventBump = false;
+  }
+  winnerDeclared = true;
 }
 
 int getActiveCardCount() {
@@ -912,7 +1833,13 @@ void recomputeCardWinners() {
     // A new unclaimed winner emerged after "keep going"; lift suppression.
     winnerSuppressed = false;
   }
-  if (hasNewWinnerEvent) winnerEventId++;
+  if (hasNewWinnerEvent) {
+    if (autoCallingWaitForAudio && autoCallingHold && !winnerDeclared) {
+      pendingWinnerEventBump = true;
+    } else {
+      winnerEventId++;
+    }
+  }
   syncWinnerDeclared();
 }
 
@@ -1136,69 +2063,106 @@ void applyGameTypeToMatrix() {
   for (int i = 0; i < n; i++) leds[indices[i]] = indicatorColor;
 }
 
-void initLedTestSequence() {
-  ledTestSequenceLen = 0;
-  for (int n = 1; n <= 75; n++) {
-    int p = numberToPhysical(n);
-    if (p >= 0 && p < NUM_LEDS) ledTestSequence[ledTestSequenceLen++] = p;
-  }
+void lightLedTestLetters(CRGB color) {
   const char* letters = "BINGO";
   for (int i = 0; i < 5; i++) {
     int p = letterToPhysical(letters[i]);
-    if (p >= 0 && p < NUM_LEDS) ledTestSequence[ledTestSequenceLen++] = p;
+    if (p >= 0 && p < NUM_LEDS) leds[p] = color;
   }
-  // Logical 5x5 matrix order: left->right, top->bottom (cells 1..25)
+}
+
+void lightLedTestNumbers(CRGB color) {
+  for (int n = 1; n <= 75; n++) {
+    int p = numberToPhysical(n);
+    if (p >= 0 && p < NUM_LEDS) leds[p] = color;
+  }
+}
+
+void lightLedTestGameType(CRGB color) {
   for (int cell = 1; cell <= 25; cell++) {
     int p = gameTypeCellToPhysical(cell);
-    if (p >= 0 && p < NUM_LEDS) ledTestSequence[ledTestSequenceLen++] = p;
+    if (p >= 0 && p < NUM_LEDS) leds[p] = color;
   }
+}
+
+void lightLedTestAllSections() {
+  // Distinct colors so each section is obvious while lit together.
+  lightLedTestLetters(CRGB::Red);
+  lightLedTestNumbers(CRGB::Lime);
+  lightLedTestGameType(CRGB::Blue);
+}
+
+void initLedTestSequence() {
+  // Sequence is phase-driven; no flat index list needed.
 }
 
 void resetLedTestSequence() {
+  ledTestPhase = 0;
   ledTestStepIdx = 0;
-  ledTestFlashPhase = false;
-  ledTestFlashOn = false;
-  ledTestFlashCount = 0;
   ledTestLastStepMs = millis();
+  ledTestPhaseStartedMs = millis();
 }
 
 void updateLedTestMode() {
-  if (ledTestSequenceLen <= 0) return;
-
   unsigned long now = millis();
-  const unsigned long interval = ledTestFlashPhase ? LED_TEST_FLASH_MS : LED_TEST_STEP_MS;
-  if ((now - ledTestLastStepMs) >= interval) {
-    ledTestLastStepMs = now;
-    if (ledTestFlashPhase) {
-      ledTestFlashOn = !ledTestFlashOn;
-      if (!ledTestFlashOn) {
-        ledTestFlashCount++;
-        if (ledTestFlashCount >= 3) {
-          ledTestFlashPhase = false;
-          ledTestFlashOn = false;
-          ledTestFlashCount = 0;
-          ledTestStepIdx = 0;
-        }
-      }
-    } else {
-      ledTestStepIdx++;
-      if (ledTestStepIdx >= ledTestSequenceLen) {
-        ledTestStepIdx = 0;
-        ledTestFlashPhase = true;
-        ledTestFlashOn = true;
-      }
-    }
-  }
+  const CRGB letterColor = CRGB::Red;
+  const CRGB numberColor = CRGB::Lime;
+  const CRGB gameTypeColor = CRGB::Blue;
 
-  if (ledTestFlashPhase) {
-    if (ledTestFlashOn) {
-      fill_solid(leds, NUM_LEDS, CRGB::White);
+  // Phase 3: all sections lit together (hold, then restart cycle — no pulse finale).
+  if (ledTestPhase == 3) {
+    lightLedTestAllSections();
+    if ((now - ledTestPhaseStartedMs) >= LED_TEST_ALL_HOLD_MS) {
+      ledTestPhase = 0;
+      ledTestStepIdx = 0;
+      ledTestLastStepMs = now;
+      ledTestPhaseStartedMs = now;
     }
     return;
   }
 
-  int p = ledTestSequence[ledTestStepIdx];
-  if (p >= 0 && p < NUM_LEDS) leds[p] = CRGB::White;
+  if ((now - ledTestLastStepMs) >= LED_TEST_STEP_MS) {
+    ledTestLastStepMs = now;
+    ledTestStepIdx++;
+
+    int phaseLen = 5;
+    if (ledTestPhase == 1) phaseLen = 75;
+    else if (ledTestPhase == 2) phaseLen = 25;
+
+    if (ledTestStepIdx >= phaseLen) {
+      ledTestPhase++;
+      ledTestStepIdx = 0;
+      ledTestPhaseStartedMs = now;
+      if (ledTestPhase > 3) {
+        ledTestPhase = 0;
+        ledTestPhaseStartedMs = now;
+      }
+    }
+  }
+
+  if (ledTestPhase == 0) {
+    // Letters alone — B I N G O in order.
+    const char* letters = "BINGO";
+    int idx = ledTestStepIdx;
+    if (idx < 0) idx = 0;
+    if (idx > 4) idx = 4;
+    int p = letterToPhysical(letters[idx]);
+    if (p >= 0 && p < NUM_LEDS) leds[p] = letterColor;
+  } else if (ledTestPhase == 1) {
+    // Numbers alone — 1..75 in order.
+    int n = ledTestStepIdx + 1;
+    if (n < 1) n = 1;
+    if (n > 75) n = 75;
+    int p = numberToPhysical(n);
+    if (p >= 0 && p < NUM_LEDS) leds[p] = numberColor;
+  } else if (ledTestPhase == 2) {
+    // Game-type matrix alone — cells 1..25 in order.
+    int cell = ledTestStepIdx + 1;
+    if (cell < 1) cell = 1;
+    if (cell > 25) cell = 25;
+    int p = gameTypeCellToPhysical(cell);
+    if (p >= 0 && p < NUM_LEDS) leds[p] = gameTypeColor;
+  }
 }
 
 void updateAllLeds() {
@@ -1207,6 +2171,11 @@ void updateAllLeds() {
 
   if (ledTestMode) {
     updateLedTestMode();
+    return;
+  }
+
+  if (screensaverEnabled) {
+    renderScreensaverFrame();
     return;
   }
 
@@ -1245,38 +2214,112 @@ void updateAllLeds() {
     return;
   }
 
-  if (screensaverEnabled) {
-    renderScreensaverFrame();
-    return;
-  }
-
   renderGameBoardFrame();
 }
 
-void updateStatusLed() {
 #if STATUS_LED_ENABLED
-  // Keep a simple onboard "alive" indicator: continuous rainbow cycle.
-  const uint8_t hue = (uint8_t)(millis() / 8);
-  statusLed[0] = CHSV(hue, 255, 180);
+void setStatusLed(bool on) {
+  digitalWrite(STATUS_LED_PIN, STATUS_LED_ACTIVE_LOW ? (on ? LOW : HIGH) : (on ? HIGH : LOW));
+}
+
+void initStatusLed() {
+  gpio_reset_pin((gpio_num_t)STATUS_LED_PIN);
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  setStatusLed(false);
+}
+
+void blinkStatusLedBootProbe() {
+#if STATUS_LED_BOOT_PROBE
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  for (int i = 0; i < 2; i++) {
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    delay(120);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    delay(120);
+  }
+  delay(150);
+  for (int i = 0; i < 2; i++) {
+    digitalWrite(STATUS_LED_PIN, LOW);
+    delay(120);
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    delay(120);
+  }
+  setStatusLed(false);
+#else
+  (void)0;
 #endif
 }
+#endif
 
 bool autoCallingCanDrawNow() {
   return autoCallingEnabled &&
+         !autoCallingHold &&
          strcmp(callingStyle, "automatic") == 0 &&
          !winnerDeclared &&
          poolCount > 0;
 }
 
 uint32_t autoCallingRemainingMsNow() {
-  if (!autoCallingCanDrawNow() || autoCallingNextDrawMs == 0) return 0;
+  if (!autoCallingEnabled || strcmp(callingStyle, "automatic") != 0) return 0;
+  // Countdown keeps running while audio plays (hold only blocks the next draw).
+  if (autoCallingNextDrawMs == 0) return 0;
   unsigned long now = millis();
   if (now >= autoCallingNextDrawMs) return 0;
   return (uint32_t)(autoCallingNextDrawMs - now);
 }
 
+void setAutoCallingHold(bool hold) {
+  if (autoCallingHold == hold) return;
+  autoCallingHold = hold;
+  if (hold) {
+    autoCallingHoldSinceMs = millis();
+    broadcastStateWs("auto_calling_changed");
+    return;
+  }
+  // Do not reschedule the interval — if the deadline already passed while audio
+  // played, the next loop iteration draws immediately.
+  autoCallingHoldSinceMs = 0;
+  const bool hadPendingWinner = pendingWinnerActivation;
+  flushPendingWinnerActivation();
+  broadcastStateWs(hadPendingWinner ? "winner_changed" : "auto_calling_changed");
+}
+
+/** Enable/disable auto-call. Play immediately draws (like Draw next), then arms the interval. */
+void applyAutoCallingEnabled(bool enabled) {
+  autoCallingEnabled = enabled;
+  autoCallingHold = false;
+  autoCallingHoldSinceMs = 0;
+  if (!enabled) {
+    autoCallingNextDrawMs = 0;
+    broadcastStateWs("auto_calling_changed");
+    return;
+  }
+
+  // Play = draw now, then count down to the following call.
+  if (!winnerDeclared && poolCount > 0) {
+    if (!gameEstablished) gameEstablished = true;
+    int n = drawNext();
+    if (n < 0) {
+      autoCallingEnabled = false;
+      autoCallingNextDrawMs = 0;
+      broadcastStateWs("auto_calling_changed");
+      return;
+    }
+    autoCallingNextDrawMs = millis() + (unsigned long)autoCallingSeconds * 1000UL;
+    if (autoCallingWaitForAudio) {
+      autoCallingHold = true;
+      autoCallingHoldSinceMs = millis();
+    }
+  } else {
+    autoCallingNextDrawMs = millis() + (unsigned long)autoCallingSeconds * 1000UL;
+  }
+  broadcastStateWs("auto_calling_changed");
+}
+
 int drawNext() {
   if (poolCount <= 0) return -1;
+  disableScreensaverForDraw();
+  if (!gameEstablished) gameEstablished = true;
   int idx = (int)uniformRandomBelow((uint32_t)poolCount);
   int k = 0;
   for (int n = 1; n <= 75; n++) {
@@ -1286,6 +2329,7 @@ int drawNext() {
       poolCount--;
       called[n] = true;
       currentNumber = n;
+      startCalledNumberBanner(n);
       winnerSuppressed = false;
       if (callOrderCount < 75) {
         callOrder[callOrderCount++] = n;
@@ -1314,6 +2358,7 @@ bool undoLastCall() {
     poolCount++;
   }
   currentNumber = (callOrderCount > 0) ? callOrder[callOrderCount - 1] : 0;
+  clearCalledNumberBanner();
   manualWinnerDeclared = false;
   // Undo keeps the current game session active, even at zero calls.
   gameEstablished = true;
@@ -1326,19 +2371,21 @@ bool undoLastCall() {
 }
 
 void doReset() {
-  bool persistedSettingsChanged = false;
-  // Reset should always return the board to normal game rendering.
-  if (screensaverEnabled) {
-    screensaverEnabled = false;
-    resetScreensaverAnim();
-    persistedSettingsChanged = true;
-  }
   if (ledTestMode) {
     ledTestMode = false;
     resetLedTestSequence();
   }
+  winnerAnimActive = false;
+  winnerAnimPhase = WINNER_PHASE_BOARD;
+  winnerScrollOffsetCols = 0;
+  winnerScrollShownThisRound = false;
+  patternIdx = 0;
+  lastPatternChange = millis();
   autoCallingEnabled = false;
+  autoCallingHold = false;
+  autoCallingWaitForAudio = false;
   autoCallingNextDrawMs = 0;
+  autoCallingHoldSinceMs = 0;
 
   for (int i = 1; i <= 75; i++) {
     pool[i] = true;
@@ -1347,11 +2394,14 @@ void doReset() {
   poolCount = 75;
   callOrderCount = 0;
   currentNumber = 0;
+  clearCalledNumberBanner();
   boardSeed = (uint16_t)random(1000, 10000);
   gameEstablished = false;
   manualWinnerDeclared = false;
   winnerSuppressed = false;
   winnerEventId = 0;
+  pendingWinnerActivation = false;
+  pendingWinnerEventBump = false;
   for (int i = 0; i < MAX_CARD_SESSIONS; i++) {
     if (!cardSessions[i].active) continue;
     for (int c = 0; c < 25; c++) cardSessions[i].marks[c] = (c == 12);
@@ -1369,12 +2419,15 @@ void doReset() {
   }
   winnerCount = 0;
   syncWinnerDeclared();
-  if (persistedSettingsChanged) {
-    saveNvsSettings();
-  }
-  saveGameStateSnapshot();
   updateAllLeds();
   broadcastStateWs("game_reset");
+  deferResetPersistence = true;
+}
+
+void flushDeferredResetWork() {
+  if (!deferResetPersistence) return;
+  deferResetPersistence = false;
+  saveGameStateSnapshot();
   broadcastAllCardStatesWs("card_state");
 }
 
@@ -1438,41 +2491,6 @@ bool loadGameStateSnapshot() {
   return true;
 }
 
-int sectionIdFromString(const char* value) {
-  if (!value) return -1;
-  if (strcmp(value, "game_type") == 0) return SEC_GAME_TYPE;
-  if (strcmp(value, "letters") == 0) return SEC_LETTERS;
-  if (strcmp(value, "numbers") == 0) return SEC_NUMBERS;
-  return -1;
-}
-
-const char* sectionIdToString(int id) {
-  switch (id) {
-    case SEC_GAME_TYPE: return "game_type";
-    case SEC_LETTERS: return "letters";
-    case SEC_NUMBERS: return "numbers";
-    default: return "game_type";
-  }
-}
-
-bool applyLedBoardSectionOrder(const uint8_t order[3]) {
-  bool seen[3] = {false, false, false};
-  for (int i = 0; i < 3; i++) {
-    if (order[i] > 2 || seen[order[i]]) return false;
-    seen[order[i]] = true;
-  }
-  memcpy(boardSectionOrder, order, 3);
-  recomputeSectionStarts();
-  initLedTestSequence();
-  return true;
-}
-
-void appendLedBoardSectionOrderJson(JsonArray arr) {
-  for (int i = 0; i < 3; i++) {
-    arr.add(sectionIdToString(boardSectionOrder[i]));
-  }
-}
-
 void startMdns() {
   if (MDNS.begin("bingo")) {
     MDNS.addService("http", "tcp", 80);
@@ -1524,7 +2542,7 @@ void loadNvs() {
   if (nvs_get_u8(nvs, NVS_SCREENSAVER_ENABLED, &se) == ESP_OK) screensaverEnabled = (se != 0);
   uint8_t sty;
   if (nvs_get_u8(nvs, NVS_SCREENSAVER_TYPE, &sty) == ESP_OK) {
-    if (sty <= 2) screensaverType = sty;
+    if (sty <= 12) screensaverType = sty;
   }
   uint32_t scr;
   if (nvs_get_u32(nvs, NVS_SCREENSAVER_COLOR, &scr) == ESP_OK) screensaverColor = scr;
@@ -1561,7 +2579,7 @@ void loadNvs() {
         strcmp(gameTypeBuf, "frame_inside") != 0 &&
         strcmp(gameTypeBuf, "plus_sign") != 0 &&
         strcmp(gameTypeBuf, "field_goal") != 0)
-      strcpy(gameTypeBuf, "traditional");
+      strcpy(gameTypeBuf, "cover_all");
   }
   size_t csLen = sizeof(callingStyleBuf);
   if (nvs_get_str(nvs, NVS_CALLING_STYLE, callingStyleBuf, &csLen) == ESP_OK) {
@@ -1597,13 +2615,52 @@ void loadNvs() {
       loadedPin.toCharArray(boardPinBuf, sizeof(boardPinBuf));
     }
   }
-  uint8_t loadedOrder[3];
-  size_t orderLen = sizeof(loadedOrder);
-  if (nvs_get_blob(nvs, NVS_LED_BOARD_ORDER, loadedOrder, &orderLen) == ESP_OK && orderLen == 3) {
-    applyLedBoardSectionOrder(loadedOrder);
-  } else {
-    recomputeSectionStarts();
+  size_t diLen = sizeof(deviceIdBuf);
+  if (nvs_get_str(nvs, NVS_DEVICE_ID, deviceIdBuf, &diLen) != ESP_OK || deviceIdBuf[0] == '\0') {
+    deviceIdBuf[0] = '\0';
   }
+  // Restore board session token across reboots (preserve remaining TTL, do not re-arm full 7 days).
+  size_t btLen = sizeof(boardAuthToken);
+  if (nvs_get_str(nvs, NVS_BOARD_TOKEN, boardAuthToken, &btLen) == ESP_OK && boardAuthToken[0] != '\0') {
+    uint32_t remainingMs = 0;
+    if (nvs_get_u32(nvs, NVS_BOARD_TOKEN_REMAINING, &remainingMs) == ESP_OK && remainingMs > 0) {
+      boardAuthExpiryMs = millis() + remainingMs;
+    } else {
+      boardAuthToken[0] = '\0';
+      boardAuthExpiryMs = 0;
+    }
+  } else {
+    boardAuthToken[0] = '\0';
+    boardAuthExpiryMs = 0;
+  }
+  // Fixed layout: letters → numbers → game type (ignore any legacy NVS order blob).
+  boardSectionOrder[0] = SEC_LETTERS;
+  boardSectionOrder[1] = SEC_NUMBERS;
+  boardSectionOrder[2] = SEC_GAME_TYPE;
+  recomputeSectionStarts();
+  size_t lfmLen = sizeof(letterFullModeBuf);
+  if (nvs_get_str(nvs, NVS_LETTER_FULL_MODE, letterFullModeBuf, &lfmLen) == ESP_OK) {
+    if (strcmp(letterFullModeBuf, "off") != 0 &&
+        strcmp(letterFullModeBuf, "number_theme") != 0 &&
+        strcmp(letterFullModeBuf, "on") != 0) {
+      strcpy(letterFullModeBuf, "on");
+    }
+  }
+  size_t cneLen = sizeof(currentNumberEffectBuf);
+  if (nvs_get_str(nvs, NVS_CURRENT_NUM_EFFECT, currentNumberEffectBuf, &cneLen) == ESP_OK) {
+    // Migrate legacy "insane" id → "strobe".
+    if (strcmp(currentNumberEffectBuf, "insane") == 0) {
+      strcpy(currentNumberEffectBuf, "strobe");
+    } else if (strcmp(currentNumberEffectBuf, "pulse") != 0 &&
+        strcmp(currentNumberEffectBuf, "strobe") != 0 &&
+        strcmp(currentNumberEffectBuf, "flash") != 0) {
+      strcpy(currentNumberEffectBuf, "flash");
+    }
+  }
+  uint32_t cnc;
+  if (nvs_get_u32(nvs, NVS_CURRENT_NUM_COLOR, &cnc) == ESP_OK) currentNumberColor = cnc;
+  uint8_t cnb = 0;
+  if (nvs_get_u8(nvs, NVS_CALLED_NUM_BANNER, &cnb) == ESP_OK) calledNumberBannerEnabled = (cnb != 0);
   size_t ssidLen = sizeof(staSsidBuf);
   if (nvs_get_str(nvs, NVS_WIFI_SSID, staSsidBuf, &ssidLen) != ESP_OK) {
     staSsidBuf[0] = '\0';
@@ -1640,33 +2697,59 @@ void saveNvsSettings() {
   nvs_set_str(nvs, NVS_GAME_TYPE, gameType);
   nvs_set_str(nvs, NVS_CALLING_STYLE, callingStyle);
   nvs_set_str(nvs, NVS_BOARD_PIN, boardPinBuf);
+  if (deviceIdBuf[0] != '\0') nvs_set_str(nvs, NVS_DEVICE_ID, deviceIdBuf);
   nvs_set_str(nvs, NVS_SCREENSAVER_TEXT, screensaverText);
-  nvs_set_blob(nvs, NVS_LED_BOARD_ORDER, boardSectionOrder, sizeof(boardSectionOrder));
+  nvs_set_str(nvs, NVS_LETTER_FULL_MODE, letterFullModeBuf);
+  nvs_set_str(nvs, NVS_CURRENT_NUM_EFFECT, currentNumberEffectBuf);
+  nvs_set_u32(nvs, NVS_CURRENT_NUM_COLOR, currentNumberColor);
+  nvs_set_u8(nvs, NVS_CALLED_NUM_BANNER, calledNumberBannerEnabled ? 1 : 0);
   nvs_set_str(nvs, NVS_WIFI_SSID, staSsidBuf);
   nvs_set_str(nvs, NVS_WIFI_PASSWORD, staPasswordBuf);
   nvs_commit(nvs);
   nvs_close(nvs);
 }
 
-String buildStateJson() {
-  DynamicJsonDocument doc(STATE_JSON_DOC_CAPACITY);
+void saveNvsGameTypeOnly() {
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+  nvs_set_str(nvs, NVS_GAME_TYPE, gameType);
+  nvs_commit(nvs);
+  nvs_close(nvs);
+}
+
+void saveNvsCallingStyleOnly() {
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+  nvs_set_str(nvs, NVS_CALLING_STYLE, callingStyle);
+  nvs_commit(nvs);
+  nvs_close(nvs);
+}
+
+void saveNvsScreensaverEnabledOnly() {
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+  nvs_set_u8(nvs, NVS_SCREENSAVER_ENABLED, screensaverEnabled ? 1 : 0);
+  nvs_commit(nvs);
+  nvs_close(nvs);
+}
+
+void populateStateJson(JsonObject doc) {
   doc["current"] = currentNumber;
   doc["remaining"] = poolCount;
   doc["boardSeed"] = boardSeed;
   doc["gameType"] = gameType;
   doc["callingStyle"] = callingStyle;
   doc["gameEstablished"] = gameEstablished;
+  // While call-out audio is holding, hide pending winners so board UI/LEDs wait.
   doc["winnerDeclared"] = winnerDeclared;
   doc["manualWinnerDeclared"] = manualWinnerDeclared;
   doc["winnerEventId"] = winnerEventId;
-  doc["winnerCount"] = winnerCount;
+  doc["winnerCount"] = pendingWinnerActivation ? 0 : winnerCount;
   const int activeCards = getActiveCardCount();
   doc["cardCount"] = activeCards;
-  doc["playerCount"] = activeCards; // currently one active card per player/device
+  doc["playerCount"] = activeCards;
   doc["ledTestMode"] = ledTestMode;
   doc["boardAccessRequired"] = true;
   doc["boardAuthValid"] = isBoardAuthValid();
   doc["screensaverEnabled"] = screensaverEnabled;
+  doc["screensaverActive"] = screensaverEnabled && !ledTestMode;
   doc["screensaverType"] = screensaverTypeToString(screensaverType);
   doc["screensaverText"] = screensaverText;
   doc["screensaverSpeedMs"] = screensaverSpeedMs;
@@ -1674,6 +2757,7 @@ String buildStateJson() {
   snprintf(screensaverHex, sizeof(screensaverHex), "#%06X", screensaverColor);
   doc["screensaverColor"] = screensaverHex;
   doc["autoCallingEnabled"] = autoCallingEnabled;
+  doc["autoCallingHold"] = autoCallingHold;
   doc["autoCallingSeconds"] = autoCallingSeconds;
   doc["autoCallingRemainingMs"] = autoCallingRemainingMsNow();
   doc["theme"] = themeId;
@@ -1697,8 +2781,12 @@ String buildStateJson() {
   snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[2]); ledLetterObj["N"] = ledHex;
   snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[3]); ledLetterObj["G"] = ledHex;
   snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[4]); ledLetterObj["O"] = ledHex;
-  JsonArray sectionOrder = doc.createNestedArray("ledBoardSectionOrder");
-  appendLedBoardSectionOrderJson(sectionOrder);
+  doc["letterFullMode"] = letterFullMode;
+  doc["currentNumberEffect"] = currentNumberEffect;
+  char currentNumHex[8];
+  snprintf(currentNumHex, sizeof(currentNumHex), "#%06X", currentNumberColor);
+  doc["currentNumberColor"] = currentNumHex;
+  doc["calledNumberBanner"] = calledNumberBannerEnabled;
   doc["wifiSsid"] = staSsidBuf;
   doc["wifiConfigured"] = (staSsidBuf[0] != '\0');
   doc["wifiConnected"] = wifiStaConnected;
@@ -1708,6 +2796,11 @@ String buildStateJson() {
     int n = callOrder[i];
     if (n >= 1 && n <= 75 && called[n]) arr.add(n);
   }
+}
+
+String buildStateJson() {
+  DynamicJsonDocument doc(STATE_JSON_DOC_CAPACITY);
+  populateStateJson(doc.to<JsonObject>());
   String buf;
   serializeJson(doc, buf);
   return buf;
@@ -1719,10 +2812,42 @@ void broadcastStateWs(const char* type) {
   env["seq"] = ++wsSeq;
   env["seed"] = boardSeed;
   env["ts"] = millis();
-  String stateJson = buildStateJson();
-  DynamicJsonDocument nested(STATE_JSON_DOC_CAPACITY);
-  deserializeJson(nested, stateJson);
-  env["data"] = nested.as<JsonObject>();
+  populateStateJson(env.createNestedObject("data"));
+  String payload;
+  serializeJson(env, payload);
+  for (int i = 0; i < MAX_WS_SUBSCRIPTIONS; i++) {
+    if (!wsSubscriptions[i].active) continue;
+    if (!wsCanReceiveState(wsSubscriptions[i].clientId)) continue;
+    ws.text(wsSubscriptions[i].clientId, payload);
+  }
+}
+
+void broadcastPatternIndexWs() {
+  StaticJsonDocument<192> env;
+  env["type"] = "pattern_index_changed";
+  env["seq"] = ++wsSeq;
+  env["seed"] = boardSeed;
+  env["ts"] = millis();
+  env["data"]["patternIndex"] = patternIdx;
+  String payload;
+  serializeJson(env, payload);
+  for (int i = 0; i < MAX_WS_SUBSCRIPTIONS; i++) {
+    if (!wsSubscriptions[i].active) continue;
+    if (!wsCanReceiveState(wsSubscriptions[i].clientId)) continue;
+    ws.text(wsSubscriptions[i].clientId, payload);
+  }
+}
+
+void broadcastAutoCallingProgressWs() {
+  StaticJsonDocument<256> env;
+  env["type"] = "auto_calling_tick";
+  env["seq"] = ++wsSeq;
+  env["seed"] = boardSeed;
+  env["ts"] = millis();
+  JsonObject data = env.createNestedObject("data");
+  data["autoCallingRemainingMs"] = autoCallingRemainingMsNow();
+  data["autoCallingHold"] = autoCallingHold;
+  data["autoCallingEnabled"] = autoCallingEnabled;
   String payload;
   serializeJson(env, payload);
   for (int i = 0; i < MAX_WS_SUBSCRIPTIONS; i++) {
@@ -1852,9 +2977,12 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     callingStyleBuf[sizeof(callingStyleBuf) - 1] = '\0';
     if (strcmp(callingStyle, "manual") == 0) {
       autoCallingEnabled = false;
+      autoCallingHold = false;
+      autoCallingWaitForAudio = false;
       autoCallingNextDrawMs = 0;
+      autoCallingHoldSinceMs = 0;
     }
-    saveNvsSettings();
+    saveNvsCallingStyleOnly();
     broadcastStateWs("calling_style_changed");
     sendWsCommandResult(client, requestId, true, 200, "{}");
     return;
@@ -1871,6 +2999,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     called[num] = true;
     if (pool[num]) { pool[num] = false; poolCount--; }
     currentNumber = num;
+    startCalledNumberBanner(num);
     winnerSuppressed = false;
     if (callOrderCount < 75) callOrder[callOrderCount++] = num;
     recomputeCardWinners();
@@ -1885,6 +3014,10 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
   if (action == "set_game_type") {
     const char* err = nullptr;
     if (!requireBoardToken(err)) { sendWsCommandResult(client, requestId, false, 401, "{}", err); return; }
+    if (!canChangeGameTypeNow()) {
+      sendWsCommandResult(client, requestId, false, 409, "{}", "game in progress");
+      return;
+    }
     const char* gt = payload["gameType"] | "";
     if (strcmp(gt, "traditional") != 0 && strcmp(gt, "four_corners") != 0 &&
         strcmp(gt, "postage_stamp") != 0 && strcmp(gt, "cover_all") != 0 &&
@@ -1901,9 +3034,9 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     patternIdx = 0;
     recomputeCardWinners();
     updateAllLeds();
-    saveNvsSettings();
     broadcastStateWs("game_type_changed");
     broadcastAllCardStatesWs("card_state");
+    saveNvsGameTypeOnly();
     sendWsCommandResult(client, requestId, true, 200, "{}");
     return;
   }
@@ -1952,8 +3085,16 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
       return;
     }
     if (s->cardId[0] == '\0') generateCardId(s->cardId, sizeof(s->cardId));
+    int cardNums[25];
     for (int i = 0; i < 25; i++) {
-      s->numbers[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
+      cardNums[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
+    }
+    if (!validateBingoCardNumbers(cardNums)) {
+      sendWsCommandResult(client, requestId, false, 400, "{}", "invalid card numbers");
+      return;
+    }
+    for (int i = 0; i < 25; i++) {
+      s->numbers[i] = cardNums[i];
       s->marks[i] = (i == 12);
     }
     s->winner = false;
@@ -2044,6 +3185,9 @@ void sendStateJson(AsyncWebServerRequest* req) {
 
 void setup() {
   Serial.begin(115200);
+#if STATUS_LED_ENABLED
+  initStatusLed();
+#endif
   randomSeed(esp_random());
   for (int i = 0; i < MAX_CARD_SESSIONS; i++) clearCardSession(cardSessions[i]);
   clearAllWsSubscriptions();
@@ -2053,13 +3197,11 @@ void setup() {
     nvs_flash_init();
   }
   loadNvs();
+  ensureDeviceIdLoaded();
 
   initThemePalettes();
   initLedTestSequence();
   FastLED.addLeds<WS2811, DATA_PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
-#if STATUS_LED_ENABLED
-  FastLED.addLeds<WS2812B, STATUS_LED_PIN, STATUS_LED_COLOR_ORDER>(statusLed, STATUS_LED_COUNT);
-#endif
   FastLED.setBrightness(brightness);
   pinMode(BUTTON1_PIN, INPUT_PULLUP);
   pinMode(BUTTON2_PIN, INPUT_PULLUP);
@@ -2070,6 +3212,12 @@ void setup() {
     doReset();
   }
   updateAllLeds();
+
+#if STATUS_LED_ENABLED
+  blinkStatusLedBootProbe();
+  setStatusLed(true);
+  Serial.println("Status LED: core boot OK (GPIO 2, before WiFi)");
+#endif
 
   if (!SPIFFS.begin(true)) Serial.println("SPIFFS mount failed");
 
@@ -2083,7 +3231,7 @@ void setup() {
                 void* arg, uint8_t* data, size_t len) {
     (void)serverWs;
     if (type == WS_EVT_CONNECT && client) {
-      setWsSubscription(client->id(), false, "");
+      setWsSubscription(client->id(), false, false, "");
       return;
     }
 
@@ -2104,8 +3252,11 @@ void setup() {
       if (strcmp(msgType, "subscribe") == 0) {
         const char* mode = obj["mode"] | "none";
         const char* cardId = obj["cardId"] | "";
-        const bool boardMode = strcmp(mode, "board") == 0;
-        setWsSubscription(client->id(), boardMode, cardId);
+        const char* token = obj["boardToken"] | "";
+        bool boardMode = strcmp(mode, "board") == 0;
+        const bool boardAuthOk = boardMode && isBoardTokenValid(token);
+        if (boardMode && !boardAuthOk) boardMode = false;
+        setWsSubscription(client->id(), boardMode, boardAuthOk, cardId);
 
         if (wsCanReceiveState(client->id())) {
           DynamicJsonDocument env(STATE_WS_ENV_DOC_CAPACITY);
@@ -2113,16 +3264,13 @@ void setup() {
           env["seq"] = ++wsSeq;
           env["seed"] = boardSeed;
           env["ts"] = millis();
-          String stateJson = buildStateJson();
-          DynamicJsonDocument nested(STATE_JSON_DOC_CAPACITY);
-          deserializeJson(nested, stateJson);
-          env["data"] = nested.as<JsonObject>();
+          populateStateJson(env.createNestedObject("data"));
           String payload;
           serializeJson(env, payload);
           client->text(payload);
         }
 
-        if (boardMode) {
+        if (boardAuthOk) {
           for (int i = 0; i < MAX_CARD_SESSIONS; i++) {
             if (!cardSessions[i].active) continue;
             StaticJsonDocument<768> cardEnv;
@@ -2164,16 +3312,17 @@ void setup() {
   server.addHandler(&ws);
 
   server.on("/api/state", HTTP_GET, [](AsyncWebServerRequest* req) { sendStateJson(req); });
+  server.on("/api/device-id", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    ensureDeviceIdLoaded();
+    StaticJsonDocument<96> doc;
+    doc["deviceId"] = deviceIdBuf;
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
 
   server.on("/draw", HTTP_POST, [](AsyncWebServerRequest* req) {
-    if (!requireBoardAuth(req)) return;
-    if (strcmp(callingStyle, "manual") != 0 && !gameEstablished) gameEstablished = true;
-    if (strcmp(callingStyle, "manual") == 0) { req->send(400, "application/json", "{\"error\":\"manual mode\"}"); return; }
-    int n = drawNext();
-    if (n < 0) { req->send(400, "application/json", "{\"error\":\"pool empty\"}"); return; }
-    sendStateJson(req);
-  });
-  server.on("/draw", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     if (strcmp(callingStyle, "manual") != 0 && !gameEstablished) gameEstablished = true;
     if (strcmp(callingStyle, "manual") == 0) { req->send(400, "application/json", "{\"error\":\"manual mode\"}"); return; }
@@ -2216,29 +3365,16 @@ void setup() {
 
   server.on("/screensaver", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
-    if (req->hasParam("enabled", true)) {
-      String value = req->getParam("enabled", true)->value();
-      value.toLowerCase();
-      screensaverEnabled = (value == "1" || value == "true" || value == "on");
-      resetScreensaverAnim();
-      updateAllLeds();
-      saveNvsSettings();
-      broadcastStateWs("screensaver_changed");
+    if (!req->hasParam("enabled", true)) {
+      req->send(400, "application/json", "{\"error\":\"enabled required\"}");
+      return;
     }
-    req->send(200, "application/json", "{}");
+    String value = req->getParam("enabled", true)->value();
+    value.toLowerCase();
+    const bool enabled = (value == "1" || value == "true" || value == "on");
+    applyScreensaverEnabled(enabled);
+    sendStateJson(req);
   });
-  server.addHandler(new AsyncCallbackJsonWebHandler("/screensaver", [](AsyncWebServerRequest* req, JsonVariant& json) {
-    if (!requireBoardAuth(req)) return;
-    JsonObject obj = json.as<JsonObject>();
-    if (obj.containsKey("enabled")) {
-      screensaverEnabled = obj["enabled"].as<bool>();
-      resetScreensaverAnim();
-      updateAllLeds();
-      saveNvsSettings();
-      broadcastStateWs("screensaver_changed");
-    }
-    req->send(200, "application/json", "{}");
-  }));
 
   server.on("/screensaver-text", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
@@ -2254,20 +3390,6 @@ void setup() {
     broadcastStateWs("screensaver_text_changed");
     req->send(200, "application/json", "{}");
   });
-  server.addHandler(new AsyncCallbackJsonWebHandler("/screensaver-text", [](AsyncWebServerRequest* req, JsonVariant& json) {
-    if (!requireBoardAuth(req)) return;
-    JsonObject obj = json.as<JsonObject>();
-    String text = obj["text"].as<const char*>() ? String(obj["text"].as<const char*>()) : String("");
-    text.trim();
-    if (text.length() == 0) text = "BINGO";
-    if (text.length() >= (int)sizeof(screensaverText)) text = text.substring(0, sizeof(screensaverText) - 1);
-    text.toCharArray(screensaverText, sizeof(screensaverText));
-    resetScreensaverAnim();
-    updateAllLeds();
-    saveNvsSettings();
-    broadcastStateWs("screensaver_text_changed");
-    req->send(200, "application/json", "{}");
-  }));
 
   server.on("/screensaver-speed", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
@@ -2281,35 +3403,7 @@ void setup() {
     }
     req->send(200, "application/json", "{}");
   });
-  server.addHandler(new AsyncCallbackJsonWebHandler("/screensaver-speed", [](AsyncWebServerRequest* req, JsonVariant& json) {
-    if (!requireBoardAuth(req)) return;
-    JsonObject obj = json.as<JsonObject>();
-    if (obj.containsKey("value")) {
-      int value = obj["value"].as<int>();
-      if (value < 20) value = 20;
-      if (value > 500) value = 500;
-      screensaverSpeedMs = (uint16_t)value;
-      saveNvsSettings();
-      broadcastStateWs("screensaver_speed_changed");
-    }
-    req->send(200, "application/json", "{}");
-  }));
 
-  server.addHandler(new AsyncCallbackJsonWebHandler("/screensaver-type", [](AsyncWebServerRequest* req, JsonVariant& json) {
-    if (!requireBoardAuth(req)) return;
-    JsonObject obj = json.as<JsonObject>();
-    if (!obj.containsKey("type")) {
-      req->send(400, "application/json", "{\"error\":\"type required\"}");
-      return;
-    }
-    int nextType = screensaverTypeFromString(obj["type"].as<const char*>());
-    screensaverType = (uint8_t)nextType;
-    resetScreensaverAnim();
-    updateAllLeds();
-    saveNvsSettings();
-    broadcastStateWs("screensaver_type_changed");
-    req->send(200, "application/json", "{}");
-  }));
   server.on("/screensaver-type", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     String typeValue;
@@ -2328,21 +3422,6 @@ void setup() {
     req->send(200, "application/json", "{}");
   });
 
-  server.addHandler(new AsyncCallbackJsonWebHandler("/screensaver-color", [](AsyncWebServerRequest* req, JsonVariant& json) {
-    if (!requireBoardAuth(req)) return;
-    JsonObject obj = json.as<JsonObject>();
-    if (!obj.containsKey("hex")) {
-      req->send(400, "application/json", "{\"error\":\"hex required\"}");
-      return;
-    }
-    String hex = obj["hex"].as<const char*>() ? String(obj["hex"].as<const char*>()) : String("");
-    hex.replace("#", "");
-    screensaverColor = (uint32_t)strtoul(hex.c_str(), nullptr, 16);
-    updateAllLeds();
-    saveNvsSettings();
-    broadcastStateWs("screensaver_color_changed");
-    req->send(200, "application/json", "{}");
-  }));
   server.on("/screensaver-color", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     if (!req->hasParam("hex", true)) {
@@ -2370,10 +3449,9 @@ void setup() {
     }
     String value = req->getParam("enabled", true)->value();
     value.toLowerCase();
-    autoCallingEnabled = (value == "1" || value == "true" || value == "on");
-    autoCallingNextDrawMs = autoCallingEnabled ? (millis() + (unsigned long)autoCallingSeconds * 1000UL) : 0;
-    broadcastStateWs("auto_calling_changed");
-    req->send(200, "application/json", "{}");
+    const bool enabled = (value == "1" || value == "true" || value == "on");
+    applyAutoCallingEnabled(enabled);
+    sendStateJson(req);
   });
   server.addHandler(new AsyncCallbackJsonWebHandler("/auto-calling", [](AsyncWebServerRequest* req, JsonVariant& json) {
     if (!requireBoardAuth(req)) return;
@@ -2386,9 +3464,61 @@ void setup() {
       req->send(400, "application/json", "{\"error\":\"enabled required\"}");
       return;
     }
-    autoCallingEnabled = obj["enabled"].as<bool>();
-    autoCallingNextDrawMs = autoCallingEnabled ? (millis() + (unsigned long)autoCallingSeconds * 1000UL) : 0;
-    broadcastStateWs("auto_calling_changed");
+    applyAutoCallingEnabled(obj["enabled"].as<bool>());
+    sendStateJson(req);
+  }));
+
+  server.on("/auto-calling-hold", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!req->hasParam("hold", true)) {
+      req->send(400, "application/json", "{\"error\":\"hold required\"}");
+      return;
+    }
+    String value = req->getParam("hold", true)->value();
+    value.toLowerCase();
+    setAutoCallingHold(value == "1" || value == "true" || value == "on");
+    req->send(200, "application/json", "{}");
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/auto-calling-hold", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    if (!obj.containsKey("hold")) {
+      req->send(400, "application/json", "{\"error\":\"hold required\"}");
+      return;
+    }
+    setAutoCallingHold(obj["hold"].as<bool>());
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/auto-calling-wait-audio", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!req->hasParam("enabled", true)) {
+      req->send(400, "application/json", "{\"error\":\"enabled required\"}");
+      return;
+    }
+    String value = req->getParam("enabled", true)->value();
+    value.toLowerCase();
+    autoCallingWaitForAudio = (value == "1" || value == "true" || value == "on");
+    if (!autoCallingWaitForAudio && autoCallingHold) {
+      setAutoCallingHold(false);
+    } else {
+      broadcastStateWs("auto_calling_changed");
+    }
+    req->send(200, "application/json", "{}");
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/auto-calling-wait-audio", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    if (!obj.containsKey("enabled")) {
+      req->send(400, "application/json", "{\"error\":\"enabled required\"}");
+      return;
+    }
+    autoCallingWaitForAudio = obj["enabled"].as<bool>();
+    if (!autoCallingWaitForAudio && autoCallingHold) {
+      setAutoCallingHold(false);
+    } else {
+      broadcastStateWs("auto_calling_changed");
+    }
     req->send(200, "application/json", "{}");
   }));
 
@@ -2438,9 +3568,12 @@ void setup() {
       callingStyleBuf[sizeof(callingStyleBuf) - 1] = '\0';
       if (strcmp(callingStyle, "manual") == 0) {
         autoCallingEnabled = false;
+        autoCallingHold = false;
+        autoCallingWaitForAudio = false;
         autoCallingNextDrawMs = 0;
+        autoCallingHoldSinceMs = 0;
       }
-      saveNvsSettings();
+      saveNvsCallingStyleOnly();
       broadcastStateWs("calling_style_changed");
       req->send(200, "application/json", "{}");
     } else req->send(400, "application/json", "{\"error\":\"invalid\"}");
@@ -2457,6 +3590,7 @@ void setup() {
     called[num] = true;
     if (pool[num]) { pool[num] = false; poolCount--; }
     currentNumber = num;
+    startCalledNumberBanner(num);
     winnerSuppressed = false;
     if (callOrderCount < 75) {
       callOrder[callOrderCount++] = num;
@@ -2471,6 +3605,10 @@ void setup() {
 
   server.addHandler(new AsyncCallbackJsonWebHandler("/game-type", [](AsyncWebServerRequest* req, JsonVariant& json) {
     if (!requireBoardAuth(req)) return;
+    if (!canChangeGameTypeNow()) {
+      req->send(409, "application/json", "{\"error\":\"game in progress\"}");
+      return;
+    }
     JsonObject obj = json.as<JsonObject>();
     const char* gt = obj["gameType"];
     if (gt && (strcmp(gt, "traditional") == 0 || strcmp(gt, "four_corners") == 0 ||
@@ -2482,12 +3620,13 @@ void setup() {
               strcmp(gt, "field_goal") == 0)) {
       strncpy(gameTypeBuf, gt, sizeof(gameTypeBuf) - 1);
       gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
+      patternIdx = 0;
       recomputeCardWinners();
       updateAllLeds();
-      saveNvsSettings();
+      req->send(200, "application/json", "{}");
       broadcastStateWs("game_type_changed");
       broadcastAllCardStatesWs("card_state");
-      req->send(200, "application/json", "{}");
+      saveNvsGameTypeOnly();
     } else req->send(400, "application/json", "{\"error\":\"invalid\"}");
   }));
 
@@ -2519,8 +3658,10 @@ void setup() {
   server.on("/brightness", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     if (req->hasParam("value", true)) {
-      brightness = req->getParam("value", true)->value().toInt();
-      if (brightness > 255) brightness = 255;
+      int v = req->getParam("value", true)->value().toInt();
+      if (v < 0) v = 0;
+      if (v > 255) v = 255;
+      brightness = (uint8_t)v;
       FastLED.setBrightness(brightness);
       saveNvsSettings();
       broadcastStateWs("brightness_changed");
@@ -2720,13 +3861,25 @@ void setup() {
     req->send(200, "application/json", "{}");
   }));
 
+  // Public (no board token): /auth/board/unlock, /card/join|mark|sync-marks|leave|claim.
+  // All other mutating game/LED/settings routes must call requireBoardAuth().
   server.addHandler(new AsyncCallbackJsonWebHandler("/auth/board/unlock", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (boardUnlockIsLockedOut()) {
+      req->send(429, "application/json", "{\"error\":\"too many attempts\"}");
+      return;
+    }
     JsonObject obj = json.as<JsonObject>();
     String pin = normalizedPin(obj["pin"].as<const char*>());
     if (pin.length() == 0 || pin != String(boardPinBuf)) {
+      registerBoardUnlockFailure();
+      if (boardUnlockIsLockedOut()) {
+        req->send(429, "application/json", "{\"error\":\"too many attempts\"}");
+        return;
+      }
       req->send(401, "application/json", "{\"error\":\"invalid pin\"}");
       return;
     }
+    clearBoardUnlockFailures();
     issueBoardAuthToken();
     broadcastStateWs("board_auth_changed");
     StaticJsonDocument<160> doc;
@@ -2738,15 +3891,17 @@ void setup() {
   }));
 
   server.on("/auth/board/lock", HTTP_POST, [](AsyncWebServerRequest* req) {
-    boardAuthToken[0] = '\0';
-    boardAuthExpiryMs = 0;
+    if (!requireBoardAuth(req)) return;
+    clearBoardAuthToken();
     broadcastStateWs("board_auth_changed");
     req->send(200, "application/json", "{}");
   });
 
-  server.addHandler(new AsyncCallbackJsonWebHandler("/auth/board/refresh", [](AsyncWebServerRequest* req, JsonVariant& json) {
+  server.on("/auth/board/refresh", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
+    // Keep the same token; only extend TTL (and re-persist for reboot survival).
     boardAuthExpiryMs = millis() + BOARD_AUTH_TTL_MS;
+    persistBoardAuthToken();
     broadcastStateWs("board_auth_changed");
     StaticJsonDocument<160> doc;
     doc["token"] = boardAuthToken;
@@ -2754,7 +3909,7 @@ void setup() {
     String out;
     serializeJson(doc, out);
     req->send(200, "application/json", out);
-  }));
+  });
 
   server.addHandler(new AsyncCallbackJsonWebHandler("/board/pin", [](AsyncWebServerRequest* req, JsonVariant& json) {
     if (!requireBoardAuth(req)) return;
@@ -2775,28 +3930,142 @@ void setup() {
     req->send(200, "application/json", "{}");
   }));
 
-  server.addHandler(new AsyncCallbackJsonWebHandler("/led-board-order", [](AsyncWebServerRequest* req, JsonVariant& json) {
+  server.on("/letter-full-mode", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
-    JsonArray orderArr = json.as<JsonObject>()["order"].as<JsonArray>();
-    if (!orderArr || orderArr.size() != 3) {
-      req->send(400, "application/json", "{\"error\":\"order[3] required\"}");
+    if (!req->hasParam("mode", true)) {
+      req->send(400, "application/json", "{\"error\":\"mode required\"}");
       return;
     }
-    uint8_t nextOrder[3];
-    bool seen[3] = {false, false, false};
-    for (int i = 0; i < 3; i++) {
-      int id = sectionIdFromString(orderArr[i].as<const char*>());
-      if (id < 0 || seen[id]) {
-        req->send(400, "application/json", "{\"error\":\"invalid order\"}");
-        return;
-      }
-      seen[id] = true;
-      nextOrder[i] = (uint8_t)id;
+    String mode = req->getParam("mode", true)->value();
+    mode.trim();
+    if (mode != "on" && mode != "off" && mode != "number_theme") {
+      req->send(400, "application/json", "{\"error\":\"invalid mode\"}");
+      return;
     }
-    applyLedBoardSectionOrder(nextOrder);
+    strncpy(letterFullModeBuf, mode.c_str(), sizeof(letterFullModeBuf) - 1);
+    letterFullModeBuf[sizeof(letterFullModeBuf) - 1] = '\0';
     updateAllLeds();
     saveNvsSettings();
-    broadcastStateWs("led_board_order_changed");
+    broadcastStateWs("letter_full_mode_changed");
+    req->send(200, "application/json", "{}");
+  });
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/letter-full-mode", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* mode = obj["mode"].as<const char*>();
+    if (!mode || (strcmp(mode, "on") != 0 && strcmp(mode, "off") != 0 && strcmp(mode, "number_theme") != 0)) {
+      req->send(400, "application/json", "{\"error\":\"invalid mode\"}");
+      return;
+    }
+    strncpy(letterFullModeBuf, mode, sizeof(letterFullModeBuf) - 1);
+    letterFullModeBuf[sizeof(letterFullModeBuf) - 1] = '\0';
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("letter_full_mode_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/current-number-effect", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!req->hasParam("effect", true)) {
+      req->send(400, "application/json", "{\"error\":\"effect required\"}");
+      return;
+    }
+    String effect = req->getParam("effect", true)->value();
+    effect.trim();
+    if (effect != "flash" && effect != "pulse" && effect != "strobe") {
+      req->send(400, "application/json", "{\"error\":\"invalid effect\"}");
+      return;
+    }
+    strncpy(currentNumberEffectBuf, effect.c_str(), sizeof(currentNumberEffectBuf) - 1);
+    currentNumberEffectBuf[sizeof(currentNumberEffectBuf) - 1] = '\0';
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("current_number_effect_changed");
+    req->send(200, "application/json", "{}");
+  });
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/current-number-effect", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* effect = obj["effect"].as<const char*>();
+    if (!effect || (strcmp(effect, "flash") != 0 && strcmp(effect, "pulse") != 0 && strcmp(effect, "strobe") != 0)) {
+      req->send(400, "application/json", "{\"error\":\"invalid effect\"}");
+      return;
+    }
+    strncpy(currentNumberEffectBuf, effect, sizeof(currentNumberEffectBuf) - 1);
+    currentNumberEffectBuf[sizeof(currentNumberEffectBuf) - 1] = '\0';
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("current_number_effect_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/called-number-banner", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!req->hasParam("enabled", true)) {
+      req->send(400, "application/json", "{\"error\":\"enabled required\"}");
+      return;
+    }
+    String value = req->getParam("enabled", true)->value();
+    value.toLowerCase();
+    calledNumberBannerEnabled = (value == "1" || value == "true" || value == "on");
+    if (!calledNumberBannerEnabled) clearCalledNumberBanner();
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("called_number_banner_changed");
+    req->send(200, "application/json", "{}");
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/called-number-banner", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    if (!obj.containsKey("enabled")) {
+      req->send(400, "application/json", "{\"error\":\"enabled required\"}");
+      return;
+    }
+    calledNumberBannerEnabled = obj["enabled"].as<bool>();
+    if (!calledNumberBannerEnabled) clearCalledNumberBanner();
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("called_number_banner_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/current-number-color", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!req->hasParam("hex", true) && !req->hasParam("color", true)) {
+      req->send(400, "application/json", "{\"error\":\"hex required\"}");
+      return;
+    }
+    String hex = req->hasParam("hex", true) ? req->getParam("hex", true)->value()
+                                            : req->getParam("color", true)->value();
+    hex.trim();
+    if (hex.startsWith("#")) hex = hex.substring(1);
+    if (hex.length() == 6) {
+      currentNumberColor = (uint32_t)strtoul(hex.c_str(), nullptr, 16);
+      updateAllLeds();
+      saveNvsSettings();
+      broadcastStateWs("current_number_color_changed");
+    }
+    req->send(200, "application/json", "{}");
+  });
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/current-number-color", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* hex = obj["hex"].as<const char*>();
+    if (!hex || !*hex) hex = obj["color"].as<const char*>();
+    if (hex && *hex) {
+      String s(hex);
+      if (s.startsWith("#")) s = s.substring(1);
+      if (s.length() == 6) {
+        currentNumberColor = (uint32_t)strtoul(s.c_str(), nullptr, 16);
+        updateAllLeds();
+        saveNvsSettings();
+        broadcastStateWs("current_number_color_changed");
+      }
+    }
     req->send(200, "application/json", "{}");
   }));
 
@@ -2845,8 +4114,16 @@ void setup() {
     }
     if (s->cardId[0] == '\0') generateCardId(s->cardId, sizeof(s->cardId));
 
+    int cardNums[25];
     for (int i = 0; i < 25; i++) {
-      s->numbers[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
+      cardNums[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
+    }
+    if (!validateBingoCardNumbers(cardNums)) {
+      req->send(400, "application/json", "{\"error\":\"invalid card numbers\"}");
+      return;
+    }
+    for (int i = 0; i < 25; i++) {
+      s->numbers[i] = cardNums[i];
       s->marks[i] = (i == 12);
     }
     s->winner = false;
@@ -2869,6 +4146,60 @@ void setup() {
     doc["winner"] = s->winner;
     doc["winnerCount"] = winnerCount;
     doc["winnerEventId"] = winnerEventId;
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  }));
+
+  // Printed-card verify: numbers come only from the QR payload (self-contained; no print DB).
+  server.addHandler(new AsyncCallbackJsonWebHandler("/card/claim", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    JsonObject obj = json.as<JsonObject>();
+    JsonArray nums = obj["numbers"].as<JsonArray>();
+    if (!nums || nums.size() != 25) {
+      req->send(400, "application/json", "{\"error\":\"numbers[25] required\"}");
+      return;
+    }
+
+    int cardNums[25];
+    for (int i = 0; i < 25; i++) {
+      cardNums[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
+    }
+    if (!validateBingoCardNumbers(cardNums)) {
+      req->send(400, "application/json", "{\"error\":\"invalid card numbers\"}");
+      return;
+    }
+
+    const char* sig = obj["sig"].as<const char*>();
+    if (!sig) sig = obj["signature"].as<const char*>();
+    const bool authentic = verifyCardSignature(cardNums, sig);
+
+    char contentId[17];
+    cardIdFromCardNumbers(cardNums, contentId, sizeof(contentId));
+
+    CardSession* s = findCardSessionById(contentId);
+    if (!s) s = allocateCardSession();
+    if (!s) {
+      req->send(503, "application/json", "{\"error\":\"card capacity reached\"}");
+      return;
+    }
+
+    strncpy(s->cardId, contentId, sizeof(s->cardId) - 1);
+    s->cardId[sizeof(s->cardId) - 1] = '\0';
+    for (int i = 0; i < 25; i++) s->numbers[i] = cardNums[i];
+    resetSessionClaimedMasks(*s);
+    syncSessionMarksFromCalled(*s);
+    recomputeCardWinners();
+    broadcastStateWs("card_claimed");
+    broadcastCardStateWs(*s, "card_state");
+
+    StaticJsonDocument<448> doc;
+    doc["cardId"] = s->cardId;
+    doc["winner"] = s->winner;
+    doc["winnerCount"] = winnerCount;
+    doc["winnerEventId"] = winnerEventId;
+    doc["authentic"] = authentic;
+    JsonArray marksOut = doc.createNestedArray("marks");
+    for (int i = 0; i < 25; i++) marksOut.add(s->marks[i]);
     String out;
     serializeJson(doc, out);
     req->send(200, "application/json", out);
@@ -2972,8 +4303,7 @@ void setup() {
 }
 
 void handleButton1ShortPress() {
-  // Allow game type change only before game starts, or while winner is active.
-  if (gameEstablished && !winnerDeclared) return;
+  if (!canChangeGameTypeNow()) return;
 
   static const char* GAME_TYPES[] = {
     "traditional",
@@ -3002,9 +4332,9 @@ void handleButton1ShortPress() {
   lastPatternChange = millis();
   recomputeCardWinners();
   updateAllLeds();
-  saveNvsSettings();
   broadcastStateWs("game_type_changed");
   broadcastAllCardStatesWs("card_state");
+  saveNvsGameTypeOnly();
 }
 
 void handleButton1LongPress() {
@@ -3020,6 +4350,19 @@ void handleButton2ShortPress() {
 }
 
 void handleButton2LongPress() {
+  // Fresh manual game with nothing called yet: a winner is impossible.
+  // Holding Draw switches to automatic and pulls the first number.
+  // Do not start auto-calling — that stays UI-controlled.
+  if (strcmp(callingStyle, "manual") == 0 && callOrderCount == 0) {
+    strncpy(callingStyleBuf, "automatic", sizeof(callingStyleBuf) - 1);
+    callingStyleBuf[sizeof(callingStyleBuf) - 1] = '\0';
+    saveNvsCallingStyleOnly();
+    if (!gameEstablished) gameEstablished = true;
+    drawNext();
+    broadcastStateWs("calling_style_changed");
+    return;
+  }
+
   if (winnerDeclared) {
     // Clear winner state ("keep going" semantics).
     manualWinnerDeclared = false;
@@ -3064,6 +4407,30 @@ void updateButtonState(ButtonState& b, void (*onShortPress)(), void (*onLongPres
   if (prevStable == HIGH && b.stableState == LOW) {
     b.pressStartMs = now;
     b.longHandled = false;
+    // Any physical button exits LED test / screensaver.
+    bool exitedLedTest = false;
+    bool exitedScreensaver = false;
+    if (ledTestMode) {
+      ledTestMode = false;
+      resetLedTestSequence();
+      broadcastStateWs("led_test_changed");
+      exitedLedTest = true;
+    }
+    if (screensaverEnabled) {
+      screensaverEnabled = false;
+      resetScreensaverAnim();
+      saveNvsScreensaverEnabledOnly();
+      broadcastStateWs("screensaver_changed");
+      exitedScreensaver = true;
+    }
+    if (exitedLedTest || exitedScreensaver) {
+      updateAllLeds();
+    }
+    // Swallow the press only for LED test so it doesn't also cycle game type / draw / reset.
+    // Screensaver exit still allows the normal short/long action on this press.
+    if (exitedLedTest) {
+      b.longHandled = true;
+    }
     return;
   }
 
@@ -3073,6 +4440,7 @@ void updateButtonState(ButtonState& b, void (*onShortPress)(), void (*onLongPres
 }
 
 void loop() {
+  flushDeferredResetWork();
   updateButtonState(button1, handleButton1ShortPress, handleButton1LongPress);
   updateButtonState(button2, handleButton2ShortPress, handleButton2LongPress);
 
@@ -3081,18 +4449,29 @@ void loop() {
     if (strcmp(gameType, "traditional") == 0) {
       patternIdx = (patternIdx + 1) % NUM_TRADITIONAL_PATTERNS;
       lastPatternChange = millis();
-      broadcastStateWs("pattern_index_changed");
+      broadcastPatternIndexWs();
     } else if (strcmp(gameType, "postage_stamp") == 0) {
       patternIdx = (patternIdx + 1) % NUM_POSTAGE_PATTERNS;
       lastPatternChange = millis();
-      broadcastStateWs("pattern_index_changed");
+      broadcastPatternIndexWs();
     }
+  }
+
+  static unsigned long lastAutoCallingProgressMs = 0;
+  if (autoCallingEnabled && (millis() - lastAutoCallingProgressMs) >= 250UL) {
+    lastAutoCallingProgressMs = millis();
+    broadcastAutoCallingProgressWs();
   }
 
   if (autoCallingEnabled) {
     unsigned long now = millis();
+    // Safety: never stay held forever if the board UI disconnects mid call-out.
+    // Keep this tight so short intervals (e.g. 3s) recover quickly.
+    if (autoCallingHold && autoCallingHoldSinceMs > 0 && (now - autoCallingHoldSinceMs) > 8000UL) {
+      setAutoCallingHold(false);
+    }
     if (!autoCallingCanDrawNow()) {
-      autoCallingNextDrawMs = 0;
+      if (!autoCallingHold) autoCallingNextDrawMs = 0;
     } else {
       if (autoCallingNextDrawMs == 0) {
         autoCallingNextDrawMs = now + (unsigned long)autoCallingSeconds * 1000UL;
@@ -3101,10 +4480,18 @@ void loop() {
         int n = drawNext();
         if (n < 0) {
           autoCallingEnabled = false;
+          autoCallingHold = false;
           autoCallingNextDrawMs = 0;
+          autoCallingHoldSinceMs = 0;
           broadcastStateWs("auto_calling_changed");
         } else {
+          // Arm next countdown immediately so the bar keeps moving during audio.
           autoCallingNextDrawMs = now + (unsigned long)autoCallingSeconds * 1000UL;
+          if (autoCallingWaitForAudio) {
+            autoCallingHold = true;
+            autoCallingHoldSinceMs = now;
+            broadcastStateWs("auto_calling_changed");
+          }
         }
       }
     }
@@ -3112,7 +4499,6 @@ void loop() {
 
   ws.cleanupClients();
   updateAllLeds();
-  updateStatusLed();
   FastLED.show();
   delay(20);
 }

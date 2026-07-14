@@ -16,11 +16,13 @@ export interface GameState {
   boardAccessRequired?: boolean;
   boardAuthValid?: boolean;
   screensaverEnabled?: boolean;
+  screensaverActive?: boolean;
   screensaverType?: ScreensaverType;
   screensaverText?: string;
   screensaverSpeedMs?: number;
   screensaverColor?: string;
   autoCallingEnabled?: boolean;
+  autoCallingHold?: boolean;
   autoCallingSeconds?: number;
   autoCallingRemainingMs?: number;
   theme: number;
@@ -31,7 +33,13 @@ export interface GameState {
   ledHeaderColor: string;
   ledGameTypeColor: string;
   ledLetterColors: LedLetterColors;
-  ledBoardSectionOrder: LedBoardSection[];
+  /** When a letter column is fully called: on | off | number_theme */
+  letterFullMode: LetterFullMode;
+  /** Current-number beacon animation */
+  currentNumberEffect: CurrentNumberEffect;
+  currentNumberColor: string;
+  /** Briefly show letter+number glyph banner on the number LED section after each call */
+  calledNumberBanner?: boolean;
   wifiSsid?: string;
   wifiConfigured?: boolean;
   wifiConnected?: boolean;
@@ -39,26 +47,67 @@ export interface GameState {
   patternIndex: number;
 }
 
-export type LedBoardSection = "game_type" | "letters" | "numbers";
+export type LetterFullMode = "on" | "off" | "number_theme";
 
-export const LED_BOARD_SECTION_LABELS: Record<LedBoardSection, string> = {
-  game_type: "Game Type Matrix (5×5)",
-  letters: "Letter Headers (1×5)",
-  numbers: "Number Board (15×5)",
+export const LETTER_FULL_MODE_LABELS: Record<LetterFullMode, string> = {
+  on: "LED on (header color)",
+  off: "LED off",
+  number_theme: "Number theme",
 };
 
-export const DEFAULT_LED_BOARD_SECTION_ORDER: LedBoardSection[] = [
-  "game_type",
-  "letters",
-  "numbers",
-];
+export type CurrentNumberEffect = "flash" | "pulse" | "strobe";
 
-export type ScreensaverType = "text" | "rainbow" | "solid";
+export const CURRENT_NUMBER_EFFECT_LABELS: Record<CurrentNumberEffect, string> = {
+  flash: "Flash",
+  pulse: "Pulse",
+  strobe: "Strobe",
+};
+
+export type ScreensaverType =
+  | "text"
+  | "rainbow"
+  | "solid"
+  | "fire_matrix"
+  | "pacifica"
+  | "pride"
+  | "twinkle_fox"
+  | "cylon"
+  | "noise_palette"
+  | "sinelon"
+  | "juggle"
+  | "confetti"
+  | "fire2012";
 
 export const SCREENSAVER_TYPE_LABELS: Record<ScreensaverType, string> = {
   text: "Scrolling Text",
   rainbow: "Animated Rainbow",
   solid: "Solid Color",
+  fire_matrix: "Fire Matrix",
+  pacifica: "Pacifica",
+  pride: "Pride",
+  twinkle_fox: "TwinkleFox",
+  cylon: "Cylon Scanner",
+  noise_palette: "Noise Palette",
+  sinelon: "Sinelon",
+  juggle: "Juggle",
+  confetti: "Confetti",
+  fire2012: "Fire 2012",
+};
+
+export const SCREENSAVER_TYPE_DESCRIPTIONS: Record<ScreensaverType, string> = {
+  text: "Always overrides board LEDs and scrolls text on the full 21x5 matrix.",
+  rainbow: "Animated rainbow effect across the full 21x5 matrix.",
+  solid: "Solid color fill across the full 21x5 matrix.",
+  fire_matrix: "Perlin-noise fire rising across the full 21x5 matrix.",
+  pacifica: "Gentle blue-green ocean waves across the full board.",
+  pride: "Ever-changing flowing rainbow ribbons.",
+  twinkle_fox: "Holiday-style twinkling lights with rotating palettes.",
+  cylon: "Knight Rider-style column scanner bouncing left and right.",
+  noise_palette: "Organic Perlin noise mapped through cycling color palettes.",
+  sinelon: "A single colored comet weaving with fading trails.",
+  juggle: "Multiple colored dots weaving in and out of sync.",
+  confetti: "Random colored speckles that blink and fade.",
+  fire2012: "Classic heat-cell fire simulation rising from the bottom.",
 };
 
 export type AppMode = "board" | "card";
@@ -73,6 +122,16 @@ export interface CardJoinResponse {
   winner: boolean;
   winnerCount: number;
   winnerEventId?: number;
+  marks?: boolean[];
+}
+
+export interface CardClaimResponse {
+  cardId: string;
+  winner: boolean;
+  winnerCount: number;
+  winnerEventId?: number;
+  marks: boolean[];
+  authentic?: boolean;
 }
 
 export interface CardStateResponse {
@@ -225,7 +284,7 @@ export const DEFAULT_STATE: GameState = {
   called: [],
   remaining: 75,
   boardSeed: 1000,
-  gameType: "traditional",
+  gameType: "cover_all",
   callingStyle: "automatic",
   gameEstablished: false,
   winnerDeclared: false,
@@ -238,22 +297,27 @@ export const DEFAULT_STATE: GameState = {
   boardAccessRequired: true,
   boardAuthValid: false,
   screensaverEnabled: false,
-  screensaverType: "text",
+  screensaverActive: false,
+  screensaverType: "rainbow",
   screensaverText: "BINGO",
-  screensaverSpeedMs: 90,
-  screensaverColor: "#00ff00",
+  screensaverSpeedMs: 230,
+  screensaverColor: "#4e7a27",
   autoCallingEnabled: false,
-  autoCallingSeconds: 30,
+  autoCallingHold: false,
+  autoCallingSeconds: 10,
   autoCallingRemainingMs: 0,
   theme: 0,
-  brightness: 128,
-  ledVibrance: 70,
+  brightness: 255,
+  ledVibrance: 75,
   colorMode: "theme",
-  staticColor: "#22c55e",
-  ledHeaderColor: "#ff0000",
+  staticColor: "#00ff00",
+  ledHeaderColor: "#ffd8a8",
   ledGameTypeColor: "#ffd8a8",
   ledLetterColors: DEFAULT_LED_LETTER_COLORS,
-  ledBoardSectionOrder: DEFAULT_LED_BOARD_SECTION_ORDER,
+  letterFullMode: "on",
+  currentNumberEffect: "flash",
+  currentNumberColor: "#ffffff",
+  calledNumberBanner: false,
   wifiSsid: "",
   wifiConfigured: false,
   wifiConnected: false,

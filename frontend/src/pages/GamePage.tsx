@@ -10,14 +10,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Undo2 } from "lucide-react";
 import { api } from "@/api";
+import { isBoardAuthHttpError } from "@/lib/board-auth";
+import { optimisticResetState } from "@/lib/game-state-merge";
 import { cn } from "@/lib/utils";
+import type { RefreshOptions } from "@/hooks/useGameState";
 import type { GameState } from "@/types";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
 
 interface Props {
   state: GameState;
-  onRefresh: () => void;
+  onRefresh: (options?: RefreshOptions) => void;
   onApplyOptimistic?: (updater: (prev: GameState) => GameState) => void;
+  onApplyServerState?: (state: GameState) => void;
+  onPrefetchCallNumber?: (n: number) => void;
+  onAnnounceCallNumber?: (n: number) => void;
   onWinnerDialogActiveChange?: (active: boolean) => void;
   onSuppressAutoRestore?: () => void;
   uiLetterColors: LetterColors;
@@ -28,6 +34,9 @@ export function GamePage({
   state,
   onRefresh,
   onApplyOptimistic,
+  onApplyServerState,
+  onPrefetchCallNumber,
+  onAnnounceCallNumber,
   onWinnerDialogActiveChange,
   onSuppressAutoRestore,
   uiLetterColors,
@@ -63,15 +72,17 @@ export function GamePage({
   }, []);
 
   const handleStartGame = () => {
-    void api
-      .reset()
-      .catch(() => {
-        // Ignore reset failures here; board-auth/UI flow will handle recovery.
-      })
-      .finally(() => {
-        onRefresh();
-        setLocalStarted(true);
-      });
+    onApplyOptimistic?.((prev) => optimisticResetState(prev));
+    setLocalStarted(true);
+    void api.reset().then(
+      () => onRefresh({ force: true }),
+      (error: unknown) => {
+        if (isBoardAuthHttpError(error)) {
+          window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        }
+        onRefresh({ force: true });
+      }
+    );
   };
 
   const handleResetComplete = () => {
@@ -100,6 +111,7 @@ export function GamePage({
         state={state}
         onStart={handleStartGame}
         onRefresh={onRefresh}
+        onApplyOptimistic={onApplyOptimistic}
         letterColors={uiLetterColors}
       />
 
@@ -131,9 +143,12 @@ export function GamePage({
                 winnerEventId={state.winnerEventId}
                 winnerCount={state.winnerCount}
                 onRefresh={onRefresh}
+                onApplyOptimistic={onApplyOptimistic}
+                onApplyServerState={onApplyServerState}
                 onResetComplete={handleResetComplete}
                 onWinnerDialogActiveChange={onWinnerDialogActiveChange}
                 onSuppressAutoRestore={onSuppressAutoRestore}
+                onAnnounceCallNumber={onAnnounceCallNumber}
                 letterColors={uiLetterColors}
               />
             </CardContent>
@@ -175,9 +190,12 @@ export function GamePage({
             winnerEventId={state.winnerEventId}
             winnerCount={state.winnerCount}
             onRefresh={onRefresh}
+            onApplyOptimistic={onApplyOptimistic}
+            onApplyServerState={onApplyServerState}
             onResetComplete={handleResetComplete}
             onWinnerDialogActiveChange={onWinnerDialogActiveChange}
             onSuppressAutoRestore={onSuppressAutoRestore}
+            onAnnounceCallNumber={onAnnounceCallNumber}
             letterColors={uiLetterColors}
           />
         </div>
@@ -216,6 +234,9 @@ export function GamePage({
                   letterColors={uiLetterColors}
                   onRefresh={onRefresh}
                   onApplyOptimistic={onApplyOptimistic}
+                  onApplyServerState={onApplyServerState}
+                  onPrefetchCallNumber={onPrefetchCallNumber}
+                  onAnnounceCallNumber={onAnnounceCallNumber}
                 />
                 <div className="mt-4 flex justify-end">
                   <Button

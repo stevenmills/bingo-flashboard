@@ -1,4 +1,7 @@
-.PHONY: help frontend-install frontend-build fw-build fw-upload fs-upload deploy monitor
+.PHONY: help frontend-install frontend-build fw-build fw-upload fs-upload deploy monitor qa
+
+QA_BASE ?= http://bingo.local
+QA_PIN ?= 1975
 
 PIO_ENV ?= esp32dev
 PIO_PORT ?=
@@ -21,6 +24,7 @@ help:
 	@echo "make fw-upload            Upload firmware ($(PIO_ENV))"
 	@echo "make fs-upload            Upload SPIFFS data ($(PIO_ENV))"
 	@echo "make deploy               Build frontend + upload firmware + upload SPIFFS"
+	@echo "make qa                   Run board API smoke tests (QA_BASE, QA_PIN)"
 	@echo "make monitor              Open serial monitor"
 	@echo ""
 	@echo "Optional variables:"
@@ -44,6 +48,9 @@ fs-upload:
 	pio run -e $(PIO_ENV) -t uploadfs $(UPLOAD_PORT_ARG)
 
 deploy: frontend-build fw-upload fs-upload
+
+qa:
+	python3 scripts/qa-board.py --base $(QA_BASE) --pin $(QA_PIN)
 
 monitor:
 	pio device monitor -b $(MONITOR_SPEED) $(MONITOR_PORT_ARG)

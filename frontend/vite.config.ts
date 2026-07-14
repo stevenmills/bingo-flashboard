@@ -13,8 +13,9 @@ export default defineConfig({
   },
   build: {
     outDir: "../data",
-    emptyOutDir: true,
-    // Keep assets small for SPIFFS (~1.5 MB)
+    // Do not wipe data/ — MP3 clips live here and in public/. Stale hashed bundles are
+    // removed by scripts/prune-spiffs-data.mjs before/after each build (SPIFFS ~2.2 MB).
+    emptyOutDir: false,
     rollupOptions: {
       output: {
         // Flatten asset names (no subfolders) for SPIFFS
@@ -47,18 +48,26 @@ export default defineConfig({
       "/screensaver-color": API_TARGET,
       "/auto-calling": API_TARGET,
       "/auto-calling-seconds": API_TARGET,
+      "/auto-calling-hold": API_TARGET,
+      "/auto-calling-wait-audio": API_TARGET,
       "/auth/board/unlock": API_TARGET,
       "/auth/board/lock": API_TARGET,
       "/auth/board/refresh": API_TARGET,
       "/board/pin": API_TARGET,
       "/card/join": API_TARGET,
+      "/card/claim": API_TARGET,
       "/card/mark": API_TARGET,
       "/card/sync-marks": API_TARGET,
       "/card/leave": API_TARGET,
       "/brightness": API_TARGET,
       "/theme": API_TARGET,
       "/color": API_TARGET,
-      "/led-board-order": API_TARGET,
+      "/letter-header-color": API_TARGET,
+      "/game-type-color": API_TARGET,
+      "/letter-full-mode": API_TARGET,
+      "/current-number-effect": API_TARGET,
+      "/current-number-color": API_TARGET,
+      "/called-number-banner": API_TARGET,
       "/wifi": API_TARGET,
     },
   },

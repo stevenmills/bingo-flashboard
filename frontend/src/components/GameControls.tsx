@@ -4,7 +4,9 @@ import { ResetDialog } from "@/components/ResetDialog";
 import { WinnerDialog } from "@/components/WinnerDialog";
 import { GameOverDialog } from "@/components/GameOverDialog";
 import { api } from "@/api";
-import type { CallingStyle, GameType } from "@/types";
+import { isBoardAuthHttpError } from "@/lib/board-auth";
+import type { RefreshOptions } from "@/hooks/useGameState";
+import type { CallingStyle, GameState, GameType } from "@/types";
 import { GAME_TYPE_MIN_CALLS } from "@/types";
 import { Dices, Trophy, RotateCcw } from "lucide-react";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
@@ -18,10 +20,13 @@ interface Props {
   winnerDeclared: boolean;
   winnerEventId?: number;
   winnerCount?: number;
-  onRefresh: () => void;
+  onRefresh: (options?: RefreshOptions) => void;
+  onApplyOptimistic?: (updater: (prev: GameState) => GameState) => void;
+  onApplyServerState?: (state: GameState) => void;
   onResetComplete?: () => void;
   onWinnerDialogActiveChange?: (active: boolean) => void;
   onSuppressAutoRestore?: () => void;
+  onAnnounceCallNumber?: (n: number) => void;
   letterColors: LetterColors;
 }
 
@@ -34,13 +39,17 @@ export function GameControls({
   winnerEventId,
   winnerCount,
   onRefresh,
+  onApplyOptimistic,
+  onApplyServerState,
   onResetComplete,
   onWinnerDialogActiveChange,
   onSuppressAutoRestore,
+  onAnnounceCallNumber,
   letterColors,
 }: Props) {
   const [resetOpen, setResetOpen] = useState(false);
   const [winnerOpen, setWinnerOpen] = useState(false);
+  const [winnerAnnouncementKey, setWinnerAnnouncementKey] = useState(0);
   const winnerChangeTypeFlowRef = useRef(false);
   const [gameOverOpen, setGameOverOpen] = useState(false);
   const [drawing, setDrawing] = useState(false);
@@ -48,6 +57,13 @@ export function GameControls({
   const gameOverShownRef = useRef(false);
   const lastWinnerEventIdRef = useRef(0);
   const lastWinnerFallbackKeyRef = useRef("");
+  const declareInFlightRef = useRef(false);
+  const [declareBusy, setDeclareBusy] = useState(false);
+
+  const openWinnerAnnouncement = useCallback(() => {
+    setWinnerAnnouncementKey((k) => k + 1);
+    setWinnerOpen(true);
+  }, []);
 
   useEffect(() => {
     const onWsMessage = (event: Event) => {
@@ -68,24 +84,27 @@ export function GameControls({
       ) {
         return;
       }
+      // Don't interrupt keep-going → change-type flow.
+      if (winnerChangeTypeFlowRef.current) return;
+
       const wsWinnerCount = detail.data.winnerCount;
       const wsWinnerEventId = detail.data.winnerEventId ?? 0;
 
       if (typeof wsWinnerEventId === "number" && wsWinnerEventId > 0) {
         if (wsWinnerEventId > lastWinnerEventIdRef.current) {
           lastWinnerEventIdRef.current = wsWinnerEventId;
-          setWinnerOpen(true);
+          openWinnerAnnouncement();
         }
         return;
       }
 
       if (typeof wsWinnerCount === "number" && wsWinnerCount > 0) {
-        setWinnerOpen(true);
+        openWinnerAnnouncement();
       }
     };
     window.addEventListener("bingo:ws-message", onWsMessage as EventListener);
     return () => window.removeEventListener("bingo:ws-message", onWsMessage as EventListener);
-  }, []);
+  }, [openWinnerAnnouncement]);
 
   useEffect(() => {
     if (remaining > 0 || called.length === 0) {
@@ -104,17 +123,19 @@ export function GameControls({
     if (eventId <= 0) return;
     if (eventId <= lastWinnerEventIdRef.current) return;
     lastWinnerEventIdRef.current = eventId;
-    setWinnerOpen(true);
-  }, [winnerEventId]);
+    if (winnerChangeTypeFlowRef.current) return;
+    openWinnerAnnouncement();
+  }, [winnerEventId, openWinnerAnnouncement]);
 
   useEffect(() => {
-    const activeWinner = (winnerCount ?? 0) > 0;
+    const activeWinner = (winnerCount ?? 0) > 0 || winnerDeclared;
     if (!activeWinner) return;
-    const fallbackKey = `${winnerCount ?? 0}:${called.length}`;
+    if (winnerChangeTypeFlowRef.current) return;
+    const fallbackKey = `${winnerCount ?? 0}:${called.length}:${winnerDeclared ? 1 : 0}`;
     if (lastWinnerFallbackKeyRef.current === fallbackKey) return;
     lastWinnerFallbackKeyRef.current = fallbackKey;
-    setWinnerOpen(true);
-  }, [winnerDeclared, winnerCount, called.length]);
+    openWinnerAnnouncement();
+  }, [winnerDeclared, winnerCount, called.length, openWinnerAnnouncement]);
 
   useEffect(() => {
     if (!winnerDeclared && !winnerChangeTypeFlowRef.current) {
@@ -145,7 +166,15 @@ export function GameControls({
     drawingRef.current = true;
     setDrawing(true);
     try {
-      await api.draw();
+      const next = await api.draw();
+      if (typeof next.current === "number" && next.current >= 1) {
+        onAnnounceCallNumber?.(next.current);
+      }
+      if (onApplyServerState) {
+        onApplyServerState(next);
+      } else {
+        onApplyOptimistic?.((prev) => next);
+      }
     } catch (e: unknown) {
       if (e instanceof Error && e.message.includes("pool empty") && !gameOverShownRef.current) {
         gameOverShownRef.current = true;
@@ -153,10 +182,10 @@ export function GameControls({
       } else if (e instanceof Error && e.message.includes("409") && !gameOverShownRef.current) {
         gameOverShownRef.current = true;
         setGameOverOpen(true);
-      } else if (e instanceof Error && e.message.includes("401")) {
+      } else if (isBoardAuthHttpError(e)) {
         window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
       }
-      onRefresh();
+      onRefresh({ force: true });
     } finally {
       drawingRef.current = false;
       setDrawing(false);
@@ -170,30 +199,38 @@ export function GameControls({
       setGameOverOpen(false);
       gameOverShownRef.current = false;
       onResetComplete?.();
+      onRefresh({ force: true });
     } catch (e: unknown) {
-      if (e instanceof Error && e.message.includes("401")) {
+      if (isBoardAuthHttpError(e)) {
         window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
       }
-      onRefresh();
+      onRefresh({ force: true });
     }
   };
 
   const handleDeclareWinner = async () => {
+    if (declareInFlightRef.current || winnerOpen || winnerDeclared) return;
+    declareInFlightRef.current = true;
+    setDeclareBusy(true);
     try {
       await api.declareWinner();
-      setWinnerOpen(true);
+      openWinnerAnnouncement();
     } catch (e: unknown) {
-      if (e instanceof Error && e.message.includes("401")) {
+      if (isBoardAuthHttpError(e)) {
         window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
       }
-      onRefresh();
+      onRefresh({ force: true });
+    } finally {
+      declareInFlightRef.current = false;
+      setDeclareBusy(false);
     }
   };
 
   const poolEmpty = remaining === 0 && called.length > 0;
   const drawDisabled = poolEmpty || drawing;
   const minCalls = GAME_TYPE_MIN_CALLS[gameType];
-  const winnerDisabled = called.length < minCalls;
+  // While the winner dialog is up (announce or change-type), Winner stays idle.
+  const winnerDisabled = called.length < minCalls || winnerOpen || winnerDeclared || declareBusy;
   const gridClassName =
     callingStyle === "manual"
       ? "grid gap-3 portrait:grid-cols-1 landscape:grid-cols-2 md:grid-cols-2"
@@ -255,8 +292,10 @@ export function GameControls({
       <WinnerDialog
         open={winnerOpen}
         onOpenChange={setWinnerOpen}
+        announcementKey={winnerAnnouncementKey}
         onChangeTypeFlowChange={handleWinnerChangeTypeFlowChange}
         onSuppressAutoRestore={onSuppressAutoRestore}
+        onRefresh={onRefresh}
         winnerCount={winnerCount}
         letterColors={letterColors}
       />

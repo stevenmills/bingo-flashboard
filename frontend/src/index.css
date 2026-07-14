@@ -53,3 +53,20 @@
     font-family: system-ui, -apple-system, sans-serif;
   }
 }
+
+.auto-call-progress {
+  width: 100%;
+  animation-name: auto-call-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  animation-iteration-count: 1;
+}
+
+@keyframes auto-call-countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}

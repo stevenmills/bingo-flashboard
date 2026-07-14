@@ -3,6 +3,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { GameSetup } from "@/components/GameSetup";
+import type { RefreshOptions } from "@/hooks/useGameState";
 import type { GameState } from "@/types";
 import { Play } from "lucide-react";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
@@ -11,11 +12,12 @@ interface Props {
   open: boolean;
   state: GameState;
   onStart: () => void;
-  onRefresh: () => void;
+  onRefresh: (options?: RefreshOptions) => void;
+  onApplyOptimistic?: (updater: (prev: GameState) => GameState) => void;
   letterColors: LetterColors;
 }
 
-export function NewGameDialog({ open, state, onStart, onRefresh, letterColors }: Props) {
+export function NewGameDialog({ open, state, onStart, onRefresh, onApplyOptimistic, letterColors }: Props) {
   return (
     <Dialog open={open}>
       <DialogContent className="max-w-2xl" hideClose onPointerDownOutside={(e) => e.preventDefault()}>
@@ -33,6 +35,7 @@ export function NewGameDialog({ open, state, onStart, onRefresh, letterColors }:
           called={state.called}
           letterColors={letterColors}
           onRefresh={onRefresh}
+          onApplyOptimistic={onApplyOptimistic}
         />
 
         <Button
