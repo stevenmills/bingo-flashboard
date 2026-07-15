@@ -5,6 +5,8 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -30,8 +32,9 @@ bool screensaverEnabled = false;
 // Screensaver types:
 // 0=text, 1=rainbow, 2=solid, 3=fire_matrix, 4=pacifica, 5=pride,
 // 6=twinkle_fox, 7=cylon, 8=noise_palette, 9=sinelon, 10=juggle,
-// 11=confetti, 12=fire2012
+// 11=confetti, 12=fire2012, 13=sparkle (gold winner shimmer)
 uint8_t screensaverType = 1;  // rainbow
+uint8_t winnerEffectType = 13;  // sparkle
 char screensaverText[81] = "BINGO";
 uint32_t screensaverColor = 0x4E7A27;
 uint16_t screensaverSpeedMs = 230;
@@ -120,6 +123,23 @@ int sectionStartCol[3] = {0, 1, 16};
 static char staSsidBuf[WIFI_SSID_MAX_LEN + 1] = "";
 static char staPasswordBuf[WIFI_PASSWORD_MAX_LEN + 1] = "";
 bool wifiStaConnected = false;
+
+// --- Outbound webhooks (STA only) ---
+static char webhookNumberUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
+static char webhookBingoUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
+enum WebhookKind : uint8_t { WH_NONE = 0, WH_NUMBER = 1, WH_BINGO = 2 };
+struct WebhookJob {
+  WebhookKind kind;
+  uint8_t number;
+  uint8_t winnerCount;
+  uint32_t winnerEventId;
+};
+const int WEBHOOK_QUEUE_SIZE = 6;
+WebhookJob webhookQueue[WEBHOOK_QUEUE_SIZE];
+uint8_t webhookQueueHead = 0;
+uint8_t webhookQueueTail = 0;
+uint8_t webhookQueueCount = 0;
+bool webhookRequestInFlight = false;
 
 // --- Board auth ---
 static char boardAuthToken[33] = "";
@@ -292,7 +312,13 @@ void renderSinelonScreensaver();
 void renderJuggleScreensaver();
 void renderConfettiScreensaver();
 void renderFire2012Screensaver();
+void renderSparkleScreensaver();
+void renderEffectFrame(uint8_t type);
 void renderScreensaverFrame();
+void enqueueWebhookNumberCalled(int number);
+void enqueueWebhookBingo(int triggeringNumber);
+void processWebhookQueue();
+void syncSessionMarksFreeOnly(CardSession& s);
 void screensaverBufToLeds();
 void clearScreensaverBuf(CRGB color = CRGB::Black);
 void renderWinnerShimmerAll();
@@ -515,6 +541,7 @@ const char* screensaverTypeToString(uint8_t type) {
     case 10: return "juggle";
     case 11: return "confetti";
     case 12: return "fire2012";
+    case 13: return "sparkle";
     default: return "text";
   }
 }
@@ -533,6 +560,7 @@ int screensaverTypeFromString(const char* value) {
   if (strcmp(value, "juggle") == 0) return 10;
   if (strcmp(value, "confetti") == 0) return 11;
   if (strcmp(value, "fire2012") == 0) return 12;
+  if (strcmp(value, "sparkle") == 0) return 13;
   return 0;
 }
 
@@ -1033,8 +1061,12 @@ void renderFire2012Screensaver() {
   screensaverBufToLeds();
 }
 
-void renderScreensaverFrame() {
-  switch (screensaverType) {
+void renderSparkleScreensaver() {
+  renderWinnerShimmerAll();
+}
+
+void renderEffectFrame(uint8_t type) {
+  switch (type) {
     case 1: renderRainbowScreensaver(); return;
     case 2: renderSolidScreensaver(); return;
     case 3: renderFireMatrixScreensaver(); return;
@@ -1047,8 +1079,13 @@ void renderScreensaverFrame() {
     case 10: renderJuggleScreensaver(); return;
     case 11: renderConfettiScreensaver(); return;
     case 12: renderFire2012Screensaver(); return;
+    case 13: renderSparkleScreensaver(); return;
     default: renderTextScreensaver(); return;
   }
+}
+
+void renderScreensaverFrame() {
+  renderEffectFrame(screensaverType);
 }
 
 void renderWinnerShimmerAll() {
@@ -1605,6 +1642,98 @@ void syncSessionMarksFromCalled(CardSession& s) {
   }
 }
 
+void syncSessionMarksFreeOnly(CardSession& s) {
+  for (int i = 0; i < 25; i++) {
+    s.marks[i] = (i == 12);
+  }
+}
+
+void enqueueWebhookJob(const WebhookJob& job) {
+  if (webhookQueueCount >= WEBHOOK_QUEUE_SIZE) {
+    // Drop oldest to keep the board responsive under bursty calls.
+    webhookQueueHead = (uint8_t)((webhookQueueHead + 1) % WEBHOOK_QUEUE_SIZE);
+    webhookQueueCount--;
+  }
+  webhookQueue[webhookQueueTail] = job;
+  webhookQueueTail = (uint8_t)((webhookQueueTail + 1) % WEBHOOK_QUEUE_SIZE);
+  webhookQueueCount++;
+}
+
+void enqueueWebhookNumberCalled(int number) {
+  if (webhookNumberUrlBuf[0] == '\0') return;
+  if (number < 1 || number > 75) return;
+  WebhookJob job = {};
+  job.kind = WH_NUMBER;
+  job.number = (uint8_t)number;
+  enqueueWebhookJob(job);
+}
+
+void enqueueWebhookBingo(int triggeringNumber) {
+  if (webhookBingoUrlBuf[0] == '\0') return;
+  WebhookJob job = {};
+  job.kind = WH_BINGO;
+  job.number = (triggeringNumber >= 1 && triggeringNumber <= 75) ? (uint8_t)triggeringNumber : 0;
+  job.winnerCount = (uint8_t)((winnerCount < 0) ? 0 : (winnerCount > 255 ? 255 : winnerCount));
+  job.winnerEventId = winnerEventId;
+  enqueueWebhookJob(job);
+}
+
+bool postWebhookJson(const char* url, const String& body) {
+  if (!url || url[0] == '\0' || !wifiStaConnected) return false;
+  HTTPClient http;
+  http.setTimeout(2500);
+  http.setConnectTimeout(2000);
+  bool began = false;
+  if (strncmp(url, "https://", 8) == 0) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    began = http.begin(client, url);
+  } else if (strncmp(url, "http://", 7) == 0) {
+    began = http.begin(url);
+  } else {
+    return false;
+  }
+  if (!began) return false;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("User-Agent", "BingoFlashboard/1.0");
+  const int code = http.POST(body);
+  http.end();
+  return code > 0 && code < 400;
+}
+
+void processWebhookQueue() {
+  if (!wifiStaConnected || webhookQueueCount == 0 || webhookRequestInFlight) return;
+  webhookRequestInFlight = true;
+  WebhookJob job = webhookQueue[webhookQueueHead];
+  webhookQueueHead = (uint8_t)((webhookQueueHead + 1) % WEBHOOK_QUEUE_SIZE);
+  webhookQueueCount--;
+
+  StaticJsonDocument<256> doc;
+  String body;
+  bool ok = false;
+  if (job.kind == WH_NUMBER && webhookNumberUrlBuf[0] != '\0') {
+    doc["event"] = "number_called";
+    doc["number"] = job.number;
+    char letter[2] = { bingoLetterForNumber(job.number), '\0' };
+    doc["letter"] = letter;
+    doc["calledCount"] = callOrderCount;
+    doc["gameType"] = gameType;
+    serializeJson(doc, body);
+    ok = postWebhookJson(webhookNumberUrlBuf, body);
+    (void)ok;
+  } else if (job.kind == WH_BINGO && webhookBingoUrlBuf[0] != '\0') {
+    doc["event"] = "bingo_identified";
+    doc["winnerCount"] = job.winnerCount;
+    doc["winnerEventId"] = job.winnerEventId;
+    doc["gameType"] = gameType;
+    if (job.number >= 1) doc["number"] = job.number;
+    serializeJson(doc, body);
+    ok = postWebhookJson(webhookBingoUrlBuf, body);
+    (void)ok;
+  }
+  webhookRequestInFlight = false;
+}
+
 void resetSessionClaimedMasks(CardSession& s) {
   s.claimedTraditionalMask = 0;
   s.claimedFourCornersMask = 0;
@@ -1839,6 +1968,7 @@ void recomputeCardWinners() {
     } else {
       winnerEventId++;
     }
+    enqueueWebhookBingo(currentNumber);
   }
   syncWinnerDeclared();
 }
@@ -2196,7 +2326,7 @@ void updateAllLeds() {
     }
 
     if (winnerAnimPhase == WINNER_PHASE_BOARD) {
-      renderGameBoardFrame();
+      renderEffectFrame(winnerEffectType);
       if (!winnerScrollShownThisRound && (now - winnerPhaseStartedMs) >= WINNER_BOARD_PHASE_MS) {
         winnerAnimPhase = WINNER_PHASE_SCROLL;
         winnerScrollLastStepMs = now;
@@ -2337,6 +2467,7 @@ int drawNext() {
       recomputeCardWinners();
       saveGameStateSnapshot();
       updateAllLeds();
+      enqueueWebhookNumberCalled(n);
       broadcastStateWs("number_called");
       broadcastAllCardStatesWs("card_state");
       return n;
@@ -2542,7 +2673,11 @@ void loadNvs() {
   if (nvs_get_u8(nvs, NVS_SCREENSAVER_ENABLED, &se) == ESP_OK) screensaverEnabled = (se != 0);
   uint8_t sty;
   if (nvs_get_u8(nvs, NVS_SCREENSAVER_TYPE, &sty) == ESP_OK) {
-    if (sty <= 12) screensaverType = sty;
+    if (sty <= 13) screensaverType = sty;
+  }
+  uint8_t wet;
+  if (nvs_get_u8(nvs, NVS_WINNER_EFFECT, &wet) == ESP_OK) {
+    if (wet <= 13) winnerEffectType = wet;
   }
   uint32_t scr;
   if (nvs_get_u32(nvs, NVS_SCREENSAVER_COLOR, &scr) == ESP_OK) screensaverColor = scr;
@@ -2669,6 +2804,14 @@ void loadNvs() {
   if (nvs_get_str(nvs, NVS_WIFI_PASSWORD, staPasswordBuf, &passLen) != ESP_OK) {
     staPasswordBuf[0] = '\0';
   }
+  size_t wnuLen = sizeof(webhookNumberUrlBuf);
+  if (nvs_get_str(nvs, NVS_WEBHOOK_NUMBER_URL, webhookNumberUrlBuf, &wnuLen) != ESP_OK) {
+    webhookNumberUrlBuf[0] = '\0';
+  }
+  size_t wbuLen = sizeof(webhookBingoUrlBuf);
+  if (nvs_get_str(nvs, NVS_WEBHOOK_BINGO_URL, webhookBingoUrlBuf, &wbuLen) != ESP_OK) {
+    webhookBingoUrlBuf[0] = '\0';
+  }
   nvs_close(nvs);
 }
 
@@ -2678,6 +2821,7 @@ void saveNvsSettings() {
   nvs_set_u8(nvs, NVS_LED_VIBRANCE, ledVibrance);
   nvs_set_u8(nvs, NVS_SCREENSAVER_ENABLED, screensaverEnabled ? 1 : 0);
   nvs_set_u8(nvs, NVS_SCREENSAVER_TYPE, screensaverType);
+  nvs_set_u8(nvs, NVS_WINNER_EFFECT, winnerEffectType);
   nvs_set_u32(nvs, NVS_SCREENSAVER_COLOR, screensaverColor);
   nvs_set_u16(nvs, NVS_SCREENSAVER_SPEED, screensaverSpeedMs);
   nvs_set_u16(nvs, NVS_AUTO_CALL_SECONDS, autoCallingSeconds);
@@ -2705,6 +2849,8 @@ void saveNvsSettings() {
   nvs_set_u8(nvs, NVS_CALLED_NUM_BANNER, calledNumberBannerEnabled ? 1 : 0);
   nvs_set_str(nvs, NVS_WIFI_SSID, staSsidBuf);
   nvs_set_str(nvs, NVS_WIFI_PASSWORD, staPasswordBuf);
+  nvs_set_str(nvs, NVS_WEBHOOK_NUMBER_URL, webhookNumberUrlBuf);
+  nvs_set_str(nvs, NVS_WEBHOOK_BINGO_URL, webhookBingoUrlBuf);
   nvs_commit(nvs);
   nvs_close(nvs);
 }
@@ -2787,6 +2933,9 @@ void populateStateJson(JsonObject doc) {
   snprintf(currentNumHex, sizeof(currentNumHex), "#%06X", currentNumberColor);
   doc["currentNumberColor"] = currentNumHex;
   doc["calledNumberBanner"] = calledNumberBannerEnabled;
+  doc["winnerEffect"] = screensaverTypeToString(winnerEffectType);
+  doc["webhookNumberConfigured"] = (webhookNumberUrlBuf[0] != '\0');
+  doc["webhookBingoConfigured"] = (webhookBingoUrlBuf[0] != '\0');
   doc["wifiSsid"] = staSsidBuf;
   doc["wifiConfigured"] = (staSsidBuf[0] != '\0');
   doc["wifiConnected"] = wifiStaConnected;
@@ -3005,6 +3154,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     recomputeCardWinners();
     saveGameStateSnapshot();
     updateAllLeds();
+    enqueueWebhookNumberCalled(num);
     broadcastStateWs("number_called");
     broadcastAllCardStatesWs("card_state");
     sendWsCommandResult(client, requestId, true, 200, buildStateJson());
@@ -3048,6 +3198,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     manualWinnerDeclared = true;
     winnerEventId++;
     syncWinnerDeclared();
+    enqueueWebhookBingo(currentNumber);
     broadcastStateWs("winner_changed");
     broadcastAllCardStatesWs("card_state");
     sendWsCommandResult(client, requestId, true, 200, "{}");
@@ -3598,6 +3749,7 @@ void setup() {
     recomputeCardWinners();
     saveGameStateSnapshot();
     updateAllLeds();
+    enqueueWebhookNumberCalled(num);
     broadcastStateWs("number_called");
     broadcastAllCardStatesWs("card_state");
     sendStateJson(req);
@@ -3636,6 +3788,7 @@ void setup() {
     manualWinnerDeclared = true;
     winnerEventId++;
     syncWinnerDeclared();
+    enqueueWebhookBingo(currentNumber);
     broadcastStateWs("winner_changed");
     broadcastAllCardStatesWs("card_state");
     req->send(200, "application/json", "{}");
@@ -4032,6 +4185,53 @@ void setup() {
     req->send(200, "application/json", "{}");
   }));
 
+  server.on("/winner-effect", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!req->hasParam("type", true)) {
+      req->send(400, "application/json", "{\"error\":\"type required\"}");
+      return;
+    }
+    String typeValue = req->getParam("type", true)->value();
+    int nextType = screensaverTypeFromString(typeValue.c_str());
+    winnerEffectType = (uint8_t)nextType;
+    saveNvsSettings();
+    broadcastStateWs("winner_effect_changed");
+    req->send(200, "application/json", "{}");
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/winner-effect", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* typeValue = obj["type"] | "";
+    int nextType = screensaverTypeFromString(typeValue);
+    winnerEffectType = (uint8_t)nextType;
+    saveNvsSettings();
+    broadcastStateWs("winner_effect_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/api/webhooks", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    StaticJsonDocument<640> doc;
+    doc["numberCalledUrl"] = webhookNumberUrlBuf;
+    doc["bingoUrl"] = webhookBingoUrlBuf;
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/webhooks", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* numberUrl = obj["numberCalledUrl"] | "";
+    const char* bingoUrl = obj["bingoUrl"] | "";
+    strncpy(webhookNumberUrlBuf, numberUrl, sizeof(webhookNumberUrlBuf) - 1);
+    webhookNumberUrlBuf[sizeof(webhookNumberUrlBuf) - 1] = '\0';
+    strncpy(webhookBingoUrlBuf, bingoUrl, sizeof(webhookBingoUrlBuf) - 1);
+    webhookBingoUrlBuf[sizeof(webhookBingoUrlBuf) - 1] = '\0';
+    saveNvsSettings();
+    broadcastStateWs("webhooks_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
   server.on("/current-number-color", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     if (!req->hasParam("hex", true) && !req->hasParam("color", true)) {
@@ -4187,7 +4387,9 @@ void setup() {
     s->cardId[sizeof(s->cardId) - 1] = '\0';
     for (int i = 0; i < 25; i++) s->numbers[i] = cardNums[i];
     resetSessionClaimedMasks(*s);
-    syncSessionMarksFromCalled(*s);
+    const bool syncMarks = obj.containsKey("autoSync") ? obj["autoSync"].as<bool>() : true;
+    if (syncMarks) syncSessionMarksFromCalled(*s);
+    else syncSessionMarksFreeOnly(*s);
     recomputeCardWinners();
     broadcastStateWs("card_claimed");
     broadcastCardStateWs(*s, "card_state");
@@ -4378,6 +4580,7 @@ void handleButton2LongPress() {
     manualWinnerDeclared = true;
     winnerEventId++;
     syncWinnerDeclared();
+    enqueueWebhookBingo(currentNumber);
   }
   updateAllLeds();
   broadcastStateWs("winner_changed");
@@ -4498,6 +4701,7 @@ void loop() {
   }
 
   ws.cleanupClients();
+  processWebhookQueue();
   updateAllLeds();
   FastLED.show();
   delay(20);

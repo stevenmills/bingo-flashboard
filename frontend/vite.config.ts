@@ -68,6 +68,8 @@ export default defineConfig({
       "/current-number-effect": API_TARGET,
       "/current-number-color": API_TARGET,
       "/called-number-banner": API_TARGET,
+      "/winner-effect": API_TARGET,
+      "/webhooks": API_TARGET,
       "/wifi": API_TARGET,
     },
   },

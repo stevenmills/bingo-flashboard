@@ -40,11 +40,21 @@ export interface GameState {
   currentNumberColor: string;
   /** Briefly show letter+number glyph banner on the number LED section after each call */
   calledNumberBanner?: boolean;
+  /** Winner LED board-phase effect (same catalog as screensavers; default sparkle) */
+  winnerEffect?: ScreensaverType;
+  /** Webhook URLs configured (full URLs are board-auth only via /webhooks) */
+  webhookNumberConfigured?: boolean;
+  webhookBingoConfigured?: boolean;
   wifiSsid?: string;
   wifiConfigured?: boolean;
   wifiConnected?: boolean;
   wifiMode?: "sta" | "ap";
   patternIndex: number;
+}
+
+export interface WebhookSettings {
+  numberCalledUrl: string;
+  bingoUrl: string;
 }
 
 export type LetterFullMode = "on" | "off" | "number_theme";
@@ -76,7 +86,8 @@ export type ScreensaverType =
   | "sinelon"
   | "juggle"
   | "confetti"
-  | "fire2012";
+  | "fire2012"
+  | "sparkle";
 
 export const SCREENSAVER_TYPE_LABELS: Record<ScreensaverType, string> = {
   text: "Scrolling Text",
@@ -92,6 +103,7 @@ export const SCREENSAVER_TYPE_LABELS: Record<ScreensaverType, string> = {
   juggle: "Juggle",
   confetti: "Confetti",
   fire2012: "Fire 2012",
+  sparkle: "Gold Sparkle",
 };
 
 export const SCREENSAVER_TYPE_DESCRIPTIONS: Record<ScreensaverType, string> = {
@@ -108,6 +120,7 @@ export const SCREENSAVER_TYPE_DESCRIPTIONS: Record<ScreensaverType, string> = {
   juggle: "Multiple colored dots weaving in and out of sync.",
   confetti: "Random colored speckles that blink and fade.",
   fire2012: "Classic heat-cell fire simulation rising from the bottom.",
+  sparkle: "Gold shimmer twinkles across every LED (classic winner sparkle).",
 };
 
 export type AppMode = "board" | "card";
@@ -318,6 +331,9 @@ export const DEFAULT_STATE: GameState = {
   currentNumberEffect: "flash",
   currentNumberColor: "#ffffff",
   calledNumberBanner: false,
+  winnerEffect: "sparkle",
+  webhookNumberConfigured: false,
+  webhookBingoConfigured: false,
   wifiSsid: "",
   wifiConfigured: false,
   wifiConnected: false,

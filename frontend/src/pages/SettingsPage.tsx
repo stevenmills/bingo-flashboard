@@ -36,6 +36,7 @@ export function SettingsPage({ state, onRefresh }: Props) {
           currentNumberEffect={state.currentNumberEffect}
           currentNumberColor={state.currentNumberColor}
           calledNumberBanner={state.calledNumberBanner}
+          winnerEffect={state.winnerEffect}
           wifiSsid={state.wifiSsid}
           wifiConfigured={state.wifiConfigured}
           wifiConnected={state.wifiConnected}

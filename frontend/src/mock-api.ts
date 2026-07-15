@@ -19,10 +19,17 @@ import {
   type ScreensaverType,
   LETTER_FULL_MODE_LABELS,
   CURRENT_NUMBER_EFFECT_LABELS,
+  type WebhookSettings,
 } from "./types";
 
 // Deep clone initial state, restoring persisted game type and calling style
 const state: GameState = JSON.parse(JSON.stringify(DEFAULT_STATE));
+let webhookSettings: WebhookSettings = {
+  numberCalledUrl: localStorage.getItem("bingo-webhook-number-url") ?? "",
+  bingoUrl: localStorage.getItem("bingo-webhook-bingo-url") ?? "",
+};
+state.webhookNumberConfigured = webhookSettings.numberCalledUrl.trim().length > 0;
+state.webhookBingoConfigured = webhookSettings.bingoUrl.trim().length > 0;
 const savedGameType = localStorage.getItem("bingo-gameType");
 if (savedGameType && ["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside", "plus_sign", "field_goal"].includes(savedGameType)) {
   state.gameType = savedGameType as GameType;
@@ -92,6 +99,10 @@ if (savedCalledNumberBanner === "1" || savedCalledNumberBanner === "true") {
   state.calledNumberBanner = true;
 } else if (savedCalledNumberBanner === "0" || savedCalledNumberBanner === "false") {
   state.calledNumberBanner = false;
+}
+const savedWinnerEffect = localStorage.getItem("bingo-winner-effect");
+if (savedWinnerEffect && savedWinnerEffect in SCREENSAVER_TYPE_LABELS) {
+  state.winnerEffect = savedWinnerEffect as ScreensaverType;
 }
 const savedWifiSsid = localStorage.getItem("bingo-wifi-ssid");
 if (savedWifiSsid !== null) {
@@ -856,6 +867,35 @@ export const mockApi = {
     return {};
   },
 
+  setWinnerEffect: async (type: ScreensaverType) => {
+    await delay(10);
+    assertBoardAuth();
+    if (!(type in SCREENSAVER_TYPE_LABELS)) throw new Error("400");
+    state.winnerEffect = type;
+    localStorage.setItem("bingo-winner-effect", type);
+    return {};
+  },
+
+  getWebhooks: async (): Promise<WebhookSettings> => {
+    await delay(10);
+    assertBoardAuth();
+    return { ...webhookSettings };
+  },
+
+  setWebhooks: async (settings: WebhookSettings) => {
+    await delay(10);
+    assertBoardAuth();
+    webhookSettings = {
+      numberCalledUrl: (settings.numberCalledUrl ?? "").trim().slice(0, 256),
+      bingoUrl: (settings.bingoUrl ?? "").trim().slice(0, 256),
+    };
+    localStorage.setItem("bingo-webhook-number-url", webhookSettings.numberCalledUrl);
+    localStorage.setItem("bingo-webhook-bingo-url", webhookSettings.bingoUrl);
+    state.webhookNumberConfigured = webhookSettings.numberCalledUrl.length > 0;
+    state.webhookBingoConfigured = webhookSettings.bingoUrl.length > 0;
+    return {};
+  },
+
   setWifiCredentials: async (ssid: string, password?: string) => {
     await delay(10);
     assertBoardAuth();
@@ -960,7 +1000,8 @@ export const mockApi = {
 
   claimPrintedCard: async (
     numbers: Array<number | null>,
-    sig?: string | null
+    sig?: string | null,
+    options?: { autoSync?: boolean }
   ): Promise<CardClaimResponse> => {
     await delay(15);
     if (numbers.length !== 25) throw new Error("numbers[25] required");
@@ -968,8 +1009,11 @@ export const mockApi = {
     const expected = await signCardWithDeviceId(numbers, mockDeviceId);
     const authentic = Boolean(sig && sig === expected);
     const id = contentCardId(numbers);
+    const syncMarks = options?.autoSync !== false;
     const calledSet = new Set(state.called);
-    const marks = numbers.map((n, i) => i === 12 || (typeof n === "number" && calledSet.has(n)));
+    const marks = numbers.map((n, i) =>
+      i === 12 || (syncMarks && typeof n === "number" && calledSet.has(n))
+    );
     const existing = cardSessions.get(id);
     const session: MockCardSession = existing ?? {
       cardId: id,

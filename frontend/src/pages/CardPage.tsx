@@ -111,9 +111,9 @@ function loadInitialCardState(): {
       );
       localStorage.setItem(
         CARD_STATE_STORAGE_KEY,
-        JSON.stringify(gridToStoredCardState(cleared, true))
+        JSON.stringify(gridToStoredCardState(cleared, false))
       );
-      return { card: cleared, autoSync: true, printedClaim: true, claimSig: claim.sig };
+      return { card: cleared, autoSync: false, printedClaim: true, claimSig: claim.sig };
     }
   }
 
@@ -513,7 +513,9 @@ export function CardPage({ state, letterColors, connected }: Props) {
     let cancelled = false;
     const run = async () => {
       try {
-        const claimed = await api.claimPrintedCard(cardNumbers, claimSigRef.current);
+        const claimed = await api.claimPrintedCard(cardNumbers, claimSigRef.current, {
+          autoSync: false,
+        });
         if (cancelled) return;
         setCardId(claimed.cardId);
         localStorage.setItem("bingo-card-id", claimed.cardId);
@@ -521,7 +523,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
         pendingMarksRef.current.clear();
         setJoinError(null);
         setPrintedClaimPending(false);
-        setAutoSync(true);
+        setAutoSync(false);
         if (Array.isArray(claimed.marks) && claimed.marks.length === 25) {
           setCard((prev) => {
             const next = prev.map((row, rowIdx) =>
@@ -692,7 +694,8 @@ export function CardPage({ state, letterColors, connected }: Props) {
       "h-20 sm:h-24 text-xl sm:text-2xl font-extrabold text-center align-middle select-none transition-colors",
       cell.marked ? "text-white" : "text-foreground",
       clickable ? "cursor-pointer" : "cursor-not-allowed",
-      !clickable && !disabledByAutoSync && "opacity-55",
+      // Sync on: dim uncalled cells. Sync off: called/uncalled look identical until marked.
+      autoSync && !clickable && !disabledByAutoSync && "opacity-55",
       winningFlash && "ring-2 ring-white/90"
     );
   };

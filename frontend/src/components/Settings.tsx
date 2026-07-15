@@ -34,14 +34,14 @@ import {
 } from "@/lib/bingo-ui-colors";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { Check, Copy, FileStack, Lamp, Lock, MonitorPlay, Palette, Volume2, Wifi, X } from "lucide-react";
+import { Check, Copy, FileStack, Lamp, Lock, MonitorPlay, Palette, Volume2, Webhook, Wifi, X } from "lucide-react";
 import { buildCardClaimUrl, generateSignedPrintableCards } from "@/lib/bingo-card-codec";
 
 const STATIC_VALUE = "static";
 const CUSTOM_LETTERS_VALUE = "custom_letters";
 const MAX_BRIGHTNESS = 255;
 
-type SettingsTabId = "leds" | "screensaver" | "ui" | "caller" | "cards" | "wifi" | "access";
+type SettingsTabId = "leds" | "screensaver" | "ui" | "caller" | "cards" | "wifi" | "webhooks" | "access";
 
 function SettingsPanel({
   title,
@@ -142,6 +142,7 @@ interface Props {
   currentNumberEffect?: CurrentNumberEffect;
   currentNumberColor?: string;
   calledNumberBanner?: boolean;
+  winnerEffect?: ScreensaverType;
   wifiSsid?: string;
   wifiConfigured?: boolean;
   wifiConnected?: boolean;
@@ -179,6 +180,7 @@ export function Settings({
   currentNumberEffect = "flash",
   currentNumberColor = "#ffffff",
   calledNumberBanner = false,
+  winnerEffect = "sparkle",
   wifiSsid = "",
   wifiConfigured = false,
   wifiConnected = false,
@@ -217,6 +219,11 @@ export function Settings({
     useState<CurrentNumberEffect>(currentNumberEffect);
   const [localCurrentNumberColor, setLocalCurrentNumberColor] = useState(currentNumberColor);
   const [localCalledNumberBanner, setLocalCalledNumberBanner] = useState(calledNumberBanner);
+  const [localWinnerEffect, setLocalWinnerEffect] = useState<ScreensaverType>(winnerEffect);
+  const [localWebhookNumberUrl, setLocalWebhookNumberUrl] = useState("");
+  const [localWebhookBingoUrl, setLocalWebhookBingoUrl] = useState("");
+  const [webhooksLoaded, setWebhooksLoaded] = useState(false);
+  const [webhooksMessage, setWebhooksMessage] = useState<string | null>(null);
   const [localWifiSsid, setLocalWifiSsid] = useState(wifiSsid);
   const [localWifiPassword, setLocalWifiPassword] = useState("");
   const [wifiMessage, setWifiMessage] = useState<string | null>(null);
@@ -252,6 +259,7 @@ export function Settings({
     currentNumberEffect,
     currentNumberColor,
     calledNumberBanner,
+    winnerEffect,
     wifiSsid,
   });
 
@@ -273,6 +281,7 @@ export function Settings({
     currentNumberEffect,
     currentNumberColor,
     calledNumberBanner,
+    winnerEffect,
     wifiSsid,
   };
 
@@ -303,8 +312,11 @@ export function Settings({
     setLocalCurrentNumberEffect(s.currentNumberEffect ?? "flash");
     setLocalCurrentNumberColor(s.currentNumberColor ?? "#ffffff");
     setLocalCalledNumberBanner(Boolean(s.calledNumberBanner));
+    setLocalWinnerEffect(s.winnerEffect ?? "sparkle");
     setLocalWifiSsid(s.wifiSsid ?? "");
     setLocalWifiPassword("");
+    setWebhooksLoaded(false);
+    setWebhooksMessage(null);
     setLocalUiCustomColors(uiCustomColors);
     setLocalCallerSpeechRate(callerSpeechRate);
     wasSettingsOpenRef.current = true;
@@ -602,6 +614,7 @@ export function Settings({
     tabs.push(
       { id: "cards", label: "Cards", icon: <FileStack className="h-3.5 w-3.5" /> },
       { id: "wifi", label: "WiFi", icon: <Wifi className="h-3.5 w-3.5" /> },
+      { id: "webhooks", label: "Webhooks", icon: <Webhook className="h-3.5 w-3.5" /> },
       { id: "access", label: "Access", icon: <Lock className="h-3.5 w-3.5" /> }
     );
     return tabs;
@@ -682,6 +695,10 @@ export function Settings({
   };
 
   useEffect(() => {
+    if (settingsTab === "webhooks") loadWebhooks();
+  }, [settingsTab, boardAuthGranted]);
+
+  useEffect(() => {
     if (settingsMode !== "board") {
       setSettingsTab("ui");
       return;
@@ -737,6 +754,48 @@ export function Settings({
       setLocalCalledNumberBanner(!next);
       handleBoardAuthFailure(error);
     });
+  };
+
+  const handleWinnerEffectChange = (value: ScreensaverType) => {
+    if (value === localWinnerEffect) return;
+    const previous = localWinnerEffect;
+    setLocalWinnerEffect(value);
+    persistSetting(() => api.setWinnerEffect(value), (error) => {
+      setLocalWinnerEffect(previous);
+      handleBoardAuthFailure(error);
+    });
+  };
+
+  const loadWebhooks = () => {
+    if (!boardAuthGranted || webhooksLoaded) return;
+    void api
+      .getWebhooks()
+      .then((settings) => {
+        setLocalWebhookNumberUrl(settings.numberCalledUrl ?? "");
+        setLocalWebhookBingoUrl(settings.bingoUrl ?? "");
+        setWebhooksLoaded(true);
+      })
+      .catch((error: unknown) => {
+        handleBoardAuthFailure(error);
+        setWebhooksMessage("Unable to load webhook settings.");
+      });
+  };
+
+  const handleWebhooksSave = () => {
+    setWebhooksMessage(null);
+    void api
+      .setWebhooks({
+        numberCalledUrl: localWebhookNumberUrl.trim(),
+        bingoUrl: localWebhookBingoUrl.trim(),
+      })
+      .then(() => {
+        setWebhooksMessage("Webhooks saved.");
+        onRefresh({ force: true });
+      })
+      .catch((error: unknown) => {
+        handleBoardAuthFailure(error);
+        setWebhooksMessage("Unable to save webhooks.");
+      });
   };
 
   const handleBoardPinChange = async () => {
@@ -1075,6 +1134,35 @@ export function Settings({
                     {localCalledNumberBanner ? "Disable" : "Enable"}
                   </Button>
                 </div>
+              </SettingsGroup>
+
+              <SettingsGroup
+                title="Winner effect"
+                description="Full-board LED effect used when a bingo is declared (before the WINNER scroll). Same catalog as screensavers."
+              >
+                <Select
+                  value={localWinnerEffect}
+                  onValueChange={(value) => handleWinnerEffectChange(value as ScreensaverType)}
+                >
+                  <SelectTrigger
+                    className="focus:ring-0 focus:ring-offset-0"
+                    style={{ borderColor: letterColors.N }}
+                    onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                    onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(SCREENSAVER_TYPE_LABELS).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {SCREENSAVER_TYPE_DESCRIPTIONS[localWinnerEffect]}
+                </p>
               </SettingsGroup>
 
               <SettingsGroup
@@ -1553,6 +1641,77 @@ export function Settings({
                   {wifiMode === "sta" && wifiConnected ? "Connected to saved WiFi" : "Device access point"}
                 </p>
                 {wifiMessage && <p className="text-xs text-muted-foreground">{wifiMessage}</p>}
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+
+          <TabsContent
+            value="webhooks"
+            className="mt-0 outline-none"
+            onFocusCapture={loadWebhooks}
+          >
+            <SettingsPanel
+              title="Webhooks"
+              description="POST JSON to these URLs when events happen on the board. Requires home WiFi (STA) — the BINGO access point has no internet route."
+            >
+              <SettingsGroup>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label>Number called URL</Label>
+                    <Input
+                      value={localWebhookNumberUrl}
+                      onChange={(e) => setLocalWebhookNumberUrl(e.target.value)}
+                      placeholder="https://example.com/hooks/bingo-call"
+                      disabled={!boardAuthGranted}
+                      maxLength={256}
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => {
+                        loadWebhooks();
+                        focusWithLetterN(e, letterColors.N);
+                      }}
+                      onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Body: {"{"} event, number, letter, calledCount, gameType {"}"}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Bingo identified URL</Label>
+                    <Input
+                      value={localWebhookBingoUrl}
+                      onChange={(e) => setLocalWebhookBingoUrl(e.target.value)}
+                      placeholder="https://example.com/hooks/bingo-win"
+                      disabled={!boardAuthGranted}
+                      maxLength={256}
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => {
+                        loadWebhooks();
+                        focusWithLetterN(e, letterColors.N);
+                      }}
+                      onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Body: {"{"} event, winnerCount, winnerEventId, gameType, number {"}"}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={handleWebhooksSave}
+                    disabled={!boardAuthGranted}
+                    className="text-white"
+                    style={{ backgroundColor: letterColors.N }}
+                  >
+                    Save webhooks
+                  </Button>
+                  {webhooksMessage && (
+                    <p className="text-xs text-muted-foreground">{webhooksMessage}</p>
+                  )}
+                  {wifiMode !== "sta" || !wifiConnected ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Board is on the BINGO access point — configure WiFi so outbound webhooks can reach the internet.
+                    </p>
+                  ) : null}
+                </div>
               </SettingsGroup>
             </SettingsPanel>
           </TabsContent>

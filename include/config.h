@@ -55,11 +55,15 @@
 #define NVS_CURRENT_NUM_EFFECT "cne"
 #define NVS_CURRENT_NUM_COLOR "cnc"
 #define NVS_CALLED_NUM_BANNER "cnb"
+#define NVS_WINNER_EFFECT "we"
+#define NVS_WEBHOOK_NUMBER_URL "wnu"
+#define NVS_WEBHOOK_BINGO_URL "wbu"
 #define NVS_WIFI_SSID "ws"
 #define NVS_WIFI_PASSWORD "wp"
 
 #define WIFI_STA_CONNECT_TIMEOUT_MS 15000UL
 #define WIFI_SSID_MAX_LEN 32
 #define WIFI_PASSWORD_MAX_LEN 64
+#define WEBHOOK_URL_MAX_LEN 256
 
 #endif

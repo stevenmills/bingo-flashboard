@@ -10,6 +10,7 @@ import type {
   LetterFullMode,
   CurrentNumberEffect,
   ScreensaverType,
+  WebhookSettings,
 } from "./types";
 import {
   BOARD_SESSION_MS,
@@ -565,6 +566,28 @@ const realApi = {
   setCalledNumberBanner: (enabled: boolean) =>
     postForm("/called-number-banner", { enabled: enabled ? "1" : "0" }),
 
+  setWinnerEffect: (type: ScreensaverType) =>
+    postForm("/winner-effect", { type }),
+
+  getWebhooks: async (): Promise<WebhookSettings> => {
+    syncBoardTokenFromStorage();
+    const { signal, cancel } = abortAfterMs(fetchTimeoutMs());
+    try {
+      const headers: Record<string, string> = {};
+      if (boardToken) headers["X-Board-Token"] = boardToken;
+      const res = await fetch(`${BASE}/api/webhooks`, { signal, headers });
+      cancel();
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    } catch (err) {
+      cancel();
+      throw err;
+    }
+  },
+
+  setWebhooks: (settings: WebhookSettings) =>
+    postBoardJson("/webhooks", settings),
+
   setWifiCredentials: (ssid: string, password?: string) =>
     postBoardJson("/wifi", { ssid, password }),
 
@@ -573,8 +596,20 @@ const realApi = {
       postJson<CardJoinResponse>("/card/join", { numbers, cardId }, false)
     ),
   /** Verify a printed card from QR-encoded numbers only (no print registry). */
-  claimPrintedCard: (numbers: Array<number | null>, sig?: string | null) =>
-    postJson<CardClaimResponse>("/card/claim", { numbers, sig: sig || undefined }, false),
+  claimPrintedCard: (
+    numbers: Array<number | null>,
+    sig?: string | null,
+    options?: { autoSync?: boolean }
+  ) =>
+    postJson<CardClaimResponse>(
+      "/card/claim",
+      {
+        numbers,
+        sig: sig || undefined,
+        autoSync: options?.autoSync !== false,
+      },
+      false
+    ),
   getDeviceId: async (): Promise<{ deviceId: string }> => {
     syncBoardTokenFromStorage();
     const { signal, cancel } = abortAfterMs(fetchTimeoutMs());
@@ -716,6 +751,15 @@ export const api = {
   setCalledNumberBanner: async (enabled: boolean) =>
     shouldUseMock() ? mockApi.setCalledNumberBanner(enabled) : realApi.setCalledNumberBanner(enabled),
 
+  setWinnerEffect: async (type: ScreensaverType) =>
+    shouldUseMock() ? mockApi.setWinnerEffect(type) : realApi.setWinnerEffect(type),
+
+  getWebhooks: async (): Promise<WebhookSettings> =>
+    shouldUseMock() ? mockApi.getWebhooks() : realApi.getWebhooks(),
+
+  setWebhooks: async (settings: WebhookSettings) =>
+    shouldUseMock() ? mockApi.setWebhooks(settings) : realApi.setWebhooks(settings),
+
   setWifiCredentials: async (ssid: string, password?: string) =>
     shouldUseMock() ? mockApi.setWifiCredentials(ssid, password) : realApi.setWifiCredentials(ssid, password),
 
@@ -760,8 +804,14 @@ export const api = {
 
   joinCard: async (numbers: Array<number | null>, cardId?: string) =>
     shouldUseMock() ? mockApi.joinCard(numbers, cardId) : realApi.joinCard(numbers, cardId),
-  claimPrintedCard: async (numbers: Array<number | null>, sig?: string | null) =>
-    shouldUseMock() ? mockApi.claimPrintedCard(numbers, sig) : realApi.claimPrintedCard(numbers, sig),
+  claimPrintedCard: async (
+    numbers: Array<number | null>,
+    sig?: string | null,
+    options?: { autoSync?: boolean }
+  ) =>
+    shouldUseMock()
+      ? mockApi.claimPrintedCard(numbers, sig, options)
+      : realApi.claimPrintedCard(numbers, sig, options),
   getDeviceId: async () => (shouldUseMock() ? mockApi.getDeviceId() : realApi.getDeviceId()),
   markCardCell: async (cardId: string, cellIndex: number, marked: boolean) =>
     shouldUseMock() ? mockApi.markCardCell(cardId, cellIndex, marked) : realApi.markCardCell(cardId, cellIndex, marked),
