@@ -1,5 +1,9 @@
 import { cn } from "@/lib/utils";
-import { GAME_TYPE_LABELS, type GameType } from "@/types";
+import {
+  labelForGameType,
+  type AnyGameType,
+  type GameStyle,
+} from "@/types";
 import { useGameTypeCells } from "@/hooks/useGameTypeCells";
 import { LETTERS } from "@/types";
 import { rgbaFromHex, type LetterColors } from "@/lib/bingo-ui-colors";
@@ -7,19 +11,26 @@ import { rgbaFromHex, type LetterColors } from "@/lib/bingo-ui-colors";
 const FREE_CELL = 13;
 
 interface Props {
-  gameType: GameType;
+  gameType: AnyGameType;
   patternIndex: number;
   letterColors: LetterColors;
+  gameStyle?: GameStyle;
 }
 
-export function GameTypeIndicator({ gameType, patternIndex, letterColors }: Props) {
-  const activeCells = useGameTypeCells(gameType, patternIndex);
+export function GameTypeIndicator({
+  gameType,
+  patternIndex,
+  letterColors,
+  gameStyle = "bingo",
+}: Props) {
+  const activeCells = useGameTypeCells(gameType, patternIndex, gameStyle);
   const activeCellSet = new Set(activeCells);
+  const showFreeDot = gameStyle === "bingo";
 
   return (
     <div className="flex flex-col items-center gap-2">
       <span className="text-sm font-semibold text-muted-foreground">
-        {GAME_TYPE_LABELS[gameType]}
+        {labelForGameType(gameStyle, gameType)}
       </span>
       <div className="grid grid-cols-5 gap-1.5 w-[10rem] aspect-square mx-auto">
         {Array.from({ length: 25 }, (_, i) => {
@@ -37,7 +48,7 @@ export function GameTypeIndicator({ gameType, patternIndex, letterColors }: Prop
               )}
               style={isActive ? { backgroundColor: rgbaFromHex(letterColors[LETTERS[columnIdx]], 0.9) } : undefined}
             >
-              {isActive && isFreeCell && (
+              {isActive && isFreeCell && showFreeDot && (
                 <span
                   role="img"
                   aria-label="Free space"

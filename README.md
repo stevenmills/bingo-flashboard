@@ -72,13 +72,25 @@ Any button exits LED test / screensaver.
 - **Power-loss recovery** — call order / current / pool restore from NVS
 - Default auto-call interval: **10 seconds** (configurable; Play stays UI-driven)
 
-### Game types
+### Game styles & types
 
-**42 types** in six categories (Classics, Letters & Symbols, Shapes & Frames, Blocks & Arrows, Pictures, Combos & Rules). The board/new-game UI uses a **searchable, filterable picker** with mini pattern previews. Physical **Button 1** cycles every type in catalog order when changing type is allowed.
+**Game style** is **BINGO** (default) or **HOUSEY**.
 
-Canonical definitions live in `scripts/generate-game-types.mjs` (generates frontend + firmware tables). Multi-orientation types (Traditional, Postage Stamp, Big Stamp, Arrow, Lightning, BINGO Glyph, Railroad, and others) **cycle** display patterns on the LED matrix (synced to the UI). **Double Bingo** wins on any two Traditional lines and cycles all 66 two-line combinations on the indicator; **Blackout Lite** wins at any 20 covered cells.
+**BINGO — 42 types** in six categories (Classics, Letters & Symbols, Shapes & Frames, Blocks & Arrows, Pictures, Combos & Rules). The board/new-game UI uses a **searchable, filterable picker** with mini pattern previews. Physical **Button 1** cycles every type in catalog order within the current style when changing type is allowed.
 
-Classes include: Traditional, Double Bingo, Four Corners, Postage Stamp, Cover All, Blackout Lite, Letter X/Y/O/H, Lucky 7, Plus Sign, frames, diamond, bullseye, hourglass, pyramid, bow tie, infinity, lightning, big stamp, brick, L-block, arrow, field goal, anchor, heart, smiley, rocket, UFO, top hat, Pac-Man, clover, BINGO Glyph, snake, railroad, VIP Cross, Four Horsemen, Split the Room, Top vs Bottom, Diagonal Band.
+Canonical BINGO definitions live in `scripts/generate-game-types.mjs` (generates frontend + firmware tables). Multi-orientation types cycle display patterns on the LED matrix (synced to the UI). **Double Bingo** wins on any two Traditional lines; **Blackout Lite** wins at any 20 covered cells.
+
+**HOUSEY — 5×5 sparse cards** (same B-I-N-G-O column ranges / 1–75 pool, **not** UK 9×3 tickets): 10–12 numbers, no FREE cell. Types:
+
+| Type | Rule |
+|---|---|
+| Battleship | Last card still afloat; a card sinks when all its numbers are called (same-call co-survivors share) |
+| Four Corners | Populated corners `{B top, O top, B bottom, O bottom}`; completing call must be a corner |
+| Line | Any one horizontal row (populated cells only) |
+| Two Lines | Any two complete horizontal rows |
+| Full House | All populated numbers called |
+
+HOUSEY winner mode auto-alerts when a pattern is complete (same as BINGO); the real-world host adjudicates. Keep-going dismisses the prize and continues. LED indicators: Battleship chases 1→25; Four Corners lights corners; Line middle row; Two Lines two rows; Full House all 25.
 
 ### Winners
 - Declare / clear winner (UI + Button 2 long-press)
@@ -248,7 +260,7 @@ bingo-flashboard/
 
 ## 🔑 Persistence cheatsheet
 
-**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
+**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game style, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
 
 **Browser:** UI themes (per mode), UI letter colors, auto-call seconds UI, board token/expiry, card id + card state, caller speech/jokes/rate prefs.
 

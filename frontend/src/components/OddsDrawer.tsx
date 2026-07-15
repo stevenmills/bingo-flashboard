@@ -85,8 +85,9 @@ export function OddsDrawer({
               <div className="space-y-1">
                 <Label className="text-xs">Game type</Label>
                 <GameTypePicker
+                  gameStyle="bingo"
                   value={gameType}
-                  onChange={(gt) => onGameTypeChange?.(gt)}
+                  onChange={(gt) => onGameTypeChange?.(gt as typeof gameType)}
                   idPrefix="odds-gt"
                   maxListHeightClass="max-h-48"
                 />

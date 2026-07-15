@@ -136,12 +136,15 @@ export function GamePage({
             <CardContent className="pt-0">
               <GameControls
                 callingStyle={state.callingStyle}
+                gameStyle={state.gameStyle ?? "bingo"}
                 gameType={state.gameType}
                 called={state.called}
                 remaining={state.remaining}
                 winnerDeclared={state.winnerDeclared}
                 winnerEventId={state.winnerEventId}
                 winnerCount={state.winnerCount}
+                survivorCount={state.survivorCount}
+                eliminatedCount={state.eliminatedCount}
                 onRefresh={onRefresh}
                 onApplyOptimistic={onApplyOptimistic}
                 onApplyServerState={onApplyServerState}
@@ -173,7 +176,7 @@ export function GamePage({
           </Card>
           <Card className="w-full portrait:block landscape:hidden md:block md:w-auto md:flex-shrink-0">
             <CardContent className="pt-6 px-4 flex items-center justify-center md:justify-start">
-              <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} />
+              <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} gameStyle={state.gameStyle ?? "bingo"} />
             </CardContent>
           </Card>
         </div>
@@ -183,12 +186,15 @@ export function GamePage({
         <div className="md:order-3">
           <GameControls
             callingStyle={state.callingStyle}
+            gameStyle={state.gameStyle ?? "bingo"}
             gameType={state.gameType}
             called={state.called}
             remaining={state.remaining}
             winnerDeclared={state.winnerDeclared}
             winnerEventId={state.winnerEventId}
             winnerCount={state.winnerCount}
+            survivorCount={state.survivorCount}
+            eliminatedCount={state.eliminatedCount}
             onRefresh={onRefresh}
             onApplyOptimistic={onApplyOptimistic}
             onApplyServerState={onApplyServerState}
@@ -205,7 +211,7 @@ export function GamePage({
         <div className="hidden landscape:grid md:hidden col-span-2 grid-cols-2 gap-4">
           <Card className="col-span-1">
             <CardContent className="pt-6 px-4 flex items-center justify-center">
-              <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} />
+              <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} gameStyle={state.gameStyle ?? "bingo"} />
             </CardContent>
           </Card>
           <Card className="col-span-1">
@@ -227,6 +233,7 @@ export function GamePage({
               </CardHeader>
               <CardContent className="pt-1">
                 <GameSetup
+                  gameStyle={state.gameStyle ?? "bingo"}
                   gameType={state.gameType}
                   callingStyle={state.callingStyle}
                   gameEstablished={gameActive}

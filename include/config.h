@@ -45,6 +45,7 @@
 #define NVS_LED_COLOR_G "lg"
 #define NVS_LED_COLOR_O "lo"
 #define NVS_GAME_TYPE "gt"
+#define NVS_GAME_STYLE "gst"
 #define NVS_CALLING_STYLE "cs"
 #define NVS_BOARD_PIN "bp"
 #define NVS_DEVICE_ID "di"

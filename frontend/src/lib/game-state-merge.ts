@@ -28,26 +28,30 @@ export function mergeServerSnapshot(
   options?: MergeSnapshotOptions
 ): GameState {
   if (!isValidSnapshot(next)) return prev;
+  const normalized: GameState = {
+    ...next,
+    gameStyle: next.gameStyle === "housey" ? "housey" : "bingo",
+  };
   // Reject spurious empty payloads mid-game (stale poll during reconnect).
-  if (next.called.length === 0 && prev.called.length > 0 && !looksLikeGameReset(prev, next)) {
+  if (normalized.called.length === 0 && prev.called.length > 0 && !looksLikeGameReset(prev, normalized)) {
     return prev;
   }
   if (
     !options?.allowCallRegression &&
-    next.called.length < prev.called.length &&
-    !looksLikeGameReset(prev, next)
+    normalized.called.length < prev.called.length &&
+    !looksLikeGameReset(prev, normalized)
   ) {
     return prev;
   }
   // Keep "current" aligned with call order so banner/UI don't flicker on
   // partial/stale snapshots that share the same called length.
-  if (next.called.length > 0) {
-    const last = next.called[next.called.length - 1];
-    if (next.current !== last) {
-      return { ...next, current: last };
+  if (normalized.called.length > 0) {
+    const last = normalized.called[normalized.called.length - 1];
+    if (normalized.current !== last) {
+      return { ...normalized, current: last };
     }
   }
-  return next;
+  return normalized;
 }
 
 export function mergePartialState(prev: GameState, data: Record<string, unknown>): GameState {

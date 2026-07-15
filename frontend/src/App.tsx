@@ -22,6 +22,7 @@ import { rgbaFromHex } from "@/lib/bingo-ui-colors";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { AppMode, GameType } from "@/types";
+import { isGameType } from "@/types";
 import { bootstrapQrCardClaim, clearQrBoardVerifyFlag, isQrBoardVerifyPending, takeQrCardClaim } from "@/lib/bingo-card-codec";
 
 const APP_MODE_STORAGE_KEY = "bingo-app-mode";
@@ -126,7 +127,11 @@ export default function App() {
   const canOpenSettings = appMode !== "board" || boardAuthActive;
   const [cardJoined, setCardJoined] = useState(() => Boolean(localStorage.getItem("bingo-card-id")));
   const allowOddsGameTypeSelect = modeInitialized && appMode === "card" && (!cardJoined || !connected);
-  const oddsGameType = allowOddsGameTypeSelect ? cardOddsGameType : state.gameType;
+  const oddsGameType: GameType = allowOddsGameTypeSelect
+    ? cardOddsGameType
+    : isGameType(state.gameType)
+      ? state.gameType
+      : "cover_all";
 
   const showAutoControls =
     modeInitialized && appMode === "board" && boardAuthActive && state.callingStyle === "automatic";
@@ -283,7 +288,7 @@ export default function App() {
 
   useEffect(() => {
     if (!cardJoined) return;
-    setCardOddsGameType(state.gameType);
+    if (isGameType(state.gameType)) setCardOddsGameType(state.gameType);
   }, [state.gameType, cardJoined]);
 
   useEffect(() => {
@@ -949,6 +954,7 @@ export default function App() {
                       callerSpeechRate={speechRate}
                       onCallerSpeechRateChange={setSpeechRate}
                       onRefresh={refresh}
+                      gameStyle={state.gameStyle ?? "bingo"}
                     />
                   </CardContent>
                 </Card>

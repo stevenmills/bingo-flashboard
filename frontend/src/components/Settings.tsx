@@ -158,6 +158,8 @@ interface Props {
   onCallerSpeechRateChange?: (rate: number) => void;
   onClose?: () => void;
   onRefresh: (options?: RefreshOptions) => void;
+  /** Board game style — printable packs match bingo vs housey cards. */
+  gameStyle?: import("@/types").GameStyle;
 }
 
 export function Settings({
@@ -196,6 +198,7 @@ export function Settings({
   onCallerSpeechRateChange,
   onClose,
   onRefresh,
+  gameStyle = "bingo",
 }: Props) {
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
   const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
@@ -646,13 +649,14 @@ export function Settings({
     setCardsMessage(null);
     try {
       const { deviceId } = await api.getDeviceId();
-      const cards = await generateSignedPrintableCards(count, deviceId);
+      const cards = await generateSignedPrintableCards(count, deviceId, gameStyle);
       const { buildBingoCardsPdf, downloadBlob } = await import("@/lib/bingo-cards-pdf");
       const blob = await buildBingoCardsPdf(cards, "http://bingo.local");
       const sheets = Math.ceil(cards.length / 4);
-      downloadBlob(blob, `bingo-cards-${cards.length}.pdf`);
+      const prefix = gameStyle === "housey" ? "housey-cards" : "bingo-cards";
+      downloadBlob(blob, `${prefix}-${cards.length}.pdf`);
       setCardsMessage(
-        `Downloaded ${cards.length} unique authenticated card${cards.length === 1 ? "" : "s"} across ${sheets} sheet${sheets === 1 ? "" : "s"} (4 per page).`
+        `Downloaded ${cards.length} unique authenticated ${gameStyle.toUpperCase()} card${cards.length === 1 ? "" : "s"} across ${sheets} sheet${sheets === 1 ? "" : "s"} (4 per page).`
       );
     } catch (e: unknown) {
       if (isBoardAuthHttpError(e)) {
@@ -672,11 +676,11 @@ export function Settings({
     setCardsMessage(null);
     try {
       const { deviceId } = await api.getDeviceId();
-      const cards = await generateSignedPrintableCards(count, deviceId);
+      const cards = await generateSignedPrintableCards(count, deviceId, gameStyle);
       setCardShareLinks(
         cards.map((card, i) => ({
           label: `Card ${i + 1}`,
-          url: buildCardClaimUrl(card.numbers, "http://bingo.local", card.sig),
+          url: buildCardClaimUrl(card.numbers, "http://bingo.local", card.sig, gameStyle),
         }))
       );
       setCardsMessage(
@@ -1494,14 +1498,12 @@ export function Settings({
                 </div>
                 <div className="rounded-lg border border-border/70 bg-background/60 p-3 text-xs text-muted-foreground space-y-1.5">
                   <p>
-                    PDF: the center FREE cell is a QR. Scan it with a phone camera to open the card
-                    (no board PIN). On a logged-in board host phone, the same QR stays in board mode and
-                    checks for a winner. Links: text a{" "}
-                    <span className="font-medium text-foreground">bingo.local</span> URL so someone can open
-                    the card in their phone browser. Auto-sync marks are on by default; if the card is a
-                    bingo for the current game type, winner mode activates.
+                    Packs match the board&apos;s current game style (
+                    <span className="font-medium text-foreground">{gameStyle.toUpperCase()}</span>
+                    ). BINGO: center FREE cell is a QR. HOUSEY: sparse 10–12 numbers with the QR in the footer.
+                    Scan with a phone camera to open the card (no board PIN).
                   </p>
-                  <p>Print on letter paper. Leave the center QR unobstructed when marking or cutting cards.</p>
+                  <p>Print on letter paper. Leave the QR unobstructed when marking or cutting cards.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <Button

@@ -7,20 +7,26 @@ import {
   GAME_TYPE_BY_ID,
   GAME_TYPE_CATEGORIES,
   GAME_TYPE_LABELS,
+  type AnyGameType,
+  type GameStyle,
   type GameType,
   type GameTypeCategoryId,
+  type HouseyGameType,
+  HOUSEY_DISPLAY_CELLS,
+  HOUSEY_GAME_TYPES,
+  HOUSEY_GAME_TYPE_DESCRIPTIONS,
+  HOUSEY_GAME_TYPE_LABELS,
 } from "@/types";
 import { rgbaFromHex, type LetterColors, DEFAULT_LETTER_COLORS } from "@/lib/bingo-ui-colors";
 import { Search } from "lucide-react";
 
 interface Props {
-  value: GameType | "";
-  onChange: (gameType: GameType) => void;
+  gameStyle: GameStyle;
+  value: AnyGameType | "";
+  onChange: (gameType: AnyGameType) => void;
   letterColors?: LetterColors;
-  /** Optional id prefix for radio/label uniqueness across multiple pickers */
   idPrefix?: string;
   className?: string;
-  /** Compact height for dialogs */
   maxListHeightClass?: string;
 }
 
@@ -43,6 +49,7 @@ function MiniPreview({ cells, accent }: { cells: number[]; accent: string }) {
 }
 
 export function GameTypePicker({
+  gameStyle,
   value,
   onChange,
   letterColors = DEFAULT_LETTER_COLORS,
@@ -54,7 +61,19 @@ export function GameTypePicker({
   const [category, setCategory] = useState<GameTypeCategoryId | "all">("all");
   const accent = letterColors.N;
 
-  const filtered = useMemo(() => {
+  const houseyFiltered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return HOUSEY_GAME_TYPES.filter((id) => {
+      if (!q) return true;
+      return (
+        HOUSEY_GAME_TYPE_LABELS[id].toLowerCase().includes(q) ||
+        HOUSEY_GAME_TYPE_DESCRIPTIONS[id].toLowerCase().includes(q) ||
+        id.includes(q)
+      );
+    });
+  }, [query]);
+
+  const bingoFiltered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return ALL_GAME_TYPES.filter((id) => {
       const def = GAME_TYPE_BY_ID[id];
@@ -68,7 +87,70 @@ export function GameTypePicker({
     });
   }, [query, category]);
 
-  const selected = value ? GAME_TYPE_BY_ID[value] : null;
+  if (gameStyle === "housey") {
+    const selected = value && (HOUSEY_GAME_TYPES as string[]).includes(value)
+      ? (value as HouseyGameType)
+      : null;
+    return (
+      <div className={cn("space-y-3", className)}>
+        {selected && (
+          <div className="flex items-start gap-3 rounded-lg border p-2.5" style={{ borderColor: rgbaFromHex(accent, 0.45) }}>
+            <MiniPreview cells={HOUSEY_DISPLAY_CELLS[selected]} accent={rgbaFromHex(accent, 0.95)} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold leading-tight">{HOUSEY_GAME_TYPE_LABELS[selected]}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                {HOUSEY_GAME_TYPE_DESCRIPTIONS[selected]}
+              </p>
+            </div>
+          </div>
+        )}
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search HOUSEY types…"
+            className="h-9 pl-8 text-sm"
+            aria-label="Search HOUSEY types"
+          />
+        </div>
+        <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", maxListHeightClass)} role="listbox">
+          <div className="divide-y">
+            {houseyFiltered.map((id) => {
+              const selectedRow = value === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedRow}
+                  id={`${idPrefix}-${id}`}
+                  onClick={() => onChange(id)}
+                  className={cn(
+                    "flex w-full items-start gap-2.5 px-2.5 py-2 text-left transition-colors hover:bg-muted/60",
+                    selectedRow && "bg-muted/80"
+                  )}
+                  style={selectedRow ? { boxShadow: `inset 3px 0 0 ${accent}` } : undefined}
+                >
+                  <MiniPreview cells={HOUSEY_DISPLAY_CELLS[id]} accent={rgbaFromHex(accent, selectedRow ? 0.95 : 0.7)} />
+                  <div className="min-w-0 flex-1">
+                    <Label htmlFor={`${idPrefix}-${id}`} className="cursor-pointer text-sm font-medium leading-tight">
+                      {HOUSEY_GAME_TYPE_LABELS[id]}
+                    </Label>
+                    <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">
+                      {HOUSEY_GAME_TYPE_DESCRIPTIONS[id]}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const selected = value && value in GAME_TYPE_BY_ID ? GAME_TYPE_BY_ID[value as GameType] : null;
 
   return (
     <div className={cn("space-y-3", className)}>
@@ -101,11 +183,7 @@ export function GameTypePicker({
             "shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
             category === "all" ? "text-white" : "border-border text-muted-foreground"
           )}
-          style={
-            category === "all"
-              ? { backgroundColor: accent, borderColor: accent }
-              : undefined
-          }
+          style={category === "all" ? { backgroundColor: accent, borderColor: accent } : undefined}
         >
           All
         </button>
@@ -118,11 +196,7 @@ export function GameTypePicker({
               "shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
               category === cat.id ? "text-white" : "border-border text-muted-foreground"
             )}
-            style={
-              category === cat.id
-                ? { backgroundColor: accent, borderColor: accent }
-                : undefined
-            }
+            style={category === cat.id ? { backgroundColor: accent, borderColor: accent } : undefined}
           >
             {cat.label}
           </button>
@@ -130,11 +204,11 @@ export function GameTypePicker({
       </div>
 
       <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", maxListHeightClass)} role="listbox" aria-label="Game types">
-        {filtered.length === 0 ? (
+        {bingoFiltered.length === 0 ? (
           <p className="p-4 text-center text-sm text-muted-foreground">No matching game types.</p>
         ) : (
           <div className="divide-y">
-            {filtered.map((id) => {
+            {bingoFiltered.map((id) => {
               const def = GAME_TYPE_BY_ID[id];
               const selectedRow = value === id;
               return (
@@ -149,11 +223,7 @@ export function GameTypePicker({
                     "flex w-full items-start gap-2.5 px-2.5 py-2 text-left transition-colors hover:bg-muted/60",
                     selectedRow && "bg-muted/80"
                   )}
-                  style={
-                    selectedRow
-                      ? { boxShadow: `inset 3px 0 0 ${accent}` }
-                      : undefined
-                  }
+                  style={selectedRow ? { boxShadow: `inset 3px 0 0 ${accent}` } : undefined}
                 >
                   <MiniPreview cells={def.displayPatterns[0] ?? []} accent={rgbaFromHex(accent, selectedRow ? 0.95 : 0.7)} />
                   <div className="min-w-0 flex-1">
@@ -174,7 +244,7 @@ export function GameTypePicker({
         )}
       </div>
       <p className="text-[11px] text-muted-foreground tabular-nums">
-        {filtered.length} of {ALL_GAME_TYPES.length} types
+        {bingoFiltered.length} of {ALL_GAME_TYPES.length} types
       </p>
     </div>
   );

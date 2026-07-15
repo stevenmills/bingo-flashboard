@@ -20,27 +20,35 @@ interface Props {
 export function NewGameDialog({ open, state, onStart, onRefresh, onApplyOptimistic, letterColors }: Props) {
   return (
     <Dialog open={open}>
-      <DialogContent className="max-w-lg sm:max-w-2xl" hideClose onPointerDownOutside={(e) => e.preventDefault()}>
-        <DialogHeader>
+      <DialogContent
+        className="flex max-w-lg flex-col gap-3 overflow-hidden sm:max-w-2xl"
+        hideClose
+        onPointerDownOutside={(e) => e.preventDefault()}
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>New Game</DialogTitle>
           <DialogDescription>
             Choose your game type and calling style, then start the game.
           </DialogDescription>
         </DialogHeader>
 
-        <GameSetup
-          gameType={state.gameType}
-          callingStyle={state.callingStyle}
-          gameEstablished={false}
-          called={state.called}
-          letterColors={letterColors}
-          onRefresh={onRefresh}
-          onApplyOptimistic={onApplyOptimistic}
-        />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <GameSetup
+            gameStyle={state.gameStyle ?? "bingo"}
+            gameType={state.gameType}
+            callingStyle={state.callingStyle}
+            gameEstablished={false}
+            called={state.called}
+            letterColors={letterColors}
+            onRefresh={onRefresh}
+            onApplyOptimistic={onApplyOptimistic}
+            fillHeight
+          />
+        </div>
 
         <Button
           size="lg"
-          className="w-full mt-2 text-white"
+          className="w-full shrink-0 text-white"
           style={{ backgroundColor: letterColors.N }}
           onClick={onStart}
         >
