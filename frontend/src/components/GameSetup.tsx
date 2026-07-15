@@ -7,13 +7,13 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_LETTER_COLORS, rgbaFromHex, type LetterColors } from "@/lib/bingo-ui-colors";
 import type { RefreshOptions } from "@/hooks/useGameState";
 import {
-  GAME_TYPE_LABELS,
   LETTERS,
   LETTER_RANGES,
   type GameState,
   type GameType,
   type CallingStyle,
 } from "@/types";
+import { GameTypePicker } from "@/components/GameTypePicker";
 
 interface Props {
   gameType: GameType;
@@ -152,43 +152,17 @@ export function GameSetup({
   return (
     <div className="space-y-5">
       {/* Game type — pre-game only */}
-      {!gameEstablished && <div>
-        <Label className="mb-2 block text-muted-foreground">Game type</Label>
-        <RadioGroup value={displayGameType} onValueChange={handleGameType} className="grid grid-cols-2 gap-2">
-          {(Object.keys(GAME_TYPE_LABELS) as GameType[]).map((gt) => (
-            <Label
-              key={gt}
-              htmlFor={`gt-${gt}`}
-              className={cn(
-                "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                displayGameType === gt ? "" : "border-border"
-              )}
-              style={
-                displayGameType === gt
-                  ? {
-                      borderColor: letterColors.N,
-                      backgroundColor: rgbaFromHex(letterColors.N, 0.12),
-                    }
-                  : undefined
-              }
-            >
-              <RadioGroupItem
-                value={gt}
-                id={`gt-${gt}`}
-                className="focus-visible:ring-0 focus-visible:ring-offset-0"
-                style={{ borderColor: letterColors.N, color: letterColors.N }}
-                onFocus={(e) => {
-                  e.currentTarget.style.boxShadow = radioFocus;
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.boxShadow = "";
-                }}
-              />
-              {GAME_TYPE_LABELS[gt]}
-            </Label>
-          ))}
-        </RadioGroup>
-      </div>}
+      {!gameEstablished && (
+        <div>
+          <Label className="mb-2 block text-muted-foreground">Game type</Label>
+          <GameTypePicker
+            value={displayGameType}
+            onChange={handleGameType}
+            letterColors={letterColors}
+            idPrefix="setup-gt"
+          />
+        </div>
+      )}
 
       {/* Calling style — pre-game only */}
       {!gameEstablished && (

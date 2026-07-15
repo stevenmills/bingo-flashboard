@@ -4,10 +4,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:shared-mock": "VITE_SHARED_MOCK=true node ./dev/shared-mock-server.mjs & VITE_SHARED_MOCK=true vite --host",
-    "build": "tsc -b && node ../scripts/prune-spiffs-data.mjs && vite build && node ../scripts/prune-spiffs-data.mjs",
-    "preview": "vite preview"
+    "gen:game-types": "node ../scripts/generate-game-types.mjs",
+    "dev": "npm run gen:game-types && vite",
+    "dev:shared-mock": "npm run gen:game-types && VITE_SHARED_MOCK=true node ./dev/shared-mock-server.mjs & VITE_SHARED_MOCK=true vite --host",
+    "build": "npm run gen:game-types && tsc -b && node ../scripts/prune-spiffs-data.mjs && vite build && node ../scripts/prune-spiffs-data.mjs",
+    "preview": "vite preview",
+    "check:game-types": "node ../scripts/generate-game-types.mjs --check && node ../scripts/validate-game-types.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.4",

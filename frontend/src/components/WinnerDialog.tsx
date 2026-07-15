@@ -3,16 +3,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Label } from "@/components/ui/label";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
 import type { RefreshOptions } from "@/hooks/useGameState";
-import { GAME_TYPE_LABELS, type GameType } from "@/types";
-import { cn } from "@/lib/utils";
+import type { GameType } from "@/types";
 import { PartyPopper } from "lucide-react";
 import confetti from "canvas-confetti";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
+import { GameTypePicker } from "@/components/GameTypePicker";
 
 interface Props {
   open: boolean;
@@ -163,7 +161,7 @@ export function WinnerDialog({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) closeDialog(); }}>
       <DialogContent
-        className={phase === "winner" ? "text-center" : undefined}
+        className={phase === "winner" ? "text-center" : "max-w-lg sm:max-w-xl"}
         hideClose
         onPointerDownOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
@@ -176,21 +174,13 @@ export function WinnerDialog({
                 Pick a type for the next round, or keep the current one.
               </DialogDescription>
             </DialogHeader>
-            <RadioGroup value={newType} onValueChange={(v) => setNewType(v as GameType)} className="grid grid-cols-2 gap-2">
-              {(Object.keys(GAME_TYPE_LABELS) as GameType[]).map((gt) => (
-                <Label
-                  key={gt}
-                  htmlFor={`wgt-${gt}`}
-                  className={cn(
-                    "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                    newType === gt ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
-                  )}
-                >
-                  <RadioGroupItem value={gt} id={`wgt-${gt}`} />
-                  {GAME_TYPE_LABELS[gt]}
-                </Label>
-              ))}
-            </RadioGroup>
+            <GameTypePicker
+              value={newType}
+              onChange={(gt) => setNewType(gt)}
+              letterColors={letterColors}
+              idPrefix="winner-gt"
+              maxListHeightClass="max-h-[min(40dvh,18rem)]"
+            />
             <div className="flex gap-3 mt-2">
               <Button variant="outline" className="flex-1" onClick={handleChangeType} disabled={!newType || actionBusy}>
                 Change

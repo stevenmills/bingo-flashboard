@@ -25,7 +25,7 @@ export function GameTypeIndicator({ gameType, patternIndex, letterColors }: Prop
         {Array.from({ length: 25 }, (_, i) => {
           const cell = i + 1;
           const isFreeCell = cell === FREE_CELL;
-          const isActive = activeCellSet.has(cell) || (gameType === "y" && isFreeCell);
+          const isActive = activeCellSet.has(cell);
           const columnIdx = i % 5;
 
           return (

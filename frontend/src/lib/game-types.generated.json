@@ -1,0 +1,4576 @@
+{
+  "categories": [
+    {
+      "id": "classics",
+      "label": "Classics"
+    },
+    {
+      "id": "letters",
+      "label": "Letters & Symbols"
+    },
+    {
+      "id": "shapes",
+      "label": "Shapes & Frames"
+    },
+    {
+      "id": "blocks",
+      "label": "Blocks & Arrows"
+    },
+    {
+      "id": "pictures",
+      "label": "Pictures"
+    },
+    {
+      "id": "combos",
+      "label": "Combos & Rules"
+    }
+  ],
+  "types": [
+    {
+      "id": "traditional",
+      "label": "Traditional",
+      "category": "classics",
+      "description": "Any row, column, or diagonal.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          11,
+          16,
+          21
+        ],
+        [
+          2,
+          7,
+          12,
+          17,
+          22
+        ],
+        [
+          3,
+          8,
+          13,
+          18,
+          23
+        ],
+        [
+          4,
+          9,
+          14,
+          19,
+          24
+        ],
+        [
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        [
+          1,
+          7,
+          13,
+          19,
+          25
+        ],
+        [
+          5,
+          9,
+          13,
+          17,
+          21
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          11,
+          16,
+          21
+        ],
+        [
+          2,
+          7,
+          12,
+          17,
+          22
+        ],
+        [
+          3,
+          8,
+          13,
+          18,
+          23
+        ],
+        [
+          4,
+          9,
+          14,
+          19,
+          24
+        ],
+        [
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        [
+          1,
+          7,
+          13,
+          19,
+          25
+        ],
+        [
+          5,
+          9,
+          13,
+          17,
+          21
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 4,
+      "oddsHits": 5,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "double_bingo",
+      "label": "Double Bingo",
+      "category": "classics",
+      "description": "Any two distinct Traditional lines.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          11,
+          16,
+          21
+        ],
+        [
+          2,
+          7,
+          12,
+          17,
+          22
+        ],
+        [
+          3,
+          8,
+          13,
+          18,
+          23
+        ],
+        [
+          4,
+          9,
+          14,
+          19,
+          24
+        ],
+        [
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        [
+          1,
+          7,
+          13,
+          19,
+          25
+        ],
+        [
+          5,
+          9,
+          13,
+          17,
+          21
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          11,
+          16,
+          21
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          7,
+          12,
+          17,
+          22
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          8,
+          13,
+          18,
+          23
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          9,
+          14,
+          19,
+          24
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          7,
+          13,
+          19,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          9,
+          13,
+          17,
+          21
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          16,
+          21
+        ],
+        [
+          2,
+          6,
+          7,
+          8,
+          9,
+          10,
+          12,
+          17,
+          22
+        ],
+        [
+          3,
+          6,
+          7,
+          8,
+          9,
+          10,
+          13,
+          18,
+          23
+        ],
+        [
+          4,
+          6,
+          7,
+          8,
+          9,
+          10,
+          14,
+          19,
+          24
+        ],
+        [
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          15,
+          20,
+          25
+        ],
+        [
+          1,
+          6,
+          7,
+          8,
+          9,
+          10,
+          13,
+          19,
+          25
+        ],
+        [
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          13,
+          17,
+          21
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          21
+        ],
+        [
+          2,
+          7,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          22
+        ],
+        [
+          3,
+          8,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          23
+        ],
+        [
+          4,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          19,
+          24
+        ],
+        [
+          5,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          20,
+          25
+        ],
+        [
+          1,
+          7,
+          11,
+          12,
+          13,
+          14,
+          15,
+          19,
+          25
+        ],
+        [
+          5,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          21
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21
+        ],
+        [
+          2,
+          7,
+          12,
+          16,
+          17,
+          18,
+          19,
+          20,
+          22
+        ],
+        [
+          3,
+          8,
+          13,
+          16,
+          17,
+          18,
+          19,
+          20,
+          23
+        ],
+        [
+          4,
+          9,
+          14,
+          16,
+          17,
+          18,
+          19,
+          20,
+          24
+        ],
+        [
+          5,
+          10,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          25
+        ],
+        [
+          1,
+          7,
+          13,
+          16,
+          17,
+          18,
+          19,
+          20,
+          25
+        ],
+        [
+          5,
+          9,
+          13,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21
+        ],
+        [
+          1,
+          6,
+          11,
+          16,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          2,
+          7,
+          12,
+          17,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          3,
+          8,
+          13,
+          18,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          4,
+          9,
+          14,
+          19,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          5,
+          10,
+          15,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          7,
+          13,
+          19,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          5,
+          9,
+          13,
+          17,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          6,
+          7,
+          11,
+          12,
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          1,
+          3,
+          6,
+          8,
+          11,
+          13,
+          16,
+          18,
+          21,
+          23
+        ],
+        [
+          1,
+          4,
+          6,
+          9,
+          11,
+          14,
+          16,
+          19,
+          21,
+          24
+        ],
+        [
+          1,
+          5,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          21,
+          25
+        ],
+        [
+          1,
+          6,
+          7,
+          11,
+          13,
+          16,
+          19,
+          21,
+          25
+        ],
+        [
+          1,
+          5,
+          6,
+          9,
+          11,
+          13,
+          16,
+          17,
+          21
+        ],
+        [
+          2,
+          3,
+          7,
+          8,
+          12,
+          13,
+          17,
+          18,
+          22,
+          23
+        ],
+        [
+          2,
+          4,
+          7,
+          9,
+          12,
+          14,
+          17,
+          19,
+          22,
+          24
+        ],
+        [
+          2,
+          5,
+          7,
+          10,
+          12,
+          15,
+          17,
+          20,
+          22,
+          25
+        ],
+        [
+          1,
+          2,
+          7,
+          12,
+          13,
+          17,
+          19,
+          22,
+          25
+        ],
+        [
+          2,
+          5,
+          7,
+          9,
+          12,
+          13,
+          17,
+          21,
+          22
+        ],
+        [
+          3,
+          4,
+          8,
+          9,
+          13,
+          14,
+          18,
+          19,
+          23,
+          24
+        ],
+        [
+          3,
+          5,
+          8,
+          10,
+          13,
+          15,
+          18,
+          20,
+          23,
+          25
+        ],
+        [
+          1,
+          3,
+          7,
+          8,
+          13,
+          18,
+          19,
+          23,
+          25
+        ],
+        [
+          3,
+          5,
+          8,
+          9,
+          13,
+          17,
+          18,
+          21,
+          23
+        ],
+        [
+          4,
+          5,
+          9,
+          10,
+          14,
+          15,
+          19,
+          20,
+          24,
+          25
+        ],
+        [
+          1,
+          4,
+          7,
+          9,
+          13,
+          14,
+          19,
+          24,
+          25
+        ],
+        [
+          4,
+          5,
+          9,
+          13,
+          14,
+          17,
+          19,
+          21,
+          24
+        ],
+        [
+          1,
+          5,
+          7,
+          10,
+          13,
+          15,
+          19,
+          20,
+          25
+        ],
+        [
+          5,
+          9,
+          10,
+          13,
+          15,
+          17,
+          20,
+          21,
+          25
+        ],
+        [
+          1,
+          5,
+          7,
+          9,
+          13,
+          17,
+          19,
+          21,
+          25
+        ]
+      ],
+      "requiredPatterns": 2,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 8,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "four_corners",
+      "label": "Four Corners",
+      "category": "classics",
+      "description": "All four corner cells.",
+      "winPatterns": [
+        [
+          1,
+          5,
+          21,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          5,
+          21,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 4,
+      "oddsHits": 4,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "postage_stamp",
+      "label": "Postage Stamp",
+      "category": "classics",
+      "description": "Any 2×2 block in a corner.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          6,
+          7
+        ],
+        [
+          4,
+          5,
+          9,
+          10
+        ],
+        [
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          6,
+          7
+        ],
+        [
+          4,
+          5,
+          9,
+          10
+        ],
+        [
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 4,
+      "oddsHits": 4,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "cover_all",
+      "label": "Cover All",
+      "category": "classics",
+      "description": "Mark every number on the card.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 24,
+      "oddsHits": 25,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "blackout_lite",
+      "label": "Blackout Lite",
+      "category": "classics",
+      "description": "Cover any 20 of 25 cells (80%).",
+      "winPatterns": [],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 20,
+      "minCalls": 19,
+      "oddsHits": 20,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "x",
+      "label": "Letter X",
+      "category": "letters",
+      "description": "Both diagonals forming an X.",
+      "winPatterns": [
+        [
+          1,
+          5,
+          7,
+          9,
+          13,
+          17,
+          19,
+          21,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          5,
+          7,
+          9,
+          13,
+          17,
+          19,
+          21,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 9,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "y",
+      "label": "Letter Y",
+      "category": "letters",
+      "description": "A Y shape through the center.",
+      "winPatterns": [
+        [
+          1,
+          5,
+          7,
+          9,
+          13,
+          18,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          5,
+          7,
+          9,
+          13,
+          18,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 6,
+      "oddsHits": 7,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "lucky_7",
+      "label": "Lucky 7",
+      "category": "letters",
+      "description": "A classic 7 across the top and down the right diagonal.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          9,
+          13,
+          17,
+          21
+        ],
+        [
+          1,
+          5,
+          7,
+          10,
+          13,
+          15,
+          19,
+          20,
+          25
+        ],
+        [
+          5,
+          9,
+          13,
+          17,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          7,
+          11,
+          13,
+          16,
+          19,
+          21,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          9,
+          13,
+          17,
+          21
+        ],
+        [
+          1,
+          5,
+          7,
+          10,
+          13,
+          15,
+          19,
+          20,
+          25
+        ],
+        [
+          5,
+          9,
+          13,
+          17,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          7,
+          11,
+          13,
+          16,
+          19,
+          21,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 9,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "letter_o",
+      "label": "Letter O",
+      "category": "letters",
+      "description": "The outer ring; center stays open.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 16,
+      "oddsHits": 16,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "letter_h",
+      "label": "Letter H",
+      "category": "letters",
+      "description": "Two side columns bridged through the center.",
+      "winPatterns": [
+        [
+          1,
+          5,
+          6,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          20,
+          21,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          5,
+          6,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          20,
+          21,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 12,
+      "oddsHits": 13,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "plus_sign",
+      "label": "Plus Sign",
+      "category": "letters",
+      "description": "Center row and center column.",
+      "winPatterns": [
+        [
+          3,
+          8,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          3,
+          8,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 9,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "frame_outside",
+      "label": "Frame Outside",
+      "category": "shapes",
+      "description": "The entire outer edge of the card.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 16,
+      "oddsHits": 16,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "frame_inside",
+      "label": "Frame Inside",
+      "category": "shapes",
+      "description": "The eight cells around FREE.",
+      "winPatterns": [
+        [
+          7,
+          8,
+          9,
+          12,
+          14,
+          17,
+          18,
+          19
+        ]
+      ],
+      "displayPatterns": [
+        [
+          7,
+          8,
+          9,
+          12,
+          14,
+          17,
+          18,
+          19
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 8,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "diamond",
+      "label": "Diamond",
+      "category": "shapes",
+      "description": "A diamond around FREE.",
+      "winPatterns": [
+        [
+          3,
+          7,
+          9,
+          11,
+          13,
+          15,
+          17,
+          19,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          3,
+          7,
+          9,
+          11,
+          13,
+          15,
+          17,
+          19,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 9,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "bullseye",
+      "label": "Bullseye",
+      "category": "shapes",
+      "description": "FREE plus the eight surrounding cells.",
+      "winPatterns": [
+        [
+          7,
+          8,
+          9,
+          12,
+          13,
+          14,
+          17,
+          18,
+          19
+        ]
+      ],
+      "displayPatterns": [
+        [
+          7,
+          8,
+          9,
+          12,
+          13,
+          14,
+          17,
+          18,
+          19
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 9,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "hourglass",
+      "label": "Hourglass",
+      "category": "shapes",
+      "description": "Top and bottom triangles meeting at FREE.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          7,
+          8,
+          9,
+          13,
+          17,
+          18,
+          19,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          5,
+          6,
+          7,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          19,
+          20,
+          21,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          7,
+          8,
+          9,
+          13,
+          17,
+          18,
+          19,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          5,
+          6,
+          7,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          19,
+          20,
+          21,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 16,
+      "oddsHits": 17,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "pyramid",
+      "label": "Pyramid",
+      "category": "shapes",
+      "description": "A pyramid pointing up from the bottom row.",
+      "winPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          3,
+          6,
+          8,
+          9,
+          11,
+          13,
+          14,
+          15,
+          16,
+          18,
+          19,
+          21,
+          23
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ],
+        [
+          3,
+          5,
+          7,
+          8,
+          10,
+          11,
+          12,
+          13,
+          15,
+          17,
+          18,
+          20,
+          23,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          3,
+          6,
+          8,
+          9,
+          11,
+          13,
+          14,
+          15,
+          16,
+          18,
+          19,
+          21,
+          23
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ],
+        [
+          3,
+          5,
+          7,
+          8,
+          10,
+          11,
+          12,
+          13,
+          15,
+          17,
+          18,
+          20,
+          23,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 13,
+      "oddsHits": 14,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "bow_tie",
+      "label": "Bow Tie",
+      "category": "shapes",
+      "description": "Two triangles meeting at the center.",
+      "winPatterns": [
+        [
+          1,
+          5,
+          6,
+          7,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          19,
+          20,
+          21,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          7,
+          8,
+          9,
+          13,
+          17,
+          18,
+          19,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          5,
+          6,
+          7,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          19,
+          20,
+          21,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          7,
+          8,
+          9,
+          13,
+          17,
+          18,
+          19,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 16,
+      "oddsHits": 17,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "infinity",
+      "label": "Infinity",
+      "category": "shapes",
+      "description": "A figure-eight loop through FREE.",
+      "winPatterns": [
+        [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          13,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24
+        ]
+      ],
+      "displayPatterns": [
+        [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          13,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 12,
+      "oddsHits": 13,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "lightning",
+      "label": "Lightning",
+      "category": "shapes",
+      "description": "A zigzag bolt down the card.",
+      "winPatterns": [
+        [
+          2,
+          3,
+          4,
+          5,
+          8,
+          12,
+          13,
+          14,
+          17,
+          21,
+          22,
+          23,
+          24
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          8,
+          12,
+          13,
+          14,
+          19,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          7,
+          8,
+          10,
+          11,
+          13,
+          14,
+          15,
+          16,
+          18,
+          20,
+          25
+        ],
+        [
+          5,
+          6,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          15,
+          16,
+          18,
+          20,
+          21
+        ],
+        [
+          2,
+          3,
+          4,
+          5,
+          9,
+          12,
+          13,
+          14,
+          18,
+          21,
+          22,
+          23,
+          24
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          7,
+          12,
+          13,
+          14,
+          18,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          8,
+          10,
+          11,
+          12,
+          13,
+          15,
+          16,
+          18,
+          19,
+          20,
+          25
+        ],
+        [
+          5,
+          6,
+          8,
+          10,
+          11,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          20,
+          21
+        ]
+      ],
+      "displayPatterns": [
+        [
+          2,
+          3,
+          4,
+          5,
+          8,
+          12,
+          13,
+          14,
+          17,
+          21,
+          22,
+          23,
+          24
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          8,
+          12,
+          13,
+          14,
+          19,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          7,
+          8,
+          10,
+          11,
+          13,
+          14,
+          15,
+          16,
+          18,
+          20,
+          25
+        ],
+        [
+          5,
+          6,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          15,
+          16,
+          18,
+          20,
+          21
+        ],
+        [
+          2,
+          3,
+          4,
+          5,
+          9,
+          12,
+          13,
+          14,
+          18,
+          21,
+          22,
+          23,
+          24
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          7,
+          12,
+          13,
+          14,
+          18,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          6,
+          8,
+          10,
+          11,
+          12,
+          13,
+          15,
+          16,
+          18,
+          19,
+          20,
+          25
+        ],
+        [
+          5,
+          6,
+          8,
+          10,
+          11,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          20,
+          21
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 12,
+      "oddsHits": 13,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "big_stamp",
+      "label": "Big Stamp",
+      "category": "blocks",
+      "description": "Any 3×3 block in a corner.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8,
+          11,
+          12,
+          13
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          9,
+          10,
+          13,
+          14,
+          15
+        ],
+        [
+          11,
+          12,
+          13,
+          16,
+          17,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          13,
+          14,
+          15,
+          18,
+          19,
+          20,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8,
+          11,
+          12,
+          13
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          9,
+          10,
+          13,
+          14,
+          15
+        ],
+        [
+          11,
+          12,
+          13,
+          16,
+          17,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          13,
+          14,
+          15,
+          18,
+          19,
+          20,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 9,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "brick",
+      "label": "Brick",
+      "category": "blocks",
+      "description": "A 2×3 rectangle in any corner orientation.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          9,
+          10
+        ],
+        [
+          4,
+          5,
+          9,
+          10,
+          14,
+          15
+        ],
+        [
+          1,
+          2,
+          6,
+          7,
+          11,
+          12
+        ],
+        [
+          18,
+          19,
+          20,
+          23,
+          24,
+          25
+        ],
+        [
+          16,
+          17,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          11,
+          12,
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          14,
+          15,
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          9,
+          10
+        ],
+        [
+          4,
+          5,
+          9,
+          10,
+          14,
+          15
+        ],
+        [
+          1,
+          2,
+          6,
+          7,
+          11,
+          12
+        ],
+        [
+          18,
+          19,
+          20,
+          23,
+          24,
+          25
+        ],
+        [
+          16,
+          17,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          11,
+          12,
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          14,
+          15,
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 6,
+      "oddsHits": 6,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "l_block",
+      "label": "L-Block",
+      "category": "blocks",
+      "description": "A Tetris L in any corner orientation.",
+      "winPatterns": [
+        [
+          1,
+          6,
+          11,
+          12,
+          13
+        ],
+        [
+          5,
+          10,
+          13,
+          14,
+          15
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          13
+        ],
+        [
+          1,
+          2,
+          3,
+          8,
+          13
+        ],
+        [
+          13,
+          14,
+          15,
+          20,
+          25
+        ],
+        [
+          11,
+          12,
+          13,
+          16,
+          21
+        ],
+        [
+          13,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          13,
+          18,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          6,
+          11,
+          12,
+          13
+        ],
+        [
+          5,
+          10,
+          13,
+          14,
+          15
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          13
+        ],
+        [
+          1,
+          2,
+          3,
+          8,
+          13
+        ],
+        [
+          13,
+          14,
+          15,
+          20,
+          25
+        ],
+        [
+          11,
+          12,
+          13,
+          16,
+          21
+        ],
+        [
+          13,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          13,
+          18,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 4,
+      "oddsHits": 5,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "arrow",
+      "label": "Arrow",
+      "category": "blocks",
+      "description": "An arrow pointing any direction.",
+      "winPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          23
+        ],
+        [
+          3,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          19,
+          23
+        ],
+        [
+          3,
+          8,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ],
+        [
+          3,
+          7,
+          8,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          23
+        ],
+        [
+          3,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          19,
+          23
+        ],
+        [
+          3,
+          8,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ],
+        [
+          3,
+          7,
+          8,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 10,
+      "oddsHits": 11,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "field_goal",
+      "label": "Field Goal",
+      "category": "pictures",
+      "description": "Uprights with a crossbar — sports night classic.",
+      "winPatterns": [
+        [
+          1,
+          5,
+          6,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          5,
+          6,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          18,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 10,
+      "oddsHits": 11,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "anchor",
+      "label": "Anchor",
+      "category": "pictures",
+      "description": "Stem down with curved arms at top.",
+      "winPatterns": [
+        [
+          2,
+          3,
+          4,
+          8,
+          13,
+          17,
+          18,
+          19,
+          21,
+          23,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          2,
+          3,
+          4,
+          8,
+          13,
+          17,
+          18,
+          19,
+          21,
+          23,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 10,
+      "oddsHits": 11,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "heart",
+      "label": "Heart",
+      "category": "pictures",
+      "description": "A classic heart with FREE in the center.",
+      "winPatterns": [
+        [
+          2,
+          4,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          2,
+          4,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 15,
+      "oddsHits": 16,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "smiley",
+      "label": "Smiley",
+      "category": "pictures",
+      "description": "Eyes and a grin; FREE is the nose.",
+      "winPatterns": [
+        [
+          7,
+          9,
+          13,
+          16,
+          20,
+          22,
+          23,
+          24
+        ]
+      ],
+      "displayPatterns": [
+        [
+          7,
+          9,
+          13,
+          16,
+          20,
+          22,
+          23,
+          24
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 7,
+      "oddsHits": 8,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "rocket",
+      "label": "Rocket",
+      "category": "pictures",
+      "description": "Nose at top, body down the middle, fins at the bottom corners.",
+      "winPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          12,
+          13,
+          14,
+          18,
+          21,
+          23,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          12,
+          13,
+          14,
+          18,
+          21,
+          23,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 10,
+      "oddsHits": 11,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "ufo",
+      "label": "UFO",
+      "category": "pictures",
+      "description": "Oval body with two landing legs below.",
+      "winPatterns": [
+        [
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          22,
+          24
+        ]
+      ],
+      "displayPatterns": [
+        [
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          22,
+          24
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 12,
+      "oddsHits": 13,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "top_hat",
+      "label": "Top Hat",
+      "category": "pictures",
+      "description": "Tall crown with a wide brim along the bottom.",
+      "winPatterns": [
+        [
+          2,
+          3,
+          4,
+          7,
+          8,
+          9,
+          12,
+          13,
+          14,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          2,
+          3,
+          4,
+          7,
+          8,
+          9,
+          12,
+          13,
+          14,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 18,
+      "oddsHits": 19,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "pac_man",
+      "label": "Pac-Man",
+      "category": "pictures",
+      "description": "A wedge with a mouth gap facing right.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8,
+          11,
+          12,
+          13,
+          16,
+          17,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          9,
+          10,
+          13,
+          14,
+          15,
+          18,
+          19,
+          20,
+          23,
+          24,
+          25
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8,
+          11,
+          12,
+          13,
+          16,
+          17,
+          18,
+          21,
+          22,
+          23
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          3,
+          4,
+          5,
+          8,
+          9,
+          10,
+          13,
+          14,
+          15,
+          18,
+          19,
+          20,
+          23,
+          24,
+          25
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 14,
+      "oddsHits": 15,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "clover",
+      "label": "Clover",
+      "category": "pictures",
+      "description": "Four leaves around FREE — lucky St. Patrick’s pattern.",
+      "winPatterns": [
+        [
+          2,
+          3,
+          4,
+          7,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          19,
+          22,
+          23,
+          24
+        ]
+      ],
+      "displayPatterns": [
+        [
+          2,
+          3,
+          4,
+          7,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          19,
+          22,
+          23,
+          24
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 14,
+      "oddsHits": 15,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "bingo_glyph",
+      "label": "BINGO Glyph",
+      "category": "pictures",
+      "description": "Complete any letter glyph: B, I, N, G, or O.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          8,
+          9,
+          11,
+          12,
+          13,
+          16,
+          18,
+          19,
+          21,
+          22,
+          23
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          8,
+          13,
+          18,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          5,
+          6,
+          7,
+          10,
+          11,
+          13,
+          15,
+          16,
+          19,
+          20,
+          21,
+          25
+        ],
+        [
+          2,
+          3,
+          4,
+          5,
+          6,
+          11,
+          13,
+          14,
+          15,
+          16,
+          20,
+          22,
+          23,
+          24
+        ],
+        [
+          2,
+          3,
+          4,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          22,
+          23,
+          24
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          6,
+          8,
+          9,
+          11,
+          12,
+          13,
+          16,
+          18,
+          19,
+          21,
+          22,
+          23
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          8,
+          13,
+          18,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          5,
+          6,
+          7,
+          10,
+          11,
+          13,
+          15,
+          16,
+          19,
+          20,
+          21,
+          25
+        ],
+        [
+          2,
+          3,
+          4,
+          5,
+          6,
+          11,
+          13,
+          14,
+          15,
+          16,
+          20,
+          22,
+          23,
+          24
+        ],
+        [
+          2,
+          3,
+          4,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          22,
+          23,
+          24
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 12,
+      "oddsHits": 12,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "snake",
+      "label": "Snake",
+      "category": "pictures",
+      "description": "An S-curve winding through the board.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          13,
+          14,
+          15,
+          16,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          11,
+          12,
+          13,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          5,
+          6,
+          10,
+          11,
+          13,
+          15,
+          16,
+          18,
+          20,
+          21,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          4,
+          5,
+          6,
+          10,
+          11,
+          13,
+          15,
+          16,
+          18,
+          20,
+          21,
+          22,
+          23,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          11,
+          12,
+          13,
+          16,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          13,
+          14,
+          15,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          5,
+          6,
+          8,
+          10,
+          11,
+          13,
+          15,
+          16,
+          20,
+          21,
+          24,
+          25
+        ],
+        [
+          1,
+          3,
+          4,
+          5,
+          6,
+          8,
+          10,
+          11,
+          13,
+          15,
+          16,
+          20,
+          21,
+          22,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          13,
+          14,
+          15,
+          16,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          11,
+          12,
+          13,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          5,
+          6,
+          10,
+          11,
+          13,
+          15,
+          16,
+          18,
+          20,
+          21,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          4,
+          5,
+          6,
+          10,
+          11,
+          13,
+          15,
+          16,
+          18,
+          20,
+          21,
+          22,
+          23,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          11,
+          12,
+          13,
+          16,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          13,
+          14,
+          15,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          3,
+          5,
+          6,
+          8,
+          10,
+          11,
+          13,
+          15,
+          16,
+          20,
+          21,
+          24,
+          25
+        ],
+        [
+          1,
+          3,
+          4,
+          5,
+          6,
+          8,
+          10,
+          11,
+          13,
+          15,
+          16,
+          20,
+          21,
+          22,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 14,
+      "oddsHits": 15,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "railroad",
+      "label": "Railroad",
+      "category": "combos",
+      "description": "Any two parallel rows, or any two parallel columns.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          6,
+          7,
+          11,
+          12,
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          1,
+          3,
+          6,
+          8,
+          11,
+          13,
+          16,
+          18,
+          21,
+          23
+        ],
+        [
+          1,
+          4,
+          6,
+          9,
+          11,
+          14,
+          16,
+          19,
+          21,
+          24
+        ],
+        [
+          1,
+          5,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          21,
+          25
+        ],
+        [
+          2,
+          3,
+          7,
+          8,
+          12,
+          13,
+          17,
+          18,
+          22,
+          23
+        ],
+        [
+          2,
+          4,
+          7,
+          9,
+          12,
+          14,
+          17,
+          19,
+          22,
+          24
+        ],
+        [
+          2,
+          5,
+          7,
+          10,
+          12,
+          15,
+          17,
+          20,
+          22,
+          25
+        ],
+        [
+          3,
+          4,
+          8,
+          9,
+          13,
+          14,
+          18,
+          19,
+          23,
+          24
+        ],
+        [
+          3,
+          5,
+          8,
+          10,
+          13,
+          15,
+          18,
+          20,
+          23,
+          25
+        ],
+        [
+          4,
+          5,
+          9,
+          10,
+          14,
+          15,
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          6,
+          7,
+          8,
+          9,
+          10,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ],
+        [
+          1,
+          2,
+          6,
+          7,
+          11,
+          12,
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          1,
+          3,
+          6,
+          8,
+          11,
+          13,
+          16,
+          18,
+          21,
+          23
+        ],
+        [
+          1,
+          4,
+          6,
+          9,
+          11,
+          14,
+          16,
+          19,
+          21,
+          24
+        ],
+        [
+          1,
+          5,
+          6,
+          10,
+          11,
+          15,
+          16,
+          20,
+          21,
+          25
+        ],
+        [
+          2,
+          3,
+          7,
+          8,
+          12,
+          13,
+          17,
+          18,
+          22,
+          23
+        ],
+        [
+          2,
+          4,
+          7,
+          9,
+          12,
+          14,
+          17,
+          19,
+          22,
+          24
+        ],
+        [
+          2,
+          5,
+          7,
+          10,
+          12,
+          15,
+          17,
+          20,
+          22,
+          25
+        ],
+        [
+          3,
+          4,
+          8,
+          9,
+          13,
+          14,
+          18,
+          19,
+          23,
+          24
+        ],
+        [
+          3,
+          5,
+          8,
+          10,
+          13,
+          15,
+          18,
+          20,
+          23,
+          25
+        ],
+        [
+          4,
+          5,
+          9,
+          10,
+          14,
+          15,
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 8,
+      "oddsHits": 10,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "vip_cross",
+      "label": "VIP Cross",
+      "category": "combos",
+      "description": "Thick center cross — center row, center column, and the four diagonal neighbors of FREE.",
+      "winPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          3,
+          7,
+          8,
+          9,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 12,
+      "oddsHits": 13,
+      "usesFreeSpace": true
+    },
+    {
+      "id": "four_horsemen",
+      "label": "Four Horsemen",
+      "category": "combos",
+      "description": "The four midpoints of the outer edges.",
+      "winPatterns": [
+        [
+          3,
+          11,
+          15,
+          23
+        ]
+      ],
+      "displayPatterns": [
+        [
+          3,
+          11,
+          15,
+          23
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 4,
+      "oddsHits": 4,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "split_the_room",
+      "label": "Split the Room",
+      "category": "combos",
+      "description": "Left two columns or right two columns.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          6,
+          7,
+          11,
+          12,
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          4,
+          5,
+          9,
+          10,
+          14,
+          15,
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          6,
+          7,
+          11,
+          12,
+          16,
+          17,
+          21,
+          22
+        ],
+        [
+          4,
+          5,
+          9,
+          10,
+          14,
+          15,
+          19,
+          20,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 10,
+      "oddsHits": 10,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "top_vs_bottom",
+      "label": "Top vs Bottom",
+      "category": "combos",
+      "description": "Top two rows or bottom two rows.",
+      "winPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 10,
+      "oddsHits": 10,
+      "usesFreeSpace": false
+    },
+    {
+      "id": "diagonal_band",
+      "label": "Diagonal Band",
+      "category": "combos",
+      "description": "Main diagonal plus both adjacent parallel offsets (either slope).",
+      "winPatterns": [
+        [
+          1,
+          2,
+          6,
+          7,
+          8,
+          12,
+          13,
+          14,
+          18,
+          19,
+          20,
+          24,
+          25
+        ],
+        [
+          4,
+          5,
+          8,
+          9,
+          10,
+          12,
+          13,
+          14,
+          16,
+          17,
+          18,
+          21,
+          22
+        ]
+      ],
+      "displayPatterns": [
+        [
+          1,
+          2,
+          6,
+          7,
+          8,
+          12,
+          13,
+          14,
+          18,
+          19,
+          20,
+          24,
+          25
+        ],
+        [
+          4,
+          5,
+          8,
+          9,
+          10,
+          12,
+          13,
+          14,
+          16,
+          17,
+          18,
+          21,
+          22
+        ]
+      ],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 12,
+      "oddsHits": 13,
+      "usesFreeSpace": true
+    }
+  ]
+}

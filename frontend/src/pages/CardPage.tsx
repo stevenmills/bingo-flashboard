@@ -3,7 +3,7 @@ import { notifyCardSessionChanged } from "@/lib/card-session-events";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link2, RefreshCw } from "lucide-react";
-import { LETTERS, type GameState } from "@/types";
+import { LETTERS, type GameState, GAME_TYPE_BY_ID } from "@/types";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
 import {
   CARD_STATE_STORAGE_VERSION,
@@ -179,7 +179,8 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, []);
   const captureWinningFlashCells = useCallback((grid: CardGrid) => {
     const satisfied = winningPatterns(grid, state.gameType, calledSet);
-    if (satisfied.length === 0) {
+    const requiredPatterns = GAME_TYPE_BY_ID[state.gameType]?.requiredPatterns ?? 1;
+    if (satisfied.length < requiredPatterns) {
       activeFlashPatternKeyRef.current = "";
       setWinnerFlashCells(new Set());
       return;
@@ -187,18 +188,22 @@ export function CardPage({ state, letterColors, connected }: Props) {
 
     // Keep the current flash pattern stable while winner is active.
     if (activeFlashPatternKeyRef.current) {
-      const stillActive = satisfied.some((pattern) => pattern.join("-") === activeFlashPatternKeyRef.current);
+      const stillActive = activeFlashPatternKeyRef.current
+        .split("|")
+        .every((key) => satisfied.some((pattern) => pattern.join("-") === key));
       if (stillActive) return;
     }
 
     // Prefer newly satisfied patterns so subsequent bingos flash the newest win.
-    const nextPattern = satisfied.find((pattern) => !flashedPatternKeysRef.current.has(pattern.join("-")));
-    if (!nextPattern) return;
-
-    const nextKey = nextPattern.join("-");
-    flashedPatternKeysRef.current.add(nextKey);
+    // Double Bingo flashes two distinct lines together.
+    const unused = satisfied.filter((pattern) => !flashedPatternKeysRef.current.has(pattern.join("-")));
+    if (unused.length < requiredPatterns) return;
+    const nextPatterns = unused.slice(0, requiredPatterns);
+    const nextKey = nextPatterns.map((pattern) => pattern.join("-")).join("|");
+    nextPatterns.forEach((pattern) => flashedPatternKeysRef.current.add(pattern.join("-")));
     activeFlashPatternKeyRef.current = nextKey;
-    const filtered = nextPattern.filter((idx) => {
+    const flashIdx = new Set(nextPatterns.flat());
+    const filtered = [...flashIdx].filter((idx) => {
       // FREE is always marked for qualifying game types — don't include it in flash.
       if (idx === 12) return false;
       const cell = grid.flat()[idx];

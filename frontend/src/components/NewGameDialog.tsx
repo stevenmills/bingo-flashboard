@@ -20,7 +20,7 @@ interface Props {
 export function NewGameDialog({ open, state, onStart, onRefresh, onApplyOptimistic, letterColors }: Props) {
   return (
     <Dialog open={open}>
-      <DialogContent className="max-w-2xl" hideClose onPointerDownOutside={(e) => e.preventDefault()}>
+      <DialogContent className="max-w-lg sm:max-w-2xl" hideClose onPointerDownOutside={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>New Game</DialogTitle>
           <DialogDescription>

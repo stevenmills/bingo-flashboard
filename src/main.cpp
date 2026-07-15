@@ -21,6 +21,7 @@
 #include "driver/gpio.h"
 #include "config.h"
 #include "led_map.h"
+#include "game_types.generated.h"
 
 // --- LED strip ---
 CRGB leds[NUM_LEDS];
@@ -78,8 +79,9 @@ int callOrderCount = 0;
 static char callingStyleBuf[12] = "automatic";
 const char* callingStyle = callingStyleBuf;
 bool gameEstablished = false;
-static char gameTypeBuf[20] = "cover_all";
+static char gameTypeBuf[GAME_TYPE_ID_MAX + 1] = "cover_all";
 const char* gameType = gameTypeBuf;
+int gameTypeIdx = 4; // cover_all in generated catalog; refreshed on load/select
 bool winnerDeclared = false;
 bool manualWinnerDeclared = false;
 bool winnerSuppressed = false;
@@ -155,16 +157,7 @@ struct CardSession {
   int numbers[25];   // 0 means FREE/empty
   bool marks[25];
   bool winner;
-  uint16_t claimedTraditionalMask;
-  uint16_t claimedFourCornersMask;
-  uint16_t claimedPostageMask;
-  uint16_t claimedCoverAllMask;
-  uint16_t claimedXMask;
-  uint16_t claimedYMask;
-  uint16_t claimedFrameOutsideMask;
-  uint16_t claimedFrameInsideMask;
-  uint16_t claimedPlusSignMask;
-  uint16_t claimedFieldGoalMask;
+  uint32_t claimedPatternMasks[GAME_TYPE_COUNT];
 };
 CardSession cardSessions[MAX_CARD_SESSIONS];
 
@@ -207,29 +200,29 @@ struct ButtonState {
 ButtonState button1 = { BUTTON1_PIN, HIGH, HIGH, 0, 0, false };
 ButtonState button2 = { BUTTON2_PIN, HIGH, HIGH, 0, 0, false };
 
-// --- Pattern cycling for game types with multiple winning orientations ---
-// Traditional: 12 orientations (5 rows, 5 columns, 2 diagonals), 5 cells each
-const int NUM_TRADITIONAL_PATTERNS = 12;
-const int TRADITIONAL_PATTERNS[12][5] = {
-  {1,2,3,4,5},      {6,7,8,9,10},     {11,12,13,14,15},
-  {16,17,18,19,20},  {21,22,23,24,25},
-  {1,6,11,16,21},    {2,7,12,17,22},   {3,8,13,18,23},
-  {4,9,14,19,24},    {5,10,15,20,25},
-  {1,7,13,19,25},    {5,9,13,17,21},
-};
-
-// Postage Stamp: 4 orientations (2×2 in each corner), 4 cells each
-const int NUM_POSTAGE_PATTERNS = 4;
-const int POSTAGE_PATTERNS[4][4] = {
-  {1, 2, 6, 7},       // Top-left
-  {4, 5, 9, 10},      // Top-right
-  {16, 17, 21, 22},   // Bottom-left
-  {19, 20, 24, 25},   // Bottom-right
-};
-
+// --- Pattern cycling for game types with multiple display orientations ---
 int patternIdx = 0;
 unsigned long lastPatternChange = 0;
 const unsigned long PATTERN_CYCLE_MS = 1500;
+
+const GameTypeDef* currentGameTypeDef() {
+  if (gameTypeIdx < 0 || gameTypeIdx >= GAME_TYPE_COUNT) {
+    gameTypeIdx = findGameTypeIndex(gameType);
+  }
+  if (gameTypeIdx < 0) gameTypeIdx = findGameTypeIndex("cover_all");
+  return gameTypeDefAt(gameTypeIdx);
+}
+
+bool applyGameTypeId(const char* gt) {
+  int idx = findGameTypeIndex(gt);
+  if (idx < 0) return false;
+  strncpy(gameTypeBuf, GAME_TYPE_TABLE[idx].id, sizeof(gameTypeBuf) - 1);
+  gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
+  gameTypeIdx = idx;
+  patternIdx = 0;
+  lastPatternChange = millis();
+  return true;
+}
 
 // --- NVS ---
 nvs_handle nvs;
@@ -1409,16 +1402,7 @@ void clearCardSession(CardSession& s) {
     s.marks[i] = false;
   }
   s.winner = false;
-  s.claimedTraditionalMask = 0;
-  s.claimedFourCornersMask = 0;
-  s.claimedPostageMask = 0;
-  s.claimedCoverAllMask = 0;
-  s.claimedXMask = 0;
-  s.claimedYMask = 0;
-  s.claimedFrameOutsideMask = 0;
-  s.claimedFrameInsideMask = 0;
-  s.claimedPlusSignMask = 0;
-  s.claimedFieldGoalMask = 0;
+  for (int i = 0; i < GAME_TYPE_COUNT; i++) s.claimedPatternMasks[i] = 0;
 }
 
 CardSession* findCardSessionById(const char* cardId) {
@@ -1735,16 +1719,7 @@ void processWebhookQueue() {
 }
 
 void resetSessionClaimedMasks(CardSession& s) {
-  s.claimedTraditionalMask = 0;
-  s.claimedFourCornersMask = 0;
-  s.claimedPostageMask = 0;
-  s.claimedCoverAllMask = 0;
-  s.claimedXMask = 0;
-  s.claimedYMask = 0;
-  s.claimedFrameOutsideMask = 0;
-  s.claimedFrameInsideMask = 0;
-  s.claimedPlusSignMask = 0;
-  s.claimedFieldGoalMask = 0;
+  for (int i = 0; i < GAME_TYPE_COUNT; i++) s.claimedPatternMasks[i] = 0;
 }
 
 bool wsCanReceiveState(uint32_t clientId) {
@@ -1772,137 +1747,55 @@ bool isPatternCellSatisfied(const CardSession& s, int idx) {
   return called[n];
 }
 
-uint16_t traditionalSatisfiedMask(const CardSession& s) {
-  uint16_t mask = 0;
-  for (int r = 0; r < 5; r++) {
-    bool ok = true;
-    for (int c = 0; c < 5; c++) if (!isPatternCellSatisfied(s, r * 5 + c)) { ok = false; break; }
-    if (ok) mask |= (1u << r);
+bool maskFullySatisfied(const CardSession& s, uint32_t cellMask) {
+  for (int i = 0; i < 25; i++) {
+    if ((cellMask & (1u << i)) && !isPatternCellSatisfied(s, i)) return false;
   }
-  for (int c = 0; c < 5; c++) {
-    bool ok = true;
-    for (int r = 0; r < 5; r++) if (!isPatternCellSatisfied(s, r * 5 + c)) { ok = false; break; }
-    if (ok) mask |= (1u << (5 + c));
-  }
-  bool d1 = true, d2 = true;
-  const int diag1[5] = {0, 6, 12, 18, 24};
-  const int diag2[5] = {4, 8, 12, 16, 20};
-  for (int i = 0; i < 5; i++) {
-    if (!isPatternCellSatisfied(s, diag1[i])) d1 = false;
-    if (!isPatternCellSatisfied(s, diag2[i])) d2 = false;
-  }
-  if (d1) mask |= (1u << 10);
-  if (d2) mask |= (1u << 11);
-  return mask;
+  return true;
 }
 
-uint16_t postageSatisfiedMask(const CardSession& s) {
-  const int patterns[4][4] = {
-    {0, 1, 5, 6},
-    {3, 4, 8, 9},
-    {15, 16, 20, 21},
-    {18, 19, 23, 24},
-  };
-  uint16_t mask = 0;
-  for (int p = 0; p < 4; p++) {
-    bool ok = true;
-    for (int i = 0; i < 4; i++) if (!isPatternCellSatisfied(s, patterns[p][i])) { ok = false; break; }
-    if (ok) mask |= (1u << p);
+int countCoveredCells(const CardSession& s) {
+  int n = 0;
+  for (int i = 0; i < 25; i++) if (isPatternCellSatisfied(s, i)) n++;
+  return n;
+}
+
+uint32_t satisfiedMaskForCurrentGameType(const CardSession& s) {
+  const GameTypeDef* def = currentGameTypeDef();
+  if (!def) return 0;
+  if (def->coveredThreshold > 0) {
+    return countCoveredCells(s) >= def->coveredThreshold ? 1u : 0u;
+  }
+  uint32_t mask = 0;
+  for (int a = 0; a < def->winCount && a < GAME_TYPE_MAX_WIN_ALTS; a++) {
+    uint32_t cells = gameTypeWinMaskAt(def, a);
+    if (maskFullySatisfied(s, cells)) mask |= (1u << a);
   }
   return mask;
 }
 
-uint16_t xSatisfiedMask(const CardSession& s) {
-  const int pattern[9] = {0, 4, 6, 8, 12, 16, 18, 20, 24};
-  for (int i = 0; i < 9; i++) {
-    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
+uint32_t& claimedMaskForCurrentGameType(CardSession& s) {
+  if (gameTypeIdx < 0 || gameTypeIdx >= GAME_TYPE_COUNT) {
+    gameTypeIdx = findGameTypeIndex(gameType);
+    if (gameTypeIdx < 0) gameTypeIdx = 0;
   }
-  return 1u;
-}
-
-uint16_t ySatisfiedMask(const CardSession& s) {
-  const int pattern[7] = {0, 4, 6, 8, 12, 17, 22};
-  for (int i = 0; i < 7; i++) {
-    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
-  }
-  return 1u;
-}
-
-uint16_t frameOutsideSatisfiedMask(const CardSession& s) {
-  const int pattern[16] = {0, 1, 2, 3, 4, 5, 9, 10, 14, 15, 19, 20, 21, 22, 23, 24};
-  for (int i = 0; i < 16; i++) {
-    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
-  }
-  return 1u;
-}
-
-uint16_t frameInsideSatisfiedMask(const CardSession& s) {
-  const int pattern[8] = {6, 7, 8, 11, 13, 16, 17, 18};
-  for (int i = 0; i < 8; i++) {
-    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
-  }
-  return 1u;
-}
-
-uint16_t plusSignSatisfiedMask(const CardSession& s) {
-  const int pattern[9] = {2, 7, 10, 11, 12, 13, 14, 17, 22};
-  for (int i = 0; i < 9; i++) {
-    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
-  }
-  return 1u;
-}
-
-uint16_t fieldGoalSatisfiedMask(const CardSession& s) {
-  const int pattern[11] = {0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22};
-  for (int i = 0; i < 11; i++) {
-    if (!isPatternCellSatisfied(s, pattern[i])) return 0u;
-  }
-  return 1u;
-}
-
-uint16_t satisfiedMaskForCurrentGameType(const CardSession& s) {
-  if (strcmp(gameType, "traditional") == 0) return traditionalSatisfiedMask(s);
-  if (strcmp(gameType, "four_corners") == 0) {
-    bool ok = isPatternCellSatisfied(s, 0) && isPatternCellSatisfied(s, 4) &&
-              isPatternCellSatisfied(s, 20) && isPatternCellSatisfied(s, 24);
-    return ok ? 1u : 0u;
-  }
-  if (strcmp(gameType, "postage_stamp") == 0) return postageSatisfiedMask(s);
-  if (strcmp(gameType, "cover_all") == 0) {
-    for (int i = 0; i < 25; i++) if (!isPatternCellSatisfied(s, i)) return 0u;
-    return 1u;
-  }
-  if (strcmp(gameType, "x") == 0) return xSatisfiedMask(s);
-  if (strcmp(gameType, "y") == 0) return ySatisfiedMask(s);
-  if (strcmp(gameType, "frame_outside") == 0) return frameOutsideSatisfiedMask(s);
-  if (strcmp(gameType, "frame_inside") == 0) return frameInsideSatisfiedMask(s);
-  if (strcmp(gameType, "plus_sign") == 0) return plusSignSatisfiedMask(s);
-  if (strcmp(gameType, "field_goal") == 0) return fieldGoalSatisfiedMask(s);
-  return 0u;
-}
-
-uint16_t& claimedMaskForCurrentGameType(CardSession& s) {
-  if (strcmp(gameType, "traditional") == 0) return s.claimedTraditionalMask;
-  if (strcmp(gameType, "four_corners") == 0) return s.claimedFourCornersMask;
-  if (strcmp(gameType, "postage_stamp") == 0) return s.claimedPostageMask;
-  if (strcmp(gameType, "cover_all") == 0) return s.claimedCoverAllMask;
-  if (strcmp(gameType, "x") == 0) return s.claimedXMask;
-  if (strcmp(gameType, "y") == 0) return s.claimedYMask;
-  if (strcmp(gameType, "frame_outside") == 0) return s.claimedFrameOutsideMask;
-  if (strcmp(gameType, "frame_inside") == 0) return s.claimedFrameInsideMask;
-  if (strcmp(gameType, "plus_sign") == 0) return s.claimedPlusSignMask;
-  if (strcmp(gameType, "field_goal") == 0) return s.claimedFieldGoalMask;
-  return s.claimedTraditionalMask;
+  return s.claimedPatternMasks[gameTypeIdx];
 }
 
 bool sessionHasWinningPattern(CardSession& s) {
-  const uint16_t satisfied = satisfiedMaskForCurrentGameType(s);
-  const uint16_t claimed = claimedMaskForCurrentGameType(s);
-  return (satisfied & (uint16_t)~claimed) != 0;
+  const GameTypeDef* def = currentGameTypeDef();
+  const uint32_t satisfied = satisfiedMaskForCurrentGameType(s);
+  const uint32_t claimed = claimedMaskForCurrentGameType(s);
+  const uint32_t available = satisfied & ~claimed;
+  const int required = def ? def->requiredPatterns : 1;
+  if (required > 1) {
+    return __builtin_popcount((unsigned int)available) >= required;
+  }
+  return available != 0;
 }
 
 void claimCurrentWinningPatterns(CardSession& s) {
-  uint16_t& claimed = claimedMaskForCurrentGameType(s);
+  uint32_t& claimed = claimedMaskForCurrentGameType(s);
   claimed |= satisfiedMaskForCurrentGameType(s);
 }
 
@@ -1977,33 +1870,20 @@ void recomputeCardWinners() {
 void getGameTypePhysicalIndices(int* out, int* count) {
   *count = 0;
   auto add = [&](int cell) {
+    if (*count >= 25) return;
     int p = gameTypeCellToPhysical(cell);
-    if (p >= 0) out[(*count)++] = p;
+    if (p >= 0) {
+      // Deduplicate
+      for (int i = 0; i < *count; i++) if (out[i] == p) return;
+      out[(*count)++] = p;
+    }
   };
-  if (strcmp(gameType, "traditional") == 0) {
-    int idx = patternIdx % NUM_TRADITIONAL_PATTERNS;
-    for (int i = 0; i < 5; i++) add(TRADITIONAL_PATTERNS[idx][i]);
-  } else if (strcmp(gameType, "four_corners") == 0) {
-    add(1); add(5); add(21); add(25);
-  } else if (strcmp(gameType, "postage_stamp") == 0) {
-    int idx = patternIdx % NUM_POSTAGE_PATTERNS;
-    for (int i = 0; i < 4; i++) add(POSTAGE_PATTERNS[idx][i]);
-  } else if (strcmp(gameType, "cover_all") == 0) {
-    for (int c = 1; c <= 25; c++) add(c);
-  } else if (strcmp(gameType, "x") == 0) {
-    add(1); add(5); add(7); add(9); add(13); add(17); add(19); add(21); add(25);
-  } else if (strcmp(gameType, "y") == 0) {
-    add(1); add(5); add(7); add(9); add(13); add(18); add(23);
-  } else if (strcmp(gameType, "frame_outside") == 0) {
-    add(1); add(2); add(3); add(4); add(5);
-    add(6); add(10); add(11); add(15); add(16);
-    add(20); add(21); add(22); add(23); add(24); add(25);
-  } else if (strcmp(gameType, "frame_inside") == 0) {
-    add(7); add(8); add(9); add(12); add(14); add(17); add(18); add(19);
-  } else if (strcmp(gameType, "plus_sign") == 0) {
-    add(3); add(8); add(11); add(12); add(13); add(14); add(15); add(18); add(23);
-  } else if (strcmp(gameType, "field_goal") == 0) {
-    add(1); add(5); add(6); add(10); add(11); add(12); add(13); add(14); add(15); add(18); add(23);
+  const GameTypeDef* def = currentGameTypeDef();
+  if (!def || def->displayCount <= 0) return;
+  int idx = patternIdx % def->displayCount;
+  uint32_t cells = gameTypeDisplayMaskAt(def, idx);
+  for (int bit = 0; bit < 25; bit++) {
+    if (cells & (1u << bit)) add(bit + 1);
   }
 }
 
@@ -2537,16 +2417,7 @@ void doReset() {
     if (!cardSessions[i].active) continue;
     for (int c = 0; c < 25; c++) cardSessions[i].marks[c] = (c == 12);
     cardSessions[i].winner = false;
-    cardSessions[i].claimedTraditionalMask = 0;
-    cardSessions[i].claimedFourCornersMask = 0;
-    cardSessions[i].claimedPostageMask = 0;
-    cardSessions[i].claimedCoverAllMask = 0;
-    cardSessions[i].claimedXMask = 0;
-    cardSessions[i].claimedYMask = 0;
-    cardSessions[i].claimedFrameOutsideMask = 0;
-    cardSessions[i].claimedFrameInsideMask = 0;
-    cardSessions[i].claimedPlusSignMask = 0;
-    cardSessions[i].claimedFieldGoalMask = 0;
+    for (int m = 0; m < GAME_TYPE_COUNT; m++) cardSessions[i].claimedPatternMasks[m] = 0;
   }
   winnerCount = 0;
   syncWinnerDeclared();
@@ -2707,14 +2578,13 @@ void loadNvs() {
   if (nvs_get_u32(nvs, NVS_GAME_TYPE_LED_COLOR, &gc) == ESP_OK) gameTypeLedColor = gc;
   size_t len = sizeof(gameTypeBuf);
   if (nvs_get_str(nvs, NVS_GAME_TYPE, gameTypeBuf, &len) == ESP_OK) {
-    if (strcmp(gameTypeBuf, "four_corners") != 0 && strcmp(gameTypeBuf, "postage_stamp") != 0 &&
-        strcmp(gameTypeBuf, "cover_all") != 0 && strcmp(gameTypeBuf, "traditional") != 0 &&
-        strcmp(gameTypeBuf, "x") != 0 && strcmp(gameTypeBuf, "y") != 0 &&
-        strcmp(gameTypeBuf, "frame_outside") != 0 &&
-        strcmp(gameTypeBuf, "frame_inside") != 0 &&
-        strcmp(gameTypeBuf, "plus_sign") != 0 &&
-        strcmp(gameTypeBuf, "field_goal") != 0)
+    if (!isValidGameTypeId(gameTypeBuf))
       strcpy(gameTypeBuf, "cover_all");
+  }
+  gameTypeIdx = findGameTypeIndex(gameTypeBuf);
+  if (gameTypeIdx < 0) {
+    strcpy(gameTypeBuf, "cover_all");
+    gameTypeIdx = findGameTypeIndex("cover_all");
   }
   size_t csLen = sizeof(callingStyleBuf);
   if (nvs_get_str(nvs, NVS_CALLING_STYLE, callingStyleBuf, &csLen) == ESP_OK) {
@@ -3169,19 +3039,10 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
       return;
     }
     const char* gt = payload["gameType"] | "";
-    if (strcmp(gt, "traditional") != 0 && strcmp(gt, "four_corners") != 0 &&
-        strcmp(gt, "postage_stamp") != 0 && strcmp(gt, "cover_all") != 0 &&
-        strcmp(gt, "x") != 0 && strcmp(gt, "y") != 0 &&
-        strcmp(gt, "frame_outside") != 0 &&
-        strcmp(gt, "frame_inside") != 0 &&
-        strcmp(gt, "plus_sign") != 0 &&
-        strcmp(gt, "field_goal") != 0) {
+    if (!applyGameTypeId(gt)) {
       sendWsCommandResult(client, requestId, false, 400, "{}", "invalid");
       return;
     }
-    strncpy(gameTypeBuf, gt, sizeof(gameTypeBuf) - 1);
-    gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
-    patternIdx = 0;
     recomputeCardWinners();
     updateAllLeds();
     broadcastStateWs("game_type_changed");
@@ -3249,16 +3110,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
       s->marks[i] = (i == 12);
     }
     s->winner = false;
-    s->claimedTraditionalMask = 0;
-    s->claimedFourCornersMask = 0;
-    s->claimedPostageMask = 0;
-    s->claimedCoverAllMask = 0;
-    s->claimedXMask = 0;
-    s->claimedYMask = 0;
-    s->claimedFrameOutsideMask = 0;
-    s->claimedFrameInsideMask = 0;
-    s->claimedPlusSignMask = 0;
-    s->claimedFieldGoalMask = 0;
+    resetSessionClaimedMasks(*s);
     recomputeCardWinners();
     broadcastStateWs("card_joined");
     broadcastCardStateWs(*s, "card_state");
@@ -3763,16 +3615,7 @@ void setup() {
     }
     JsonObject obj = json.as<JsonObject>();
     const char* gt = obj["gameType"];
-    if (gt && (strcmp(gt, "traditional") == 0 || strcmp(gt, "four_corners") == 0 ||
-              strcmp(gt, "postage_stamp") == 0 || strcmp(gt, "cover_all") == 0 ||
-              strcmp(gt, "x") == 0 || strcmp(gt, "y") == 0 ||
-              strcmp(gt, "frame_outside") == 0 ||
-              strcmp(gt, "frame_inside") == 0 ||
-              strcmp(gt, "plus_sign") == 0 ||
-              strcmp(gt, "field_goal") == 0)) {
-      strncpy(gameTypeBuf, gt, sizeof(gameTypeBuf) - 1);
-      gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
-      patternIdx = 0;
+    if (gt && applyGameTypeId(gt)) {
       recomputeCardWinners();
       updateAllLeds();
       req->send(200, "application/json", "{}");
@@ -4327,16 +4170,7 @@ void setup() {
       s->marks[i] = (i == 12);
     }
     s->winner = false;
-    s->claimedTraditionalMask = 0;
-    s->claimedFourCornersMask = 0;
-    s->claimedPostageMask = 0;
-    s->claimedCoverAllMask = 0;
-    s->claimedXMask = 0;
-    s->claimedYMask = 0;
-    s->claimedFrameOutsideMask = 0;
-    s->claimedFrameInsideMask = 0;
-    s->claimedPlusSignMask = 0;
-    s->claimedFieldGoalMask = 0;
+    resetSessionClaimedMasks(*s);
     recomputeCardWinners();
     broadcastStateWs("card_joined");
     broadcastCardStateWs(*s, "card_state");
@@ -4507,31 +4341,10 @@ void setup() {
 void handleButton1ShortPress() {
   if (!canChangeGameTypeNow()) return;
 
-  static const char* GAME_TYPES[] = {
-    "traditional",
-    "four_corners",
-    "postage_stamp",
-    "cover_all",
-    "x",
-    "y",
-    "frame_outside",
-    "frame_inside",
-    "plus_sign",
-    "field_goal",
-  };
-  const int count = (int)(sizeof(GAME_TYPES) / sizeof(GAME_TYPES[0]));
-  int currentIdx = 0;
-  for (int i = 0; i < count; i++) {
-    if (strcmp(gameType, GAME_TYPES[i]) == 0) {
-      currentIdx = i;
-      break;
-    }
-  }
-  int nextIdx = (currentIdx + 1) % count;
-  strncpy(gameTypeBuf, GAME_TYPES[nextIdx], sizeof(gameTypeBuf) - 1);
-  gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
-  patternIdx = 0;
-  lastPatternChange = millis();
+  int currentIdx = findGameTypeIndex(gameType);
+  if (currentIdx < 0) currentIdx = 0;
+  int nextIdx = (currentIdx + 1) % GAME_TYPE_COUNT;
+  applyGameTypeId(GAME_TYPE_TABLE[nextIdx].id);
   recomputeCardWinners();
   updateAllLeds();
   broadcastStateWs("game_type_changed");
@@ -4647,14 +4460,11 @@ void loop() {
   updateButtonState(button1, handleButton1ShortPress, handleButton1LongPress);
   updateButtonState(button2, handleButton2ShortPress, handleButton2LongPress);
 
-  // Cycle patterns for game types with multiple winning orientations
+  // Cycle display patterns for game types with multiple orientations
   if ((millis() - lastPatternChange) >= PATTERN_CYCLE_MS) {
-    if (strcmp(gameType, "traditional") == 0) {
-      patternIdx = (patternIdx + 1) % NUM_TRADITIONAL_PATTERNS;
-      lastPatternChange = millis();
-      broadcastPatternIndexWs();
-    } else if (strcmp(gameType, "postage_stamp") == 0) {
-      patternIdx = (patternIdx + 1) % NUM_POSTAGE_PATTERNS;
+    const GameTypeDef* def = currentGameTypeDef();
+    if (def && def->displayCount > 1) {
+      patternIdx = (patternIdx + 1) % def->displayCount;
       lastPatternChange = millis();
       broadcastPatternIndexWs();
     }

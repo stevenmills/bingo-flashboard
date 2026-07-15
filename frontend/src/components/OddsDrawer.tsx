@@ -4,7 +4,7 @@ import { GAME_TYPE_LABELS, type GameType } from "@/types";
 import { buildOddsRows, formatProbability, type MonteCarloConfig } from "@/lib/odds";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { GameTypePicker } from "@/components/GameTypePicker";
 
 const DEFAULT_CONFIG: MonteCarloConfig = {
   opponents: 20,
@@ -30,19 +30,6 @@ interface Props {
   allowGameTypeSelect?: boolean;
   onGameTypeChange?: (gameType: GameType) => void;
 }
-
-const GAME_TYPES: GameType[] = [
-  "traditional",
-  "four_corners",
-  "postage_stamp",
-  "cover_all",
-  "x",
-  "y",
-  "frame_outside",
-  "frame_inside",
-  "plus_sign",
-  "field_goal",
-];
 
 export function OddsDrawer({
   open,
@@ -96,21 +83,13 @@ export function OddsDrawer({
             <p className="text-xs text-muted-foreground">Estimated with Monte Carlo simulation.</p>
             {allowGameTypeSelect && (
               <div className="space-y-1">
-                <Label htmlFor="odds-game-type" className="text-xs">
-                  Game type
-                </Label>
-                <Select value={gameType} onValueChange={(value) => onGameTypeChange?.(value as GameType)}>
-                  <SelectTrigger id="odds-game-type" className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GAME_TYPES.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {GAME_TYPE_LABELS[type]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label className="text-xs">Game type</Label>
+                <GameTypePicker
+                  value={gameType}
+                  onChange={(gt) => onGameTypeChange?.(gt)}
+                  idPrefix="odds-gt"
+                  maxListHeightClass="max-h-48"
+                />
               </div>
             )}
             <div className="grid grid-cols-3 gap-2">

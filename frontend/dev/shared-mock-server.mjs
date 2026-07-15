@@ -1,6 +1,21 @@
 import http from "node:http";
 import { URL } from "node:url";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const GAME_TYPE_CATALOG = JSON.parse(
+  readFileSync(join(__dirname, "../src/lib/game-types.generated.json"), "utf8")
+);
+const ALL_GAME_TYPES = GAME_TYPE_CATALOG.types.map((t) => t.id);
+const GAME_TYPE_BY_ID = Object.fromEntries(GAME_TYPE_CATALOG.types.map((t) => [t.id, t]));
+const CYCLING_PATTERN_COUNTS = Object.fromEntries(
+  GAME_TYPE_CATALOG.types
+    .filter((t) => (t.displayPatterns?.length ?? 0) > 1)
+    .map((t) => [t.id, t.displayPatterns.length])
+);
 
 const PORT = Number.parseInt(process.env.SHARED_MOCK_PORT ?? "8787", 10);
 const BOARD_AUTH_TTL_MS = 30 * 60 * 1000;
@@ -8,10 +23,6 @@ const BOARD_UNLOCK_MAX_FAILURES = 5;
 const BOARD_UNLOCK_LOCKOUT_MS = 30_000;
 const DEFAULT_BOARD_PIN = "1975";
 const PATTERN_CYCLE_MS = 1500;
-const CYCLING_PATTERN_COUNTS = {
-  traditional: 12,
-  postage_stamp: 4,
-};
 
 const state = {
   current: 0,
@@ -98,116 +109,53 @@ function effectiveMarked(session, idx) {
   return Number.isInteger(n) && state.called.includes(n);
 }
 
+function emptyClaimedMasks() {
+  return Array.from({ length: ALL_GAME_TYPES.length }, () => 0);
+}
+
+function gameTypeIndex(gameType = state.gameType) {
+  const idx = ALL_GAME_TYPES.indexOf(gameType);
+  return idx >= 0 ? idx : 0;
+}
+
 function sessionWin(session) {
   const satisfied = satisfiedMaskForCurrentGameType(session);
   const claimed = claimedMaskForCurrentGameType(session);
-  return (satisfied & ~claimed) !== 0;
+  const available = satisfied & ~claimed;
+  const required = GAME_TYPE_BY_ID[state.gameType]?.requiredPatterns ?? 1;
+  if (required > 1) {
+    let count = 0;
+    for (let bits = available; bits !== 0; bits &= bits - 1) count++;
+    return count >= required;
+  }
+  return available !== 0;
 }
 
-function traditionalSatisfiedMask(session) {
-  let mask = 0;
-  for (let r = 0; r < 5; r++) {
-    let ok = true;
-    for (let c = 0; c < 5; c++) if (!effectiveMarked(session, r * 5 + c)) ok = false;
-    if (ok) mask |= (1 << r);
+function satisfiedMaskForCurrentGameType(session) {
+  const def = GAME_TYPE_BY_ID[state.gameType];
+  if (!def) return 0;
+  if (def.coveredThreshold > 0) {
+    let covered = 0;
+    for (let i = 0; i < 25; i++) if (effectiveMarked(session, i)) covered++;
+    return covered >= def.coveredThreshold ? 1 : 0;
   }
-  for (let c = 0; c < 5; c++) {
-    let ok = true;
-    for (let r = 0; r < 5; r++) if (!effectiveMarked(session, r * 5 + c)) ok = false;
-    if (ok) mask |= (1 << (5 + c));
-  }
-  if ([0, 6, 12, 18, 24].every((idx) => effectiveMarked(session, idx))) mask |= (1 << 10);
-  if ([4, 8, 12, 16, 20].every((idx) => effectiveMarked(session, idx))) mask |= (1 << 11);
-  return mask;
-}
-
-function postageSatisfiedMask(session) {
-  const patterns = [[0, 1, 5, 6], [3, 4, 8, 9], [15, 16, 20, 21], [18, 19, 23, 24]];
   let mask = 0;
-  patterns.forEach((pattern, idx) => {
-    if (pattern.every((cellIdx) => effectiveMarked(session, cellIdx))) {
-      mask |= (1 << idx);
-    }
+  def.winPatterns.forEach((pattern, alt) => {
+    if (alt >= 32) return;
+    if (pattern.every((cell1) => effectiveMarked(session, cell1 - 1))) mask |= (1 << alt);
   });
   return mask;
 }
 
-function xSatisfiedMask(session) {
-  const xPattern = [0, 4, 6, 8, 12, 16, 18, 20, 24];
-  return xPattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
-}
-
-function ySatisfiedMask(session) {
-  const yPattern = [0, 4, 6, 8, 12, 17, 22];
-  return yPattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
-}
-
-function frameOutsideSatisfiedMask(session) {
-  const pattern = [0, 1, 2, 3, 4, 5, 9, 10, 14, 15, 19, 20, 21, 22, 23, 24];
-  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
-}
-
-function frameInsideSatisfiedMask(session) {
-  const pattern = [6, 7, 8, 11, 13, 16, 17, 18];
-  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
-}
-
-function plusSignSatisfiedMask(session) {
-  const pattern = [2, 7, 10, 11, 12, 13, 14, 17, 22];
-  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
-}
-
-function fieldGoalSatisfiedMask(session) {
-  const pattern = [0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22];
-  return pattern.every((idx) => effectiveMarked(session, idx)) ? 1 : 0;
-}
-
-function satisfiedMaskForCurrentGameType(session) {
-  if (state.gameType === "traditional") return traditionalSatisfiedMask(session);
-  if (state.gameType === "four_corners") {
-    const ok = effectiveMarked(session, 0) && effectiveMarked(session, 4) && effectiveMarked(session, 20) && effectiveMarked(session, 24);
-    return ok ? 1 : 0;
-  }
-  if (state.gameType === "postage_stamp") return postageSatisfiedMask(session);
-  if (state.gameType === "cover_all") {
-    for (let i = 0; i < 25; i++) if (!effectiveMarked(session, i)) return 0;
-    return 1;
-  }
-  if (state.gameType === "x") return xSatisfiedMask(session);
-  if (state.gameType === "y") return ySatisfiedMask(session);
-  if (state.gameType === "frame_outside") return frameOutsideSatisfiedMask(session);
-  if (state.gameType === "frame_inside") return frameInsideSatisfiedMask(session);
-  if (state.gameType === "plus_sign") return plusSignSatisfiedMask(session);
-  if (state.gameType === "field_goal") return fieldGoalSatisfiedMask(session);
-  return 0;
-}
-
 function claimedMaskForCurrentGameType(session) {
-  if (state.gameType === "traditional") return session.claimedTraditionalMask ?? 0;
-  if (state.gameType === "four_corners") return session.claimedFourCornersMask ?? 0;
-  if (state.gameType === "postage_stamp") return session.claimedPostageMask ?? 0;
-  if (state.gameType === "cover_all") return session.claimedCoverAllMask ?? 0;
-  if (state.gameType === "x") return session.claimedXMask ?? 0;
-  if (state.gameType === "y") return session.claimedYMask ?? 0;
-  if (state.gameType === "frame_outside") return session.claimedFrameOutsideMask ?? 0;
-  if (state.gameType === "frame_inside") return session.claimedFrameInsideMask ?? 0;
-  if (state.gameType === "plus_sign") return session.claimedPlusSignMask ?? 0;
-  if (state.gameType === "field_goal") return session.claimedFieldGoalMask ?? 0;
-  return session.claimedTraditionalMask ?? 0;
+  if (!session.claimedPatternMasks) session.claimedPatternMasks = emptyClaimedMasks();
+  return session.claimedPatternMasks[gameTypeIndex()] ?? 0;
 }
 
 function claimCurrentWinningPatterns(session) {
-  const satisfied = satisfiedMaskForCurrentGameType(session);
-  if (state.gameType === "traditional") session.claimedTraditionalMask = (session.claimedTraditionalMask ?? 0) | satisfied;
-  else if (state.gameType === "four_corners") session.claimedFourCornersMask = (session.claimedFourCornersMask ?? 0) | satisfied;
-  else if (state.gameType === "postage_stamp") session.claimedPostageMask = (session.claimedPostageMask ?? 0) | satisfied;
-  else if (state.gameType === "cover_all") session.claimedCoverAllMask = (session.claimedCoverAllMask ?? 0) | satisfied;
-  else if (state.gameType === "x") session.claimedXMask = (session.claimedXMask ?? 0) | satisfied;
-  else if (state.gameType === "y") session.claimedYMask = (session.claimedYMask ?? 0) | satisfied;
-  else if (state.gameType === "frame_outside") session.claimedFrameOutsideMask = (session.claimedFrameOutsideMask ?? 0) | satisfied;
-  else if (state.gameType === "frame_inside") session.claimedFrameInsideMask = (session.claimedFrameInsideMask ?? 0) | satisfied;
-  else if (state.gameType === "plus_sign") session.claimedPlusSignMask = (session.claimedPlusSignMask ?? 0) | satisfied;
-  else if (state.gameType === "field_goal") session.claimedFieldGoalMask = (session.claimedFieldGoalMask ?? 0) | satisfied;
+  if (!session.claimedPatternMasks) session.claimedPatternMasks = emptyClaimedMasks();
+  const idx = gameTypeIndex();
+  session.claimedPatternMasks[idx] = (session.claimedPatternMasks[idx] ?? 0) | satisfiedMaskForCurrentGameType(session);
 }
 
 function recomputeWinners() {
@@ -249,16 +197,7 @@ function resetGame() {
   for (const s of cardSessions.values()) {
     s.marks = Array.from({ length: 25 }, (_, i) => i === 12);
     s.winner = false;
-    s.claimedTraditionalMask = 0;
-    s.claimedFourCornersMask = 0;
-    s.claimedPostageMask = 0;
-    s.claimedCoverAllMask = 0;
-    s.claimedXMask = 0;
-    s.claimedYMask = 0;
-    s.claimedFrameOutsideMask = 0;
-    s.claimedFrameInsideMask = 0;
-    s.claimedPlusSignMask = 0;
-    s.claimedFieldGoalMask = 0;
+    s.claimedPatternMasks = emptyClaimedMasks();
   }
   syncCardCounts();
 }
@@ -468,7 +407,7 @@ const server = http.createServer(async (req, res) => {
   if (method === "POST" && path === "/game-type") {
     if (!requireBoardAuth(req, res)) return;
     const body = await parseBody(req);
-    if (!["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside", "plus_sign", "field_goal"].includes(body.gameType)) return badRequest(res, "invalid");
+    if (!ALL_GAME_TYPES.includes(body.gameType)) return badRequest(res, "invalid");
     state.gameType = body.gameType;
     state.patternIndex = 0;
     recomputeWinners();
@@ -542,16 +481,7 @@ const server = http.createServer(async (req, res) => {
     session.numbers = numbers.slice(0, 25).map((n) => (n == null ? null : Number(n)));
     session.marks = Array.from({ length: 25 }, (_, i) => i === 12);
     session.winner = false;
-    session.claimedTraditionalMask = 0;
-    session.claimedFourCornersMask = 0;
-    session.claimedPostageMask = 0;
-    session.claimedCoverAllMask = 0;
-    session.claimedXMask = 0;
-    session.claimedYMask = 0;
-    session.claimedFrameOutsideMask = 0;
-    session.claimedFrameInsideMask = 0;
-    session.claimedPlusSignMask = 0;
-    session.claimedFieldGoalMask = 0;
+    session.claimedPatternMasks = emptyClaimedMasks();
     cardSessions.set(id, session);
     recomputeWinners();
     broadcastState("card_joined");
@@ -738,7 +668,7 @@ function handleWsCommand(ws, msg) {
     const auth = guarded();
     if (!auth.ok) return wsResult(ws, requestId, false, auth.status, null, auth.error);
     const gameType = payload.gameType;
-    if (!["traditional", "four_corners", "postage_stamp", "cover_all", "x", "y", "frame_outside", "frame_inside", "plus_sign", "field_goal"].includes(gameType)) {
+    if (!ALL_GAME_TYPES.includes(gameType)) {
       return wsResult(ws, requestId, false, 400, null, "invalid");
     }
     state.gameType = gameType;
@@ -781,16 +711,7 @@ function handleWsCommand(ws, msg) {
     session.numbers = numbers.slice(0, 25).map((n) => (n == null ? null : Number(n)));
     session.marks = Array.from({ length: 25 }, (_, i) => i === 12);
     session.winner = false;
-    session.claimedTraditionalMask = 0;
-    session.claimedFourCornersMask = 0;
-    session.claimedPostageMask = 0;
-    session.claimedCoverAllMask = 0;
-    session.claimedXMask = 0;
-    session.claimedYMask = 0;
-    session.claimedFrameOutsideMask = 0;
-    session.claimedFrameInsideMask = 0;
-    session.claimedPlusSignMask = 0;
-    session.claimedFieldGoalMask = 0;
+    session.claimedPatternMasks = emptyClaimedMasks();
     cardSessions.set(id, session);
     recomputeWinners();
     broadcastState("card_joined");

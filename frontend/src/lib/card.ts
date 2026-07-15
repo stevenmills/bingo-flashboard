@@ -1,4 +1,4 @@
-import { LETTERS, LETTER_RANGES, type GameType, type Letter } from "@/types";
+import { GAME_TYPE_BY_ID, LETTERS, LETTER_RANGES, type GameType, type Letter } from "@/types";
 
 export interface CardCell {
   letter: Letter;
@@ -88,14 +88,11 @@ export function storedCardStateToGrid(stored: StoredCardState): CardGrid | null 
 }
 
 export function gameTypeUsesFreeSpace(gameType: GameType): boolean {
-  return (
-    gameType === "traditional" ||
-    gameType === "cover_all" ||
-    gameType === "x" ||
-    gameType === "y" ||
-    gameType === "plus_sign" ||
-    gameType === "field_goal"
-  );
+  return GAME_TYPE_BY_ID[gameType]?.usesFreeSpace ?? false;
+}
+
+export function requiredPatternsForGameType(gameType: GameType): number {
+  return GAME_TYPE_BY_ID[gameType]?.requiredPatterns ?? 1;
 }
 
 export function winningPatterns(card: CardGrid, gameType: GameType, calledSet: Set<number>): number[][] {
@@ -109,50 +106,21 @@ export function winningPatterns(card: CardGrid, gameType: GameType, calledSet: S
     return calledSet.has(cell.value);
   };
 
-  const findSatisfiedPatterns = (patterns: number[][]): number[][] =>
-    patterns.filter((pattern) => pattern.every((idx) => isSatisfied(idx)));
+  const def = GAME_TYPE_BY_ID[gameType];
+  if (!def) return [];
 
-  if (gameType === "four_corners") {
-    return findSatisfiedPatterns([[0, 4, 20, 24]]);
+  if (def.coveredThreshold > 0) {
+    const covered: number[] = [];
+    for (let i = 0; i < 25; i++) if (isSatisfied(i)) covered.push(i);
+    return covered.length >= def.coveredThreshold ? [covered] : [];
   }
-  if (gameType === "postage_stamp") {
-    return findSatisfiedPatterns([
-      [0, 1, 5, 6],
-      [3, 4, 8, 9],
-      [15, 16, 20, 21],
-      [18, 19, 23, 24],
-    ]);
-  }
-  if (gameType === "cover_all") {
-    return findSatisfiedPatterns([Array.from({ length: 25 }, (_, i) => i)]);
-  }
-  if (gameType === "x") {
-    return findSatisfiedPatterns([[0, 4, 6, 8, 12, 16, 18, 20, 24]]);
-  }
-  if (gameType === "y") {
-    return findSatisfiedPatterns([[0, 4, 6, 8, 12, 17, 22]]);
-  }
-  if (gameType === "frame_outside") {
-    return findSatisfiedPatterns([[0, 1, 2, 3, 4, 5, 9, 10, 14, 15, 19, 20, 21, 22, 23, 24]]);
-  }
-  if (gameType === "frame_inside") {
-    return findSatisfiedPatterns([[6, 7, 8, 11, 13, 16, 17, 18]]);
-  }
-  if (gameType === "plus_sign") {
-    return findSatisfiedPatterns([[2, 7, 10, 11, 12, 13, 14, 17, 22]]);
-  }
-  if (gameType === "field_goal") {
-    return findSatisfiedPatterns([[0, 4, 5, 9, 10, 11, 12, 13, 14, 17, 22]]);
-  }
-  const patterns: number[][] = [];
-  for (let r = 0; r < 5; r++) patterns.push([r * 5, r * 5 + 1, r * 5 + 2, r * 5 + 3, r * 5 + 4]);
-  for (let c = 0; c < 5; c++) patterns.push([c, c + 5, c + 10, c + 15, c + 20]);
-  patterns.push([0, 6, 12, 18, 24], [4, 8, 12, 16, 20]);
-  return findSatisfiedPatterns(patterns);
+
+  const patterns0 = def.winPatterns.map((pattern) => pattern.map((cell1) => cell1 - 1));
+  return patterns0.filter((pattern) => pattern.every((idx) => isSatisfied(idx)));
 }
 
 export function gridHasWinningPattern(card: CardGrid, gameType: GameType, calledSet: Set<number>): boolean {
-  return winningPatterns(card, gameType, calledSet).length > 0;
+  return winningPatterns(card, gameType, calledSet).length >= requiredPatternsForGameType(gameType);
 }
 
 export function buildAutoSyncedGrid(

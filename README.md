@@ -10,7 +10,7 @@ Connect to the **`BINGO`** network → open **`http://bingo.local`** (fallback *
 
 | 🎮 Gameplay | 💡 Lights | 📱 Clients | 🔐 Safety |
 |---|---|---|---|
-| 10 game types | 19 themes + vibrance | Board host UI | PIN + 7-day token |
+| 42 game types | 19 themes + vibrance | Board host UI | PIN + 7-day token |
 | Auto / manual calling | Screensavers (13) | Printed QR cards | Unlock lockout |
 | Physical buttons | Called-number banner | Live card sync | Device-signed cards |
 | Caller audio + jokes | Winner animations | Odds drawer | Optional home WiFi |
@@ -73,9 +73,12 @@ Any button exits LED test / screensaver.
 - Default auto-call interval: **10 seconds** (configurable; Play stays UI-driven)
 
 ### Game types
-Traditional · Four Corners · Postage Stamp · Cover All · Letter X · Letter Y · Frame Outside · Frame Inside · Plus Sign · Field Goal
 
-Traditional & Postage Stamp **cycle** winning orientations on the LED matrix (synced to the UI).
+**42 types** in six categories (Classics, Letters & Symbols, Shapes & Frames, Blocks & Arrows, Pictures, Combos & Rules). The board/new-game UI uses a **searchable, filterable picker** with mini pattern previews. Physical **Button 1** cycles every type in catalog order when changing type is allowed.
+
+Canonical definitions live in `scripts/generate-game-types.mjs` (generates frontend + firmware tables). Multi-orientation types (Traditional, Postage Stamp, Big Stamp, Arrow, Lightning, BINGO Glyph, Railroad, and others) **cycle** display patterns on the LED matrix (synced to the UI). **Double Bingo** wins on any two Traditional lines and cycles all 66 two-line combinations on the indicator; **Blackout Lite** wins at any 20 covered cells.
+
+Classes include: Traditional, Double Bingo, Four Corners, Postage Stamp, Cover All, Blackout Lite, Letter X/Y/O/H, Lucky 7, Plus Sign, frames, diamond, bullseye, hourglass, pyramid, bow tie, infinity, lightning, big stamp, brick, L-block, arrow, field goal, anchor, heart, smiley, rocket, UFO, top hat, Pac-Man, clover, BINGO Glyph, snake, railroad, VIP Cross, Four Horsemen, Split the Room, Top vs Bottom, Diagonal Band.
 
 ### Winners
 - Declare / clear winner (UI + Button 2 long-press)

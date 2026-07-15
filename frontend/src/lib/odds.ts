@@ -1,17 +1,6 @@
-import type { GameType } from "@/types";
+import { GAME_TYPE_REQUIRED_HITS as CATALOG_HITS, type GameType } from "@/types";
 
-export const GAME_TYPE_REQUIRED_HITS: Record<GameType, number> = {
-  traditional: 5,
-  four_corners: 4,
-  postage_stamp: 4,
-  cover_all: 25,
-  x: 8,
-  y: 5,
-  frame_outside: 16,
-  frame_inside: 8,
-  plus_sign: 8,
-  field_goal: 10,
-};
+export const GAME_TYPE_REQUIRED_HITS: Record<GameType, number> = CATALOG_HITS;
 
 export interface MonteCarloConfig {
   opponents: number;
