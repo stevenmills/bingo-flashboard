@@ -21,7 +21,7 @@ export function NewGameDialog({ open, state, onStart, onRefresh, onApplyOptimist
   return (
     <Dialog open={open}>
       <DialogContent
-        className="flex max-w-lg flex-col gap-3 overflow-hidden sm:max-w-2xl"
+        className="flex h-[min(calc(100dvh-1.5rem),40rem)] max-w-lg flex-col gap-3 overflow-hidden sm:h-[min(calc(100dvh-2rem),42rem)] sm:max-w-2xl"
         hideClose
         onPointerDownOutside={(e) => e.preventDefault()}
       >

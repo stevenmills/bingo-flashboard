@@ -90,7 +90,7 @@ Canonical BINGO definitions live in `scripts/generate-game-types.mjs` (generates
 | Two Lines | Any two complete horizontal rows |
 | Full House | All populated numbers called |
 
-HOUSEY winner mode auto-alerts when a pattern is complete (same as BINGO); the real-world host adjudicates. Keep-going dismisses the prize and continues. LED indicators: Battleship chases 1→25; Four Corners lights corners; Line middle row; Two Lines two rows; Full House all 25.
+HOUSEY winner mode auto-alerts when a pattern is complete (same as BINGO); the real-world host adjudicates. Keep-going dismisses the prize and continues. LED indicators: Battleship loops a 1→25 chase at the standard pattern cycle speed; Four Corners lights corners; Line middle row; Two Lines two rows; Full House all 25.
 
 ### Winners
 - Declare / clear winner (UI + Button 2 long-press)

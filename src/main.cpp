@@ -88,7 +88,7 @@ int gameTypeIdx = 4; // cover_all in generated catalog; refreshed on load/select
 int houseyTypeIdx = -1;
 int survivorCount = 0;
 int eliminatedCount = 0;
-unsigned long houseyBattleshipChaseUntilMs = 0;
+unsigned long houseyBattleshipChaseStartMs = 0;
 bool winnerDeclared = false;
 bool manualWinnerDeclared = false;
 bool winnerSuppressed = false;
@@ -259,9 +259,10 @@ bool applyGameSelection(const char* style, const char* gt) {
     gameTypeIdx = -1;
     houseyTypeIdx = idx;
     if (strcmp(gt, "battleship") == 0) {
-      houseyBattleshipChaseUntilMs = millis() + 1200;
+      // Continuous chase at PATTERN_CYCLE_MS per cell (same cadence as BINGO orientation cycling).
+      houseyBattleshipChaseStartMs = millis();
     } else {
-      houseyBattleshipChaseUntilMs = 0;
+      houseyBattleshipChaseStartMs = 0;
     }
   } else {
     return false;
@@ -2132,15 +2133,13 @@ void getGameTypePhysicalIndices(int* out, int* count) {
 
   if (isGameStyleHousey(gameStyle)) {
     if (strcmp(gameType, "battleship") == 0) {
-      if (millis() < houseyBattleshipChaseUntilMs) {
-        unsigned long started = houseyBattleshipChaseUntilMs > 1200 ? houseyBattleshipChaseUntilMs - 1200 : 0;
-        unsigned long ms = millis() - started;
-        int cell = (int)((ms * 25) / 1200) + 1;
-        if (cell < 1) cell = 1;
-        if (cell > 25) cell = 25;
-        add(cell);
+      // Continuous chase 1→25 at PATTERN_CYCLE_MS per cell (loops like BINGO orientations).
+      if (houseyBattleshipChaseStartMs == 0) {
+        houseyBattleshipChaseStartMs = millis();
       }
-      // After chase: idle (no steady silhouette).
+      const unsigned long ms = millis() - houseyBattleshipChaseStartMs;
+      int cell = (int)((ms / PATTERN_CYCLE_MS) % 25UL) + 1;
+      add(cell);
       return;
     }
     if (strcmp(gameType, "four_corners") == 0) {
@@ -4833,11 +4832,10 @@ void loop() {
     }
   }
 
-  // HOUSEY Battleship chase animation (~1.2s through cells 1–25)
+  // HOUSEY Battleship chase loops at PATTERN_CYCLE_MS per cell (same cadence as BINGO).
   static unsigned long lastHouseyChaseMs = 0;
   if (isGameStyleHousey(gameStyle) && strcmp(gameType, "battleship") == 0 &&
-      millis() < houseyBattleshipChaseUntilMs &&
-      (millis() - lastHouseyChaseMs) >= 40UL) {
+      (millis() - lastHouseyChaseMs) >= PATTERN_CYCLE_MS) {
     lastHouseyChaseMs = millis();
     updateAllLeds();
   }

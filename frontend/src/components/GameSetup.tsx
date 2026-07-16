@@ -218,7 +218,7 @@ export function GameSetup({
             onChange={handleGameType}
             letterColors={letterColors}
             idPrefix="setup-gt"
-            maxListHeightClass={fillHeight ? "max-h-none flex-1 min-h-0" : undefined}
+            fillHeight={fillHeight}
           />
         </div>
       )}

@@ -28,6 +28,11 @@ interface Props {
   idPrefix?: string;
   className?: string;
   maxListHeightClass?: string;
+  /**
+   * Fill the parent's height; the result list is the only scroll region.
+   * Parent must be a bounded flex column with min-h-0.
+   */
+  fillHeight?: boolean;
 }
 
 function MiniPreview({ cells, accent }: { cells: number[]; accent: string }) {
@@ -56,10 +61,17 @@ export function GameTypePicker({
   idPrefix = "gt",
   className,
   maxListHeightClass = "max-h-[min(50dvh,22rem)]",
+  fillHeight = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<GameTypeCategoryId | "all">("all");
   const accent = letterColors.N;
+  const listHeightClass = fillHeight ? "min-h-0 flex-1" : maxListHeightClass;
+  const rootClass = cn(
+    "flex min-h-0 flex-col gap-2.5",
+    fillHeight && "flex-1",
+    className
+  );
 
   const houseyFiltered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -92,19 +104,19 @@ export function GameTypePicker({
       ? (value as HouseyGameType)
       : null;
     return (
-      <div className={cn("space-y-3", className)}>
+      <div className={rootClass}>
         {selected && (
-          <div className="flex items-start gap-3 rounded-lg border p-2.5" style={{ borderColor: rgbaFromHex(accent, 0.45) }}>
+          <div className="flex shrink-0 items-center gap-3 rounded-lg border p-2" style={{ borderColor: rgbaFromHex(accent, 0.45) }}>
             <MiniPreview cells={HOUSEY_DISPLAY_CELLS[selected]} accent={rgbaFromHex(accent, 0.95)} />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold leading-tight">{HOUSEY_GAME_TYPE_LABELS[selected]}</p>
-              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
                 {HOUSEY_GAME_TYPE_DESCRIPTIONS[selected]}
               </p>
             </div>
           </div>
         )}
-        <div className="relative">
+        <div className="relative shrink-0">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
@@ -114,7 +126,7 @@ export function GameTypePicker({
             aria-label="Search HOUSEY types"
           />
         </div>
-        <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", maxListHeightClass)} role="listbox">
+        <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", listHeightClass)} role="listbox">
           <div className="divide-y">
             {houseyFiltered.map((id) => {
               const selectedRow = value === id;
@@ -153,18 +165,18 @@ export function GameTypePicker({
   const selected = value && value in GAME_TYPE_BY_ID ? GAME_TYPE_BY_ID[value as GameType] : null;
 
   return (
-    <div className={cn("space-y-3", className)}>
+    <div className={rootClass}>
       {selected && (
-        <div className="flex items-start gap-3 rounded-lg border p-2.5" style={{ borderColor: rgbaFromHex(accent, 0.45) }}>
+        <div className="flex shrink-0 items-center gap-3 rounded-lg border p-2" style={{ borderColor: rgbaFromHex(accent, 0.45) }}>
           <MiniPreview cells={selected.displayPatterns[0] ?? []} accent={rgbaFromHex(accent, 0.95)} />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold leading-tight">{selected.label}</p>
-            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{selected.description}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{selected.description}</p>
           </div>
         </div>
       )}
 
-      <div className="relative">
+      <div className="relative shrink-0">
         <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={query}
@@ -175,7 +187,7 @@ export function GameTypePicker({
         />
       </div>
 
-      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-thin">
+      <div className="-mx-1 flex shrink-0 gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-thin">
         <button
           type="button"
           onClick={() => setCategory("all")}
@@ -203,7 +215,7 @@ export function GameTypePicker({
         ))}
       </div>
 
-      <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", maxListHeightClass)} role="listbox" aria-label="Game types">
+      <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", listHeightClass)} role="listbox" aria-label="Game types">
         {bingoFiltered.length === 0 ? (
           <p className="p-4 text-center text-sm text-muted-foreground">No matching game types.</p>
         ) : (
@@ -243,7 +255,7 @@ export function GameTypePicker({
           </div>
         )}
       </div>
-      <p className="text-[11px] text-muted-foreground tabular-nums">
+      <p className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
         {bingoFiltered.length} of {ALL_GAME_TYPES.length} types
       </p>
     </div>

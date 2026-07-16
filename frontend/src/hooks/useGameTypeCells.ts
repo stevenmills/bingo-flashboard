@@ -9,10 +9,13 @@ import {
 } from "@/types";
 import { useEffect, useState } from "react";
 
+/** Matches firmware PATTERN_CYCLE_MS — one display step for cycling game types. */
+const PATTERN_CYCLE_MS = 1500;
+
 /**
  * Returns the active cells for a game type indicator.
  * Cycling types advance via patternIndex (synced with LED output).
- * HOUSEY Battleship briefly chases 1→25 on the client while firmware does the same.
+ * HOUSEY Battleship loops 1→25 at PATTERN_CYCLE_MS per cell.
  */
 export function useGameTypeCells(
   gameType: AnyGameType,
@@ -26,17 +29,13 @@ export function useGameTypeCells(
       setBattleshipCell(0);
       return;
     }
+    // Loop cell 1 → 25 at standard pattern speed (matches firmware).
     setBattleshipCell(1);
-    const started = Date.now();
+    let cell = 1;
     const id = window.setInterval(() => {
-      const ms = Date.now() - started;
-      if (ms >= 1200) {
-        setBattleshipCell(0);
-        window.clearInterval(id);
-        return;
-      }
-      setBattleshipCell(Math.min(25, Math.floor((ms * 25) / 1200) + 1));
-    }, 40);
+      cell = cell >= 25 ? 1 : cell + 1;
+      setBattleshipCell(cell);
+    }, PATTERN_CYCLE_MS);
     return () => window.clearInterval(id);
   }, [gameStyle, gameType]);
 

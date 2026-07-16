@@ -61,7 +61,7 @@ export const HOUSEY_GAME_TYPE_MIN_CALLS: Record<HouseyGameType, number> = {
 
 /** 1-indexed cells for steady LED / UI indicator (Battleship is animated in firmware). */
 export const HOUSEY_DISPLAY_CELLS: Record<HouseyGameType, number[]> = {
-  battleship: [], // chase 1→25 handled in firmware / UI timer
+  battleship: [], // looping chase 1→25 at PATTERN_CYCLE_MS; handled in firmware / UI
   four_corners: [1, 5, 21, 25],
   line: [11, 12, 13, 14, 15],
   two_lines: [6, 7, 8, 9, 10, 21, 22, 23, 24, 25],
