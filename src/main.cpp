@@ -1,5 +1,5 @@
 /**
- * Bingo Flashboard – AITRIP 30-pin ESP-WROOM-32 + 105-LED WS2811 + WiFi AP
+ * Bingo Flashboard – ESP32-S3 N16R8 + 105-LED WS2811 + WiFi AP
  * Plan: arduino_bingo_led_board_179bac68.plan.md
  */
 
