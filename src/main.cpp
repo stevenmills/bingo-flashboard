@@ -2177,7 +2177,7 @@ void updateLedTestMode() {
 
 void updateAllLeds() {
   FastLED.clear();
-  FastLED.setBrightness(brightness);
+  FastLED.setBrightness(brightness ? brightness : DEFAULT_BRIGHTNESS);
 
   if (ledTestMode) {
     updateLedTestMode();
@@ -3201,11 +3201,37 @@ void setup() {
   }
   loadNvs();
   ensureDeviceIdLoaded();
+  // Never leave the strip dead from a zeroed NVS brightness (looks like a wiring failure).
+  if (brightness == 0) {
+    brightness = DEFAULT_BRIGHTNESS;
+    Serial.println("LED brightness was 0 in NVS — restored to default 255");
+  }
 
   initThemePalettes();
   initLedTestSequence();
+
+  // Claim GPIO 4 before FastLED/RMT; max drive helps 3.3V → WS2811 DIN.
+  gpio_reset_pin((gpio_num_t)DATA_PIN);
+  gpio_set_direction((gpio_num_t)DATA_PIN, GPIO_MODE_OUTPUT);
+  gpio_set_drive_capability((gpio_num_t)DATA_PIN, GPIO_DRIVE_CAP_3);
+  digitalWrite(DATA_PIN, LOW);
+  delay(50);
+
   FastLED.addLeds<WS2811, DATA_PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
+  FastLED.setBrightness(255);
+  FastLED.clear(true);
+
+  // Boot prove-out: R/G/B/W so any wiring that works is obvious regardless of color order.
+  const CRGB bootColors[] = {CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::White};
+  for (size_t c = 0; c < sizeof(bootColors) / sizeof(bootColors[0]); c++) {
+    fill_solid(leds, NUM_LEDS, bootColors[c]);
+    FastLED.show();
+    delay(300);
+  }
+  FastLED.clear(true);
   FastLED.setBrightness(brightness);
+  Serial.printf("LED strip: WS2811/RGB %d px GPIO %d (FastLED 3.7.8 RMT4), br=%u\n",
+                NUM_LEDS, DATA_PIN, (unsigned)brightness);
   pinMode(BUTTON1_PIN, INPUT_PULLUP);
   pinMode(BUTTON2_PIN, INPUT_PULLUP);
   button1.rawState = button1.stableState = digitalRead(BUTTON1_PIN);
@@ -3215,6 +3241,7 @@ void setup() {
     doReset();
   }
   updateAllLeds();
+  FastLED.show();
 
 #if STATUS_LED_ENABLED
   blinkStatusLedBootProbe();
@@ -3658,7 +3685,7 @@ void setup() {
       if (v < 0) v = 0;
       if (v > 255) v = 255;
       brightness = (uint8_t)v;
-      FastLED.setBrightness(brightness);
+      FastLED.setBrightness(brightness ? brightness : DEFAULT_BRIGHTNESS);
       saveNvsSettings();
       broadcastStateWs("brightness_changed");
     }
@@ -3671,7 +3698,7 @@ void setup() {
       int v = obj["value"].as<int>();
       if (v >= 0 && v <= 255) {
         brightness = v;
-        FastLED.setBrightness(brightness);
+        FastLED.setBrightness(brightness ? brightness : DEFAULT_BRIGHTNESS);
         saveNvsSettings();
         broadcastStateWs("brightness_changed");
       }
