@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#define GAME_TYPE_COUNT 42
+#define GAME_TYPE_COUNT 47
 #define GAME_TYPE_MAX_WIN_ALTS 32
 #define GAME_TYPE_MAX_DISPLAY_ALTS 66
 #define GAME_TYPE_ID_MAX 23
@@ -43,66 +43,76 @@ static const uint32_t GT_WIN_10[] = { 0x118fe31u };
 static const uint32_t GT_DISP_10[] = { 0x118fe31u };
 static const uint32_t GT_WIN_11[] = { 0x427c84u };
 static const uint32_t GT_DISP_11[] = { 0x427c84u };
-static const uint32_t GT_WIN_12[] = { 0x1f8c63fu };
-static const uint32_t GT_DISP_12[] = { 0x1f8c63fu };
-static const uint32_t GT_WIN_13[] = { 0x729c0u };
-static const uint32_t GT_DISP_13[] = { 0x729c0u };
-static const uint32_t GT_WIN_14[] = { 0x455544u };
-static const uint32_t GT_DISP_14[] = { 0x455544u };
-static const uint32_t GT_WIN_15[] = { 0x739c0u };
-static const uint32_t GT_DISP_15[] = { 0x739c0u };
-static const uint32_t GT_WIN_16[] = { 0x1f711dfu, 0x11dff71u };
-static const uint32_t GT_DISP_16[] = { 0x1f711dfu, 0x11dff71u };
-static const uint32_t GT_WIN_17[] = { 0x1f07dc4u, 0x56f5a5u, 0x477c1fu, 0x14b5ed4u };
-static const uint32_t GT_DISP_17[] = { 0x1f07dc4u, 0x56f5a5u, 0x477c1fu, 0x14b5ed4u };
-static const uint32_t GT_WIN_18[] = { 0x11dff71u, 0x1f711dfu };
-static const uint32_t GT_DISP_18[] = { 0x11dff71u, 0x1f711dfu };
-static const uint32_t GT_WIN_19[] = { 0xaabaaau };
-static const uint32_t GT_DISP_19[] = { 0xaabaaau };
-static const uint32_t GT_WIN_20[] = { 0xf1389eu, 0x1e4388fu, 0x10af6e1u, 0x1adfb0u, 0xf2391eu, 0x1e2384fu, 0x10edea1u, 0x1bf6b0u };
-static const uint32_t GT_DISP_20[] = { 0xf1389eu, 0x1e4388fu, 0x10af6e1u, 0x1adfb0u, 0xf2391eu, 0x1e2384fu, 0x10edea1u, 0x1bf6b0u };
-static const uint32_t GT_WIN_21[] = { 0x1ce7u, 0x739cu, 0x739c00u, 0x1ce7000u };
-static const uint32_t GT_DISP_21[] = { 0x1ce7u, 0x739cu, 0x739c00u, 0x1ce7000u };
-static const uint32_t GT_WIN_22[] = { 0xe7u, 0x39cu, 0x6318u, 0xc63u, 0x1ce0000u, 0x738000u, 0x318c00u, 0x18c6000u };
-static const uint32_t GT_DISP_22[] = { 0xe7u, 0x39cu, 0x6318u, 0xc63u, 0x1ce0000u, 0x738000u, 0x318c00u, 0x18c6000u };
-static const uint32_t GT_WIN_23[] = { 0x1c21u, 0x7210u, 0x109cu, 0x1087u, 0x1087000u, 0x109c00u, 0x721000u, 0x1c21000u };
-static const uint32_t GT_DISP_23[] = { 0x1c21u, 0x7210u, 0x109cu, 0x1087u, 0x1087000u, 0x109c00u, 0x721000u, 0x1c21000u };
-static const uint32_t GT_WIN_24[] = { 0x427dc4u, 0x467d84u, 0x477c84u, 0x437cc4u };
-static const uint32_t GT_DISP_24[] = { 0x427dc4u, 0x467d84u, 0x477c84u, 0x437cc4u };
-static const uint32_t GT_WIN_25[] = { 0x427e31u };
-static const uint32_t GT_DISP_25[] = { 0x427e31u };
-static const uint32_t GT_WIN_26[] = { 0x157108eu };
-static const uint32_t GT_DISP_26[] = { 0x157108eu };
-static const uint32_t GT_WIN_27[] = { 0x477feau };
-static const uint32_t GT_DISP_27[] = { 0x477feau };
-static const uint32_t GT_WIN_28[] = { 0xe89140u };
-static const uint32_t GT_DISP_28[] = { 0xe89140u };
-static const uint32_t GT_WIN_29[] = { 0x15239c4u };
-static const uint32_t GT_DISP_29[] = { 0x15239c4u };
-static const uint32_t GT_WIN_30[] = { 0xa77dc0u };
-static const uint32_t GT_DISP_30[] = { 0xa77dc0u };
-static const uint32_t GT_WIN_31[] = { 0x1ffb9ceu };
-static const uint32_t GT_DISP_31[] = { 0x1ffb9ceu };
-static const uint32_t GT_WIN_32[] = { 0x739ce7u, 0x7fffu, 0x1ce739cu, 0x1fffc00u };
-static const uint32_t GT_DISP_32[] = { 0x739ce7u, 0x7fffu, 0x1ce739cu, 0x1fffc00u };
-static const uint32_t GT_WIN_33[] = { 0xe57d4eu };
-static const uint32_t GT_DISP_33[] = { 0xe57d4eu };
-static const uint32_t GT_WIN_34[] = { 0x769da7u, 0x1f2109fu, 0x11cd671u, 0xe8f43eu, 0xe8c62eu };
-static const uint32_t GT_DISP_34[] = { 0x769da7u, 0x1f2109fu, 0x11cd671u, 0xe8f43eu, 0xe8c62eu };
-static const uint32_t GT_WIN_35[] = { 0x1f0f21fu, 0x1f81c3fu, 0x1dad633u, 0x17ad639u, 0x1f09e1fu, 0x1f8703fu, 0x198d6b7u, 0x138d6bdu };
-static const uint32_t GT_DISP_35[] = { 0x1f0f21fu, 0x1f81c3fu, 0x1dad633u, 0x17ad639u, 0x1f09e1fu, 0x1f8703fu, 0x198d6b7u, 0x138d6bdu };
-static const uint32_t GT_WIN_36[] = { 0x3ffu, 0x7c1fu, 0xf801fu, 0x1f0001fu, 0x7fe0u, 0xf83e0u, 0x1f003e0u, 0xffc00u, 0x1f07c00u, 0x1ff8000u, 0x318c63u, 0x5294a5u, 0x94a529u, 0x118c631u, 0x6318c6u, 0xa5294au, 0x1294a52u, 0xc6318cu, 0x14a5294u, 0x18c6318u };
-static const uint32_t GT_DISP_36[] = { 0x3ffu, 0x7c1fu, 0xf801fu, 0x1f0001fu, 0x7fe0u, 0xf83e0u, 0x1f003e0u, 0xffc00u, 0x1f07c00u, 0x1ff8000u, 0x318c63u, 0x5294a5u, 0x94a529u, 0x118c631u, 0x6318c6u, 0xa5294au, 0x1294a52u, 0xc6318cu, 0x14a5294u, 0x18c6318u };
-static const uint32_t GT_WIN_37[] = { 0x477dc4u };
-static const uint32_t GT_DISP_37[] = { 0x477dc4u };
-static const uint32_t GT_WIN_38[] = { 0x404404u };
-static const uint32_t GT_DISP_38[] = { 0x404404u };
-static const uint32_t GT_WIN_39[] = { 0x318c63u, 0x18c6318u };
-static const uint32_t GT_DISP_39[] = { 0x318c63u, 0x18c6318u };
-static const uint32_t GT_WIN_40[] = { 0x3ffu, 0x1ff8000u };
-static const uint32_t GT_DISP_40[] = { 0x3ffu, 0x1ff8000u };
-static const uint32_t GT_WIN_41[] = { 0x18e38e3u, 0x33bb98u };
-static const uint32_t GT_DISP_41[] = { 0x18e38e3u, 0x33bb98u };
+static const uint32_t GT_WIN_12[] = { 0x1151151u, 0x427c84u };
+static const uint32_t GT_DISP_12[] = { 0x1577dd5u };
+static const uint32_t GT_WIN_13[] = { 0x1f8c63fu };
+static const uint32_t GT_DISP_13[] = { 0x1f8c63fu };
+static const uint32_t GT_WIN_14[] = { 0x729c0u };
+static const uint32_t GT_DISP_14[] = { 0x729c0u };
+static const uint32_t GT_WIN_15[] = { 0x455544u };
+static const uint32_t GT_DISP_15[] = { 0x455544u };
+static const uint32_t GT_WIN_16[] = { 0x739c0u };
+static const uint32_t GT_DISP_16[] = { 0x739c0u };
+static const uint32_t GT_WIN_17[] = { 0x1f711dfu, 0x11dff71u };
+static const uint32_t GT_DISP_17[] = { 0x1f711dfu, 0x11dff71u };
+static const uint32_t GT_WIN_18[] = { 0x1f07dc4u, 0x56f5a5u, 0x477c1fu, 0x14b5ed4u };
+static const uint32_t GT_DISP_18[] = { 0x1f07dc4u, 0x56f5a5u, 0x477c1fu, 0x14b5ed4u };
+static const uint32_t GT_WIN_19[] = { 0x11dff71u, 0x1f711dfu };
+static const uint32_t GT_DISP_19[] = { 0x11dff71u, 0x1f711dfu };
+static const uint32_t GT_WIN_20[] = { 0xaabaaau };
+static const uint32_t GT_DISP_20[] = { 0xaabaaau };
+static const uint32_t GT_WIN_21[] = { 0xf1389eu, 0x1e4388fu, 0x10af6e1u, 0x1adfb0u, 0xf2391eu, 0x1e2384fu, 0x10edea1u, 0x1bf6b0u };
+static const uint32_t GT_DISP_21[] = { 0xf1389eu, 0x1e4388fu, 0x10af6e1u, 0x1adfb0u, 0xf2391eu, 0x1e2384fu, 0x10edea1u, 0x1bf6b0u };
+static const uint32_t GT_WIN_22[] = { 0x5394e5u, 0xa729cau, 0x14e5394u };
+static const uint32_t GT_DISP_22[] = { 0x5394e5u, 0xa729cau, 0x14e5394u };
+static const uint32_t GT_WIN_23[] = { 0xafabeau };
+static const uint32_t GT_DISP_23[] = { 0xafabeau };
+static const uint32_t GT_WIN_24[] = { 0x1555555u };
+static const uint32_t GT_DISP_24[] = { 0x1555555u };
+static const uint32_t GT_WIN_25[] = { 0xaaaaaau };
+static const uint32_t GT_DISP_25[] = { 0xaaaaaau };
+static const uint32_t GT_WIN_26[] = { 0x1ce7u, 0x739cu, 0x739c00u, 0x1ce7000u };
+static const uint32_t GT_DISP_26[] = { 0x1ce7u, 0x739cu, 0x739c00u, 0x1ce7000u };
+static const uint32_t GT_WIN_27[] = { 0xe7u, 0x39cu, 0x6318u, 0xc63u, 0x1ce0000u, 0x738000u, 0x318c00u, 0x18c6000u };
+static const uint32_t GT_DISP_27[] = { 0xe7u, 0x39cu, 0x6318u, 0xc63u, 0x1ce0000u, 0x738000u, 0x318c00u, 0x18c6000u };
+static const uint32_t GT_WIN_28[] = { 0x1c21u, 0x7210u, 0x109cu, 0x1087u, 0x1087000u, 0x109c00u, 0x721000u, 0x1c21000u };
+static const uint32_t GT_DISP_28[] = { 0x1c21u, 0x7210u, 0x109cu, 0x1087u, 0x1087000u, 0x109c00u, 0x721000u, 0x1c21000u };
+static const uint32_t GT_WIN_29[] = { 0x427dc4u, 0x467d84u, 0x477c84u, 0x437cc4u };
+static const uint32_t GT_DISP_29[] = { 0x427dc4u, 0x467d84u, 0x477c84u, 0x437cc4u };
+static const uint32_t GT_WIN_30[] = { 0x427e31u };
+static const uint32_t GT_DISP_30[] = { 0x427e31u };
+static const uint32_t GT_WIN_31[] = { 0x157108eu };
+static const uint32_t GT_DISP_31[] = { 0x157108eu };
+static const uint32_t GT_WIN_32[] = { 0x477feau };
+static const uint32_t GT_DISP_32[] = { 0x477feau };
+static const uint32_t GT_WIN_33[] = { 0xe89140u };
+static const uint32_t GT_DISP_33[] = { 0xe89140u };
+static const uint32_t GT_WIN_34[] = { 0x15239c4u };
+static const uint32_t GT_DISP_34[] = { 0x15239c4u };
+static const uint32_t GT_WIN_35[] = { 0xa77dc0u };
+static const uint32_t GT_DISP_35[] = { 0xa77dc0u };
+static const uint32_t GT_WIN_36[] = { 0x1ffb9ceu };
+static const uint32_t GT_DISP_36[] = { 0x1ffb9ceu };
+static const uint32_t GT_WIN_37[] = { 0xef9feeu };
+static const uint32_t GT_DISP_37[] = { 0xef9feeu };
+static const uint32_t GT_WIN_38[] = { 0xe57d4eu };
+static const uint32_t GT_DISP_38[] = { 0xe57d4eu };
+static const uint32_t GT_WIN_39[] = { 0x769da7u, 0x1f2109fu, 0x11cd671u, 0xe8f43eu, 0xe8c62eu };
+static const uint32_t GT_DISP_39[] = { 0x769da7u, 0x1f2109fu, 0x11cd671u, 0xe8f43eu, 0xe8c62eu };
+static const uint32_t GT_WIN_40[] = { 0x1f0fe1fu, 0x1f87c3fu, 0x1dad6b7u, 0x17ad6bdu };
+static const uint32_t GT_DISP_40[] = { 0x1f0fe1fu, 0x1f87c3fu, 0x1dad6b7u, 0x17ad6bdu };
+static const uint32_t GT_WIN_41[] = { 0x3ffu, 0x7c1fu, 0xf801fu, 0x1f0001fu, 0x7fe0u, 0xf83e0u, 0x1f003e0u, 0xffc00u, 0x1f07c00u, 0x1ff8000u, 0x318c63u, 0x5294a5u, 0x94a529u, 0x118c631u, 0x6318c6u, 0xa5294au, 0x1294a52u, 0xc6318cu, 0x14a5294u, 0x18c6318u };
+static const uint32_t GT_DISP_41[] = { 0x3ffu, 0x7c1fu, 0xf801fu, 0x1f0001fu, 0x7fe0u, 0xf83e0u, 0x1f003e0u, 0xffc00u, 0x1f07c00u, 0x1ff8000u, 0x318c63u, 0x5294a5u, 0x94a529u, 0x118c631u, 0x6318c6u, 0xa5294au, 0x1294a52u, 0xc6318cu, 0x14a5294u, 0x18c6318u };
+static const uint32_t GT_WIN_42[] = { 0x477dc4u };
+static const uint32_t GT_DISP_42[] = { 0x477dc4u };
+static const uint32_t GT_WIN_43[] = { 0x404404u };
+static const uint32_t GT_DISP_43[] = { 0x404404u };
+static const uint32_t GT_WIN_44[] = { 0x318c63u, 0x18c6318u };
+static const uint32_t GT_DISP_44[] = { 0x318c63u, 0x18c6318u };
+static const uint32_t GT_WIN_45[] = { 0x3ffu, 0x1ff8000u };
+static const uint32_t GT_DISP_45[] = { 0x3ffu, 0x1ff8000u };
+static const uint32_t GT_WIN_46[] = { 0x18e38e3u, 0x33bb98u };
+static const uint32_t GT_DISP_46[] = { 0x18e38e3u, 0x33bb98u };
 
 static const GameTypeDef GAME_TYPE_TABLE[GAME_TYPE_COUNT] = {
   { "traditional", 12, 12, 1, 0, 4, GT_WIN_0, GT_DISP_0 },
@@ -117,36 +127,41 @@ static const GameTypeDef GAME_TYPE_TABLE[GAME_TYPE_COUNT] = {
   { "letter_o", 1, 1, 1, 0, 16, GT_WIN_9, GT_DISP_9 },
   { "letter_h", 1, 1, 1, 0, 12, GT_WIN_10, GT_DISP_10 },
   { "plus_sign", 1, 1, 1, 0, 8, GT_WIN_11, GT_DISP_11 },
-  { "frame_outside", 1, 1, 1, 0, 16, GT_WIN_12, GT_DISP_12 },
-  { "frame_inside", 1, 1, 1, 0, 8, GT_WIN_13, GT_DISP_13 },
-  { "diamond", 1, 1, 1, 0, 8, GT_WIN_14, GT_DISP_14 },
-  { "bullseye", 1, 1, 1, 0, 8, GT_WIN_15, GT_DISP_15 },
-  { "hourglass", 2, 2, 1, 0, 16, GT_WIN_16, GT_DISP_16 },
-  { "pyramid", 4, 4, 1, 0, 13, GT_WIN_17, GT_DISP_17 },
-  { "bow_tie", 2, 2, 1, 0, 16, GT_WIN_18, GT_DISP_18 },
-  { "infinity", 1, 1, 1, 0, 12, GT_WIN_19, GT_DISP_19 },
-  { "lightning", 8, 8, 1, 0, 12, GT_WIN_20, GT_DISP_20 },
-  { "big_stamp", 4, 4, 1, 0, 8, GT_WIN_21, GT_DISP_21 },
-  { "brick", 8, 8, 1, 0, 6, GT_WIN_22, GT_DISP_22 },
-  { "l_block", 8, 8, 1, 0, 4, GT_WIN_23, GT_DISP_23 },
-  { "arrow", 4, 4, 1, 0, 10, GT_WIN_24, GT_DISP_24 },
-  { "field_goal", 1, 1, 1, 0, 10, GT_WIN_25, GT_DISP_25 },
-  { "anchor", 1, 1, 1, 0, 10, GT_WIN_26, GT_DISP_26 },
-  { "heart", 1, 1, 1, 0, 15, GT_WIN_27, GT_DISP_27 },
-  { "smiley", 1, 1, 1, 0, 7, GT_WIN_28, GT_DISP_28 },
-  { "rocket", 1, 1, 1, 0, 10, GT_WIN_29, GT_DISP_29 },
-  { "ufo", 1, 1, 1, 0, 12, GT_WIN_30, GT_DISP_30 },
-  { "top_hat", 1, 1, 1, 0, 18, GT_WIN_31, GT_DISP_31 },
-  { "pac_man", 4, 4, 1, 0, 14, GT_WIN_32, GT_DISP_32 },
-  { "clover", 1, 1, 1, 0, 14, GT_WIN_33, GT_DISP_33 },
-  { "bingo_glyph", 5, 5, 1, 0, 12, GT_WIN_34, GT_DISP_34 },
-  { "snake", 8, 8, 1, 0, 14, GT_WIN_35, GT_DISP_35 },
-  { "railroad", 20, 20, 1, 0, 8, GT_WIN_36, GT_DISP_36 },
-  { "vip_cross", 1, 1, 1, 0, 12, GT_WIN_37, GT_DISP_37 },
-  { "four_horsemen", 1, 1, 1, 0, 4, GT_WIN_38, GT_DISP_38 },
-  { "split_the_room", 2, 2, 1, 0, 10, GT_WIN_39, GT_DISP_39 },
-  { "top_vs_bottom", 2, 2, 1, 0, 10, GT_WIN_40, GT_DISP_40 },
-  { "diagonal_band", 2, 2, 1, 0, 12, GT_WIN_41, GT_DISP_41 },
+  { "asterisk", 2, 1, 2, 0, 16, GT_WIN_12, GT_DISP_12 },
+  { "frame_outside", 1, 1, 1, 0, 16, GT_WIN_13, GT_DISP_13 },
+  { "frame_inside", 1, 1, 1, 0, 8, GT_WIN_14, GT_DISP_14 },
+  { "diamond", 1, 1, 1, 0, 8, GT_WIN_15, GT_DISP_15 },
+  { "bullseye", 1, 1, 1, 0, 8, GT_WIN_16, GT_DISP_16 },
+  { "hourglass", 2, 2, 1, 0, 16, GT_WIN_17, GT_DISP_17 },
+  { "pyramid", 4, 4, 1, 0, 13, GT_WIN_18, GT_DISP_18 },
+  { "bow_tie", 2, 2, 1, 0, 16, GT_WIN_19, GT_DISP_19 },
+  { "infinity", 1, 1, 1, 0, 12, GT_WIN_20, GT_DISP_20 },
+  { "lightning", 8, 8, 1, 0, 12, GT_WIN_21, GT_DISP_21 },
+  { "ladder", 3, 3, 1, 0, 11, GT_WIN_22, GT_DISP_22 },
+  { "tic_tac_toe", 1, 1, 1, 0, 16, GT_WIN_23, GT_DISP_23 },
+  { "every_other_1", 1, 1, 1, 0, 12, GT_WIN_24, GT_DISP_24 },
+  { "every_other_2", 1, 1, 1, 0, 12, GT_WIN_25, GT_DISP_25 },
+  { "big_stamp", 4, 4, 1, 0, 8, GT_WIN_26, GT_DISP_26 },
+  { "brick", 8, 8, 1, 0, 6, GT_WIN_27, GT_DISP_27 },
+  { "l_block", 8, 8, 1, 0, 4, GT_WIN_28, GT_DISP_28 },
+  { "arrow", 4, 4, 1, 0, 10, GT_WIN_29, GT_DISP_29 },
+  { "field_goal", 1, 1, 1, 0, 10, GT_WIN_30, GT_DISP_30 },
+  { "anchor", 1, 1, 1, 0, 10, GT_WIN_31, GT_DISP_31 },
+  { "heart", 1, 1, 1, 0, 15, GT_WIN_32, GT_DISP_32 },
+  { "smiley", 1, 1, 1, 0, 7, GT_WIN_33, GT_DISP_33 },
+  { "rocket", 1, 1, 1, 0, 10, GT_WIN_34, GT_DISP_34 },
+  { "ufo", 1, 1, 1, 0, 12, GT_WIN_35, GT_DISP_35 },
+  { "top_hat", 1, 1, 1, 0, 18, GT_WIN_36, GT_DISP_36 },
+  { "pac_man", 1, 1, 1, 0, 18, GT_WIN_37, GT_DISP_37 },
+  { "clover", 1, 1, 1, 0, 14, GT_WIN_38, GT_DISP_38 },
+  { "bingo_glyph", 5, 5, 1, 0, 12, GT_WIN_39, GT_DISP_39 },
+  { "snake", 4, 4, 1, 0, 16, GT_WIN_40, GT_DISP_40 },
+  { "railroad", 20, 20, 1, 0, 8, GT_WIN_41, GT_DISP_41 },
+  { "vip_cross", 1, 1, 1, 0, 12, GT_WIN_42, GT_DISP_42 },
+  { "four_horsemen", 1, 1, 1, 0, 4, GT_WIN_43, GT_DISP_43 },
+  { "split_the_room", 2, 2, 1, 0, 10, GT_WIN_44, GT_DISP_44 },
+  { "top_vs_bottom", 2, 2, 1, 0, 10, GT_WIN_45, GT_DISP_45 },
+  { "diagonal_band", 2, 2, 1, 0, 12, GT_WIN_46, GT_DISP_46 },
 };
 
 inline const GameTypeDef* gameTypeDefAt(int idx) {

@@ -31,11 +31,21 @@ const catalog = JSON.parse(
 const types = catalog.types;
 const byId = Object.fromEntries(types.map((t) => [t.id, t]));
 
-if (types.length !== 42) fail(`expected 42 types, got ${types.length}`);
+if (types.length !== 47) fail(`expected 47 types, got ${types.length}`);
 
 const railroad = byId.railroad;
 if (!railroad || railroad.winPatterns.length !== 20) {
   fail(`railroad should have 20 win patterns, got ${railroad?.winPatterns?.length}`);
+}
+
+const ladder = byId.ladder;
+if (!ladder || ladder.winPatterns.length !== 3) {
+  fail(`ladder should have 3 win patterns, got ${ladder?.winPatterns?.length}`);
+}
+
+const asterisk = byId.asterisk;
+if (!asterisk || asterisk.winPatterns.length !== 2 || asterisk.requiredPatterns !== 2) {
+  fail(`asterisk should require both X and Plus, got patterns=${asterisk?.winPatterns?.length} required=${asterisk?.requiredPatterns}`);
 }
 
 const blackout = byId.blackout_lite;

@@ -3571,13 +3571,75 @@ void setup() {
   Serial.println("Status LED: core boot OK (GPIO 2, before WiFi)");
 #endif
 
-  if (!SPIFFS.begin(true)) Serial.println("SPIFFS mount failed");
+  if (!SPIFFS.begin(true)) {
+    Serial.println("SPIFFS mount failed");
+  } else {
+    size_t fileCount = 0;
+    File root = SPIFFS.open("/");
+    if (root && root.isDirectory()) {
+      File f = root.openNextFile();
+      while (f) {
+        fileCount++;
+        f = root.openNextFile();
+      }
+    }
+    const bool hasIndex = SPIFFS.exists("/index.html");
+    Serial.printf("SPIFFS: %u files, index.html %s, used %u / total %u\n",
+                  (unsigned)fileCount,
+                  hasIndex ? "OK" : "MISSING",
+                  (unsigned)SPIFFS.usedBytes(),
+                  (unsigned)SPIFFS.totalBytes());
+    if (!hasIndex) {
+      Serial.println("SPIFFS UI missing — run: make fs-upload   (or make deploy)");
+    }
+  }
 
   setupWiFi();
 
   // Serve all static files from SPIFFS (Vite build output with hashed names)
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
 
+  // Captive-portal probes: return success so phones don't show a bare "Not found" splash on join.
+  server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* req) { req->send(204); });
+  server.on("/gen_204", HTTP_GET, [](AsyncWebServerRequest* req) { req->send(204); });
+  server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+  });
+  server.on("/library/test/success.html", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+  });
+  server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/plain", "Microsoft NCSI");
+  });
+  server.on("/connecttest.txt", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/plain", "Microsoft Connect Test");
+  });
+
+  // SPA fallback + clear recovery hint when the filesystem image was never uploaded.
+  server.onNotFound([](AsyncWebServerRequest* req) {
+    if (req->method() == HTTP_GET && SPIFFS.exists("/index.html")) {
+      const String& url = req->url();
+      if (!url.startsWith("/api/") && !url.startsWith("/ws") && url.indexOf('.') < 0) {
+        req->send(SPIFFS, "/index.html", "text/html");
+        return;
+      }
+    }
+    if (req->method() == HTTP_GET && !SPIFFS.exists("/index.html")) {
+      req->send(503, "text/html",
+                "<!DOCTYPE html><html><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
+                "<title>Bingo Flashboard</title></head><body style=\"font-family:system-ui;padding:2rem;max-width:36rem\">"
+                "<h1>Web UI not on device</h1>"
+                "<p>Firmware is running, but the SPIFFS filesystem (React UI + caller audio) is empty or missing "
+                "<code>index.html</code>.</p>"
+                "<p>From the project repo, with the board on USB:</p>"
+                "<pre style=\"background:#f4f4f4;padding:1rem;overflow:auto\">make fs-upload\n"
+                "# or full redeploy:\nmake deploy</pre>"
+                "<p>Then open <a href=\"/\">http://192.168.4.1</a> or <a href=\"http://bingo.local/\">http://bingo.local</a>.</p>"
+                "</body></html>");
+      return;
+    }
+    req->send(404, "text/plain", "Not found");
+  });
 
   ws.onEvent([](AsyncWebSocket* serverWs, AsyncWebSocketClient* client, AwsEventType type,
                 void* arg, uint8_t* data, size_t len) {

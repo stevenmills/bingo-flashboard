@@ -41,6 +41,7 @@ export type GameType =
   | "letter_o"
   | "letter_h"
   | "plus_sign"
+  | "asterisk"
   | "frame_outside"
   | "frame_inside"
   | "diamond"
@@ -50,6 +51,10 @@ export type GameType =
   | "bow_tie"
   | "infinity"
   | "lightning"
+  | "ladder"
+  | "tic_tac_toe"
+  | "every_other_1"
+  | "every_other_2"
   | "big_stamp"
   | "brick"
   | "l_block"
@@ -248,6 +253,19 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     usesFreeSpace: true,
   },
   {
+    id: "asterisk",
+    label: "Asterisk",
+    category: "letters",
+    description: "Both the Letter X and the Plus Sign — a full star through FREE.",
+    winPatterns: [[1,5,7,9,13,17,19,21,25],[3,8,11,12,13,14,15,18,23]],
+    displayPatterns: [[1,3,5,7,8,9,11,12,13,14,15,17,18,19,21,23,25]],
+    requiredPatterns: 2,
+    coveredThreshold: 0,
+    minCalls: 16,
+    oddsHits: 17,
+    usesFreeSpace: true,
+  },
+  {
     id: "frame_outside",
     label: "Frame Outside",
     category: "shapes",
@@ -363,6 +381,58 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+  },
+  {
+    id: "ladder",
+    label: "Ladder",
+    category: "shapes",
+    description: "Two parallel columns one apart, connected by rungs on rows 2 and 4.",
+    winPatterns: [[1,3,6,7,8,11,13,16,17,18,21,23],[2,4,7,8,9,12,14,17,18,19,22,24],[3,5,8,9,10,13,15,18,19,20,23,25]],
+    displayPatterns: [[1,3,6,7,8,11,13,16,17,18,21,23],[2,4,7,8,9,12,14,17,18,19,22,24],[3,5,8,9,10,13,15,18,19,20,23,25]],
+    requiredPatterns: 1,
+    coveredThreshold: 0,
+    minCalls: 11,
+    oddsHits: 12,
+    usesFreeSpace: true,
+  },
+  {
+    id: "tic_tac_toe",
+    label: "Tic Tac Toe",
+    category: "shapes",
+    description: "The hashtag / pound symbol — rows 2 and 4 and columns 2 and 4.",
+    winPatterns: [[2,4,6,7,8,9,10,12,14,16,17,18,19,20,22,24]],
+    displayPatterns: [[2,4,6,7,8,9,10,12,14,16,17,18,19,20,22,24]],
+    requiredPatterns: 1,
+    coveredThreshold: 0,
+    minCalls: 16,
+    oddsHits: 16,
+    usesFreeSpace: false,
+  },
+  {
+    id: "every_other_1",
+    label: "Every Other 1",
+    category: "shapes",
+    description: "Checkerboard starting on the corners — every other cell including FREE.",
+    winPatterns: [[1,3,5,7,9,11,13,15,17,19,21,23,25]],
+    displayPatterns: [[1,3,5,7,9,11,13,15,17,19,21,23,25]],
+    requiredPatterns: 1,
+    coveredThreshold: 0,
+    minCalls: 12,
+    oddsHits: 13,
+    usesFreeSpace: true,
+  },
+  {
+    id: "every_other_2",
+    label: "Every Other 2",
+    category: "shapes",
+    description: "The opposite checkerboard — every other cell excluding FREE.",
+    winPatterns: [[2,4,6,8,10,12,14,16,18,20,22,24]],
+    displayPatterns: [[2,4,6,8,10,12,14,16,18,20,22,24]],
+    requiredPatterns: 1,
+    coveredThreshold: 0,
+    minCalls: 12,
+    oddsHits: 12,
+    usesFreeSpace: false,
   },
   {
     id: "big_stamp",
@@ -511,13 +581,13 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     id: "pac_man",
     label: "Pac-Man",
     category: "pictures",
-    description: "A wedge with a mouth gap facing right.",
-    winPatterns: [[1,2,3,6,7,8,11,12,13,16,17,18,21,22,23],[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],[3,4,5,8,9,10,13,14,15,18,19,20,23,24,25],[11,12,13,14,15,16,17,18,19,20,21,22,23,24,25]],
-    displayPatterns: [[1,2,3,6,7,8,11,12,13,16,17,18,21,22,23],[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],[3,4,5,8,9,10,13,14,15,18,19,20,23,24,25],[11,12,13,14,15,16,17,18,19,20,21,22,23,24,25]],
+    description: "A Pac-Man character with an open mouth facing right.",
+    winPatterns: [[2,3,4,6,7,8,9,10,11,12,13,16,17,18,19,20,22,23,24]],
+    displayPatterns: [[2,3,4,6,7,8,9,10,11,12,13,16,17,18,19,20,22,23,24]],
     requiredPatterns: 1,
     coveredThreshold: 0,
-    minCalls: 14,
-    oddsHits: 15,
+    minCalls: 18,
+    oddsHits: 19,
     usesFreeSpace: true,
   },
   {
@@ -550,13 +620,13 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     id: "snake",
     label: "Snake",
     category: "pictures",
-    description: "An S-curve winding through the board.",
-    winPatterns: [[1,2,3,4,5,10,13,14,15,16,21,22,23,24,25],[1,2,3,4,5,6,11,12,13,20,21,22,23,24,25],[1,2,5,6,10,11,13,15,16,18,20,21,23,24,25],[1,4,5,6,10,11,13,15,16,18,20,21,22,23,25],[1,2,3,4,5,10,11,12,13,16,21,22,23,24,25],[1,2,3,4,5,6,13,14,15,20,21,22,23,24,25],[1,2,3,5,6,8,10,11,13,15,16,20,21,24,25],[1,3,4,5,6,8,10,11,13,15,16,20,21,22,25]],
-    displayPatterns: [[1,2,3,4,5,10,13,14,15,16,21,22,23,24,25],[1,2,3,4,5,6,11,12,13,20,21,22,23,24,25],[1,2,5,6,10,11,13,15,16,18,20,21,23,24,25],[1,4,5,6,10,11,13,15,16,18,20,21,22,23,25],[1,2,3,4,5,10,11,12,13,16,21,22,23,24,25],[1,2,3,4,5,6,13,14,15,20,21,22,23,24,25],[1,2,3,5,6,8,10,11,13,15,16,20,21,24,25],[1,3,4,5,6,8,10,11,13,15,16,20,21,22,25]],
+    description: "An S shape in any orientation.",
+    winPatterns: [[1,2,3,4,5,10,11,12,13,14,15,16,21,22,23,24,25],[1,2,3,4,5,6,11,12,13,14,15,20,21,22,23,24,25],[1,2,3,5,6,8,10,11,13,15,16,18,20,21,23,24,25],[1,3,4,5,6,8,10,11,13,15,16,18,20,21,22,23,25]],
+    displayPatterns: [[1,2,3,4,5,10,11,12,13,14,15,16,21,22,23,24,25],[1,2,3,4,5,6,11,12,13,14,15,20,21,22,23,24,25],[1,2,3,5,6,8,10,11,13,15,16,18,20,21,23,24,25],[1,3,4,5,6,8,10,11,13,15,16,18,20,21,22,23,25]],
     requiredPatterns: 1,
     coveredThreshold: 0,
-    minCalls: 14,
-    oddsHits: 15,
+    minCalls: 16,
+    oddsHits: 17,
     usesFreeSpace: true,
   },
   {

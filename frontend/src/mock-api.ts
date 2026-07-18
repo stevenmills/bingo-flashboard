@@ -1082,7 +1082,7 @@ export const mockApi = {
     await delay(15);
     if (numbers.length !== 25) throw new Error("numbers[25] required");
     const style: GameStyle = gameStyle === "housey" ? "housey" : "bingo";
-    if (style !== state.gameStyle) throw new Error("game style mismatch");
+    if (style !== state.gameStyle) throw new Error("card style mismatch");
     if (style === "housey") {
       if (!validateHouseyCardNumbers(numbers)) throw new Error("invalid housey card");
     }
@@ -1119,7 +1119,7 @@ export const mockApi = {
     await delay(15);
     if (numbers.length !== 25) throw new Error("numbers[25] required");
     const style: GameStyle = options?.gameStyle === "housey" ? "housey" : "bingo";
-    if (style !== state.gameStyle) throw new Error("game style mismatch");
+    if (style !== state.gameStyle) throw new Error("card style mismatch");
     if (style === "housey") {
       if (!validateHouseyCardNumbers(numbers)) throw new Error("invalid housey card");
     }

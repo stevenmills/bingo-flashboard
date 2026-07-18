@@ -110,6 +110,18 @@ function col(c) {
   return [c, c + 5, c + 10, c + 15, c + 20];
 }
 
+/** Vertical ladder: rails one column apart, rungs on rows 2 & 4 of the gap. */
+function ladderMasks() {
+  const masks = [];
+  for (const left of [1, 2, 3]) {
+    const right = left + 2;
+    const mid = left + 1;
+    const cells = [...col(left), ...col(right), mid + 5, mid + 15]; // rows 2 & 4
+    masks.push(maskFromCells(cells));
+  }
+  return masks; // 3
+}
+
 const TRADITIONAL_MASKS = [
   ...[0, 1, 2, 3, 4].map((r) => maskFromCells(row(r))),
   ...[1, 2, 3, 4, 5].map((c) => maskFromCells(col(c))),
@@ -123,6 +135,11 @@ const POSTAGE_MASKS = [
   maskFromCells([16, 17, 21, 22]),
   maskFromCells([19, 20, 24, 25]),
 ];
+
+const X_MASK = maskFromCells([1, 5, 7, 9, 13, 17, 19, 21, 25]);
+const PLUS_MASK = maskFromCells([3, 8, 11, 12, 13, 14, 15, 18, 23]);
+const EVERY_OTHER_1 = maskFromCells([1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25]);
+const EVERY_OTHER_2 = maskFromCells([2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]);
 
 function coveredCount(mask) {
   let n = 0;
@@ -270,7 +287,7 @@ const CATALOG = [
     label: "Letter X",
     category: "letters",
     description: "Both diagonals forming an X.",
-    winMasks: [maskFromCells([1, 5, 7, 9, 13, 17, 19, 21, 25])],
+    winMasks: [X_MASK],
     minCalls: 8,
     oddsHits: 9,
     usesFreeSpace: true,
@@ -318,9 +335,21 @@ const CATALOG = [
     label: "Plus Sign",
     category: "letters",
     description: "Center row and center column.",
-    winMasks: [maskFromCells([3, 8, 11, 12, 13, 14, 15, 18, 23])],
+    winMasks: [PLUS_MASK],
     minCalls: 8,
     oddsHits: 9,
+    usesFreeSpace: true,
+  }),
+  def({
+    id: "asterisk",
+    label: "Asterisk",
+    category: "letters",
+    description: "Both the Letter X and the Plus Sign — a full star through FREE.",
+    winMasks: [X_MASK, PLUS_MASK],
+    displayMasks: [(X_MASK | PLUS_MASK) >>> 0],
+    requiredPatterns: 2,
+    minCalls: 16,
+    oddsHits: 17,
     usesFreeSpace: true,
   }),
 
@@ -412,6 +441,41 @@ const CATALOG = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+  }),
+  def({
+    id: "ladder",
+    label: "Ladder",
+    category: "shapes",
+    description: "Two parallel columns one apart, connected by rungs on rows 2 and 4.",
+    winMasks: ladderMasks(),
+  }),
+  def({
+    id: "tic_tac_toe",
+    label: "Tic Tac Toe",
+    category: "shapes",
+    description: "The hashtag / pound symbol — rows 2 and 4 and columns 2 and 4.",
+    winMasks: [maskFromCells([...row(1), ...row(3), ...col(2), ...col(4)])],
+    minCalls: 16,
+    oddsHits: 16,
+  }),
+  def({
+    id: "every_other_1",
+    label: "Every Other 1",
+    category: "shapes",
+    description: "Checkerboard starting on the corners — every other cell including FREE.",
+    winMasks: [EVERY_OTHER_1],
+    minCalls: 12,
+    oddsHits: 13,
+    usesFreeSpace: true,
+  }),
+  def({
+    id: "every_other_2",
+    label: "Every Other 2",
+    category: "shapes",
+    description: "The opposite checkerboard — every other cell excluding FREE.",
+    winMasks: [EVERY_OTHER_2],
+    minCalls: 12,
+    oddsHits: 12,
   }),
 
   // ── Blocks & Arrows ───────────────────────────────────────
@@ -535,10 +599,10 @@ const CATALOG = [
     id: "pac_man",
     label: "Pac-Man",
     category: "pictures",
-    description: "A wedge with a mouth gap facing right.",
-    winMasks: orientMasks([1, 2, 3, 6, 7, 8, 11, 12, 13, 16, 17, 18, 21, 22, 23], { rotate: true }),
-    minCalls: 14,
-    oddsHits: 15,
+    description: "A Pac-Man character with an open mouth facing right.",
+    winMasks: [maskFromCells([2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 22, 23, 24])],
+    minCalls: 18,
+    oddsHits: 19,
     usesFreeSpace: true,
   }),
   def({
@@ -576,10 +640,13 @@ const CATALOG = [
     id: "snake",
     label: "Snake",
     category: "pictures",
-    description: "An S-curve winding through the board.",
-    winMasks: orientMasks([1, 2, 3, 4, 5, 10, 13, 14, 15, 16, 21, 22, 23, 24, 25], { rotate: true, mirror: true }),
-    minCalls: 14,
-    oddsHits: 15,
+    description: "An S shape in any orientation.",
+    winMasks: orientMasks([1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25], {
+      rotate: true,
+      mirror: true,
+    }),
+    minCalls: 16,
+    oddsHits: 17,
     usesFreeSpace: true,
   }),
 
@@ -689,7 +756,7 @@ function validate(catalog) {
       if (m === 0 && g.coveredThreshold === 0) errors.push(`${g.id}: empty mask`);
     }
   }
-  if (catalog.length !== 42) errors.push(`Expected 42 types, got ${catalog.length}`);
+  if (catalog.length !== 47) errors.push(`Expected 47 types, got ${catalog.length}`);
   if (errors.length) {
     console.error("Catalog validation failed:\n" + errors.map((e) => `  - ${e}`).join("\n"));
     process.exit(1);
@@ -919,12 +986,23 @@ function main() {
   // Quick parity assertions
   const railroad = CATALOG.find((g) => g.id === "railroad");
   if (railroad.winMasks.length !== 20) throw new Error("Railroad should have 20 pairs");
+  const ladder = CATALOG.find((g) => g.id === "ladder");
+  if (!ladder || ladder.winMasks.length !== 3) throw new Error("Ladder should have 3 placements");
+  const asterisk = CATALOG.find((g) => g.id === "asterisk");
+  if (!asterisk || asterisk.winMasks.length !== 2 || asterisk.requiredPatterns !== 2) {
+    throw new Error("Asterisk should require both X and Plus");
+  }
+  const allCells = maskFromCells(Array.from({ length: 25 }, (_, i) => i + 1));
+  if ((EVERY_OTHER_1 & EVERY_OTHER_2) !== 0) throw new Error("Every Other masks should be disjoint");
+  if (((EVERY_OTHER_1 | EVERY_OTHER_2) >>> 0) !== allCells) {
+    throw new Error("Every Other masks should partition the board");
+  }
   const bl = CATALOG.find((g) => g.id === "blackout_lite");
   if (bl.coveredThreshold !== 20) throw new Error("Blackout Lite threshold");
   const db = CATALOG.find((g) => g.id === "double_bingo");
   if (db.requiredPatterns !== 2) throw new Error("Double Bingo requiredPatterns");
   if (db.displayMasks.length !== 66) throw new Error(`Double Bingo should cycle 66 pairs, got ${db.displayMasks.length}`);
-  console.log("Assertions passed (railroad=20, blackout_lite, double_bingo=66 displays).");
+  console.log("Assertions passed (railroad=20, ladder=3, asterisk=2, every_other, blackout_lite, double_bingo=66 displays).");
 }
 
 main();

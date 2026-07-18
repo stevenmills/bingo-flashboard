@@ -140,6 +140,9 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   /** Manual taps announce before WS/state — skip duplicate from effect. */
   const manualAnnounceRef = useRef<Set<number>>(new Set());
   const audioHoldActiveRef = useRef(false);
+  /** True while this client is (or was) the board caller that may arm firmware wait-audio/hold. */
+  const activeRef = useRef(active);
+  const mayNotifyBoardAudioRef = useRef(false);
   /** Pause HTTP warm while a call-out is loading/playing so mobile WiFi hits SPIFFS first. */
   const playbackBusyRef = useRef(false);
   /** Bingo clip deferred until the in-flight number(+joke) finishes. */
@@ -185,21 +188,36 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     autoCallingEnabledRef.current = autoCallingEnabled;
   }, [autoCallingEnabled]);
 
+  useEffect(() => {
+    activeRef.current = active;
+    if (active) mayNotifyBoardAudioRef.current = true;
+  }, [active]);
+
+  const notifyBoardWaitForAudio = useCallback((enabled: boolean) => {
+    // Card / inactive clients must never arm or clear board wait-audio.
+    if (!mayNotifyBoardAudioRef.current) return;
+    void api.setAutoCallingWaitForAudio(enabled).catch(() => undefined);
+  }, []);
+
+  const notifyBoardAutoCallingHold = useCallback((hold: boolean) => {
+    if (!mayNotifyBoardAudioRef.current) return;
+    void api.setAutoCallingHold(hold).catch(() => undefined);
+  }, []);
+
   const releaseAutoCallingHold = useCallback((force = false) => {
     if (!force && !audioHoldActiveRef.current) return;
     audioHoldActiveRef.current = false;
     // Always release so firmware can flush deferred winner mode after the call finishes.
-    void api.setAutoCallingHold(false).catch(() => undefined);
-  }, []);
+    notifyBoardAutoCallingHold(false);
+  }, [notifyBoardAutoCallingHold]);
 
   const beginAutoCallingHold = useCallback(() => {
+    if (!activeRef.current) return;
     if (!speechOnRef.current || !speechUnlockedRef.current) return;
     // Mark call-out in progress (even when auto-calling is off) so winner mode waits.
     audioHoldActiveRef.current = true;
-    void api.setAutoCallingHold(true).catch(() => {
-      // Keep local flag so we still release after playback; firmware may already hold.
-    });
-  }, []);
+    notifyBoardAutoCallingHold(true);
+  }, [notifyBoardAutoCallingHold]);
 
   const isAudioHoldActive = useCallback(() => audioHoldActiveRef.current, []);
 
@@ -500,11 +518,11 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
         playGenerationRef.current += 1;
         playbackBusyRef.current = false;
         stopAudio();
-        void api.setAutoCallingWaitForAudio(false).catch(() => undefined);
+        notifyBoardWaitForAudio(false);
         void releaseAutoCallingHold(true);
       }
     },
-    [releaseAutoCallingHold, setJokesOn, stopAudio]
+    [notifyBoardWaitForAudio, releaseAutoCallingHold, setJokesOn, stopAudio]
   );
 
   const setSpeechRate = useCallback((rate: number) => {
@@ -520,7 +538,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     speechUnlockedRef.current = true;
     setSpeechUnlocked(true);
     prevUnlockedRef.current = false;
-    void api.setAutoCallingWaitForAudio(true).catch(() => undefined);
+    notifyBoardWaitForAudio(true);
 
     // Create the shared element inside the gesture before any async work.
     ensureSharedAudio();
@@ -535,6 +553,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   }, [
     ensureAudioContext,
     ensureSharedAudio,
+    notifyBoardWaitForAudio,
     playUtilityClipSync,
     prefetchNumberClipsInBackground,
     speechSupported,
@@ -545,9 +564,9 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     speechUnlockedRef.current = false;
     prevUnlockedRef.current = false;
     setSpeechUnlocked(false);
-    void api.setAutoCallingWaitForAudio(false).catch(() => undefined);
+    notifyBoardWaitForAudio(false);
     void releaseAutoCallingHold(true);
-  }, [releaseAutoCallingHold]);
+  }, [notifyBoardWaitForAudio, releaseAutoCallingHold]);
 
   useEffect(() => {
     markUnlockLostRef.current = markUnlockLost;
@@ -586,9 +605,13 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     playGenerationRef.current += 1;
     playbackBusyRef.current = false;
     stopAudio();
+    // Only clear firmware wait-audio/hold if this tab was the board caller.
+    if (!mayNotifyBoardAudioRef.current) return;
+    mayNotifyBoardAudioRef.current = false;
     void api.setAutoCallingWaitForAudio(false).catch(() => undefined);
-    void releaseAutoCallingHold(true);
-  }, [active, releaseAutoCallingHold, stopAudio]);
+    void api.setAutoCallingHold(false).catch(() => undefined);
+    audioHoldActiveRef.current = false;
+  }, [active, stopAudio]);
 
   // Warm short utility clips in the browser HTTP cache.
   useEffect(() => {

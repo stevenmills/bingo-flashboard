@@ -33,6 +33,7 @@ interface Props {
   state: GameState;
   letterColors: LetterColors;
   connected: boolean;
+  stateHydrated?: boolean;
 }
 
 const CARD_STATE_STORAGE_KEY = "bingo-card-state";
@@ -98,6 +99,15 @@ function applySelectionsToCard(card: CardGrid, selections: boolean[]): CardGrid 
 
 function isBlankCell(cell: CardCell): boolean {
   return Boolean(cell.isBlank) || (cell.value === null && !cell.isFree);
+}
+
+const CARD_STYLE_MISMATCH_MESSAGE =
+  "Card style does not match current game style! Try again next round!";
+
+function isCardStyleMismatchError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const msg = e.message.toLowerCase();
+  return msg.includes("style mismatch") || msg.includes("card style mismatch");
 }
 
 function loadInitialCardState(boardGameStyle: GameStyle = "bingo"): {
@@ -166,7 +176,7 @@ function loadInitialCardState(boardGameStyle: GameStyle = "bingo"): {
   };
 }
 
-export function CardPage({ state, letterColors, connected }: Props) {
+export function CardPage({ state, letterColors, connected, stateHydrated = false }: Props) {
   const boardGameStyle: GameStyle = state.gameStyle ?? "bingo";
   const initialStoredState = useMemo(
     () => loadInitialCardState(boardGameStyle),
@@ -182,6 +192,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
   const claimSigRef = useRef<string | null>(initialStoredState.claimSig);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinErrorOpen, setJoinErrorOpen] = useState(false);
+  const styleMismatchNotifiedRef = useRef(false);
   const [winnerFlashCells, setWinnerFlashCells] = useState<Set<number>>(new Set());
   const [winnerFlashPhase, setWinnerFlashPhase] = useState(false);
   const [cardWinnerActive, setCardWinnerActive] = useState(false);
@@ -204,7 +215,9 @@ export function CardPage({ state, letterColors, connected }: Props) {
       gameTypeUsesFreeSpace(state.gameType),
     [boardGameStyle, state.gameType]
   );
-  const joinedToBoard = Boolean(cardId);
+  const styleMismatch = stateHydrated && cardGameStyle !== boardGameStyle;
+  const canConnectToBoard = connected && stateHydrated && !styleMismatch;
+  const joinedToBoard = Boolean(cardId) && !styleMismatch;
   const rerollDisabled = state.called.length > 0;
   const gameStyle = boardGameStyle;
 
@@ -212,6 +225,31 @@ export function CardPage({ state, letterColors, connected }: Props) {
     // Claim flow may have cleared bingo-card-id before React subscribed to session events.
     notifyCardSessionChanged();
   }, []);
+
+  // Style mismatch: stop claim/join loading and never talk to the board for this card.
+  useEffect(() => {
+    if (!styleMismatch) {
+      styleMismatchNotifiedRef.current = false;
+      return;
+    }
+    setPrintedClaimPending(false);
+    claimSigRef.current = null;
+    setCardId((prev) => {
+      if (!prev) return null;
+      localStorage.removeItem("bingo-card-id");
+      notifyCardSessionChanged();
+      pendingMarksRef.current.clear();
+      void api.leaveCard(prev).catch(() => {
+        // Best effort — card may never have joined this board.
+      });
+      return null;
+    });
+    if (!styleMismatchNotifiedRef.current) {
+      styleMismatchNotifiedRef.current = true;
+      setJoinError(CARD_STYLE_MISMATCH_MESSAGE);
+      setJoinErrorOpen(true);
+    }
+  }, [styleMismatch]);
 
   const clearJoinedCardSession = useCallback(() => {
     setCardId(null);
@@ -526,12 +564,19 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, [cardId, autoSync, applyWinnerState, resolveCardWinner]);
 
   const handleJoin = useCallback(async () => {
+    if (!stateHydrated) return;
+    if (styleMismatch || cardGameStyle !== boardGameStyle) {
+      setJoinError(CARD_STYLE_MISMATCH_MESSAGE);
+      setJoinErrorOpen(true);
+      return;
+    }
     try {
       let joined;
       try {
         joined = await api.joinCard(cardNumbers, cardId ?? undefined, cardGameStyle);
-      } catch {
-        if (!cardId) throw new Error("join failed");
+      } catch (firstError: unknown) {
+        // Never swallow style mismatch (or other real API errors) into a generic failure.
+        if (isCardStyleMismatchError(firstError) || !cardId) throw firstError;
         clearJoinedCardSession();
         joined = await api.joinCard(cardNumbers, undefined, cardGameStyle);
       }
@@ -544,6 +589,11 @@ export function CardPage({ state, letterColors, connected }: Props) {
     } catch (e: unknown) {
       if (!connected) {
         setJoinError("Board is unreachable. For local multi-window testing, run: npm run dev:shared-mock");
+        setJoinErrorOpen(true);
+        return;
+      }
+      if (isCardStyleMismatchError(e)) {
+        setJoinError(CARD_STYLE_MISMATCH_MESSAGE);
         setJoinErrorOpen(true);
         return;
       }
@@ -565,7 +615,18 @@ export function CardPage({ state, letterColors, connected }: Props) {
       setJoinError("Unable to join card session. Try again.");
       setJoinErrorOpen(true);
     }
-  }, [cardNumbers, cardId, cardGameStyle, connected, applyWinnerState, card, clearJoinedCardSession]);
+  }, [
+    cardNumbers,
+    cardId,
+    cardGameStyle,
+    boardGameStyle,
+    styleMismatch,
+    stateHydrated,
+    connected,
+    applyWinnerState,
+    card,
+    clearJoinedCardSession,
+  ]);
 
   const handleLeaveBoard = useCallback(async () => {
     if (cardId) {
@@ -605,7 +666,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
   }, [handleJoin]);
 
   useEffect(() => {
-    if (!printedClaimPending || !connected) return;
+    if (!printedClaimPending || !canConnectToBoard) return;
     let cancelled = false;
     const run = async () => {
       try {
@@ -641,10 +702,14 @@ export function CardPage({ state, letterColors, connected }: Props) {
         } else {
           applyWinnerState(Boolean(claimed.winner), latestCardRef.current);
         }
-      } catch {
+      } catch (e: unknown) {
         if (cancelled) return;
         setPrintedClaimPending(false);
-        setJoinError("Unable to verify printed card. Try again.");
+        setJoinError(
+          isCardStyleMismatchError(e)
+            ? CARD_STYLE_MISMATCH_MESSAGE
+            : "Unable to verify printed card. Try again."
+        );
         setJoinErrorOpen(true);
       }
     };
@@ -654,7 +719,7 @@ export function CardPage({ state, letterColors, connected }: Props) {
     };
   }, [
     printedClaimPending,
-    connected,
+    canConnectToBoard,
     cardNumbers,
     cardGameStyle,
     applyWinnerState,
@@ -662,11 +727,11 @@ export function CardPage({ state, letterColors, connected }: Props) {
   ]);
 
   useEffect(() => {
-    if (!connected) return;
+    if (!canConnectToBoard) return;
     if (cardId) return;
     if (printedClaimPending) return;
     void handleJoin();
-  }, [connected, cardId, printedClaimPending, handleJoin]);
+  }, [canConnectToBoard, cardId, printedClaimPending, handleJoin]);
 
   useEffect(() => {
     if (!cardId) return;
@@ -945,7 +1010,9 @@ export function CardPage({ state, letterColors, connected }: Props) {
       <Dialog open={joinErrorOpen} onOpenChange={setJoinErrorOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Unable to Join Board</DialogTitle>
+            <DialogTitle>
+              {joinError === CARD_STYLE_MISMATCH_MESSAGE ? "Wrong Card Style" : "Unable to Join Board"}
+            </DialogTitle>
             <DialogDescription>{joinError ?? "Unable to join card session."}</DialogDescription>
           </DialogHeader>
           <DialogFooter>

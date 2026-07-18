@@ -8,7 +8,7 @@ import { CallHistory } from "@/components/CallHistory";
 import { NewGameDialog } from "@/components/NewGameDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Undo2 } from "lucide-react";
+import { Play, Undo2 } from "lucide-react";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
 import { optimisticResetState } from "@/lib/game-state-merge";
@@ -45,6 +45,7 @@ export function GamePage({
   // Local flag to transition to the active view before the first number
   // is actually called (which sets gameEstablished on the backend).
   const [localStarted, setLocalStarted] = useState(false);
+  const [newGameDismissed, setNewGameDismissed] = useState(false);
   const prevEstablished = useRef(state.gameEstablished);
   const [isDesktop, setIsDesktop] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -52,12 +53,14 @@ export function GamePage({
   });
 
   const gameActive = state.gameEstablished || localStarted;
+  const newGameOpen = stateHydrated && !gameActive && !newGameDismissed;
 
   // Reset local flag only when the backend actually resets
   // (gameEstablished transitions from true → false)
   useEffect(() => {
     if (prevEstablished.current && !state.gameEstablished) {
       setLocalStarted(false);
+      setNewGameDismissed(false);
     }
     prevEstablished.current = state.gameEstablished;
   }, [state.gameEstablished]);
@@ -74,6 +77,7 @@ export function GamePage({
   const handleStartGame = () => {
     onApplyOptimistic?.((prev) => optimisticResetState(prev));
     setLocalStarted(true);
+    setNewGameDismissed(false);
     void api.reset().then(
       () => onRefresh({ force: true }),
       (error: unknown) => {
@@ -87,6 +91,7 @@ export function GamePage({
 
   const handleResetComplete = () => {
     setLocalStarted(false);
+    setNewGameDismissed(false);
   };
 
   const handleUndo = () => {
@@ -107,7 +112,11 @@ export function GamePage({
     <>
       {/* New game modal — shown when no active game */}
       <NewGameDialog
-        open={stateHydrated && !gameActive}
+        open={newGameOpen}
+        onOpenChange={(open) => {
+          if (!open) setNewGameDismissed(true);
+          else setNewGameDismissed(false);
+        }}
         state={state}
         onStart={handleStartGame}
         onRefresh={onRefresh}
@@ -134,26 +143,38 @@ export function GamePage({
               <CardTitle className="text-base">Controls</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              <GameControls
-                callingStyle={state.callingStyle}
-                gameStyle={state.gameStyle ?? "bingo"}
-                gameType={state.gameType}
-                called={state.called}
-                remaining={state.remaining}
-                winnerDeclared={state.winnerDeclared}
-                winnerEventId={state.winnerEventId}
-                winnerCount={state.winnerCount}
-                survivorCount={state.survivorCount}
-                eliminatedCount={state.eliminatedCount}
-                onRefresh={onRefresh}
-                onApplyOptimistic={onApplyOptimistic}
-                onApplyServerState={onApplyServerState}
-                onResetComplete={handleResetComplete}
-                onWinnerDialogActiveChange={onWinnerDialogActiveChange}
-                onSuppressAutoRestore={onSuppressAutoRestore}
-                onAnnounceCallNumber={onAnnounceCallNumber}
-                letterColors={uiLetterColors}
-              />
+              {stateHydrated && !gameActive && newGameDismissed ? (
+                <Button
+                  size="lg"
+                  className="w-full text-white"
+                  style={{ backgroundColor: uiLetterColors.N }}
+                  onClick={() => setNewGameDismissed(false)}
+                >
+                  <Play className="mr-2 h-5 w-5" />
+                  New game
+                </Button>
+              ) : (
+                <GameControls
+                  callingStyle={state.callingStyle}
+                  gameStyle={state.gameStyle ?? "bingo"}
+                  gameType={state.gameType}
+                  called={state.called}
+                  remaining={state.remaining}
+                  winnerDeclared={state.winnerDeclared}
+                  winnerEventId={state.winnerEventId}
+                  winnerCount={state.winnerCount}
+                  survivorCount={state.survivorCount}
+                  eliminatedCount={state.eliminatedCount}
+                  onRefresh={onRefresh}
+                  onApplyOptimistic={onApplyOptimistic}
+                  onApplyServerState={onApplyServerState}
+                  onResetComplete={handleResetComplete}
+                  onWinnerDialogActiveChange={onWinnerDialogActiveChange}
+                  onSuppressAutoRestore={onSuppressAutoRestore}
+                  onAnnounceCallNumber={onAnnounceCallNumber}
+                  letterColors={uiLetterColors}
+                />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -184,26 +205,38 @@ export function GamePage({
         {/* Desktop controls row */}
         {isDesktop && (
         <div className="md:order-3">
-          <GameControls
-            callingStyle={state.callingStyle}
-            gameStyle={state.gameStyle ?? "bingo"}
-            gameType={state.gameType}
-            called={state.called}
-            remaining={state.remaining}
-            winnerDeclared={state.winnerDeclared}
-            winnerEventId={state.winnerEventId}
-            winnerCount={state.winnerCount}
-            survivorCount={state.survivorCount}
-            eliminatedCount={state.eliminatedCount}
-            onRefresh={onRefresh}
-            onApplyOptimistic={onApplyOptimistic}
-            onApplyServerState={onApplyServerState}
-            onResetComplete={handleResetComplete}
-            onWinnerDialogActiveChange={onWinnerDialogActiveChange}
-            onSuppressAutoRestore={onSuppressAutoRestore}
-            onAnnounceCallNumber={onAnnounceCallNumber}
-            letterColors={uiLetterColors}
-          />
+          {stateHydrated && !gameActive && newGameDismissed ? (
+            <Button
+              size="lg"
+              className="text-white"
+              style={{ backgroundColor: uiLetterColors.N }}
+              onClick={() => setNewGameDismissed(false)}
+            >
+              <Play className="mr-2 h-5 w-5" />
+              New game
+            </Button>
+          ) : (
+            <GameControls
+              callingStyle={state.callingStyle}
+              gameStyle={state.gameStyle ?? "bingo"}
+              gameType={state.gameType}
+              called={state.called}
+              remaining={state.remaining}
+              winnerDeclared={state.winnerDeclared}
+              winnerEventId={state.winnerEventId}
+              winnerCount={state.winnerCount}
+              survivorCount={state.survivorCount}
+              eliminatedCount={state.eliminatedCount}
+              onRefresh={onRefresh}
+              onApplyOptimistic={onApplyOptimistic}
+              onApplyServerState={onApplyServerState}
+              onResetComplete={handleResetComplete}
+              onWinnerDialogActiveChange={onWinnerDialogActiveChange}
+              onSuppressAutoRestore={onSuppressAutoRestore}
+              onAnnounceCallNumber={onAnnounceCallNumber}
+              letterColors={uiLetterColors}
+            />
+          )}
         </div>
         )}
 

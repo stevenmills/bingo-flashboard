@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,7 @@ import {
   HOUSEY_GAME_TYPE_LABELS,
 } from "@/types";
 import { rgbaFromHex, type LetterColors, DEFAULT_LETTER_COLORS } from "@/lib/bingo-ui-colors";
-import { Search } from "lucide-react";
+import { Search, Shuffle } from "lucide-react";
 
 interface Props {
   gameStyle: GameStyle;
@@ -33,6 +34,15 @@ interface Props {
    * Parent must be a bounded flex column with min-h-0.
    */
   fillHeight?: boolean;
+}
+
+function pickRandom<T extends string>(pool: readonly T[], current: T | ""): T | null {
+  if (pool.length === 0) return null;
+  const candidates =
+    pool.length > 1 && current && (pool as readonly string[]).includes(current)
+      ? pool.filter((id) => id !== current)
+      : [...pool];
+  return candidates[Math.floor(Math.random() * candidates.length)] ?? null;
 }
 
 function MiniPreview({ cells, accent }: { cells: number[]; accent: string }) {
@@ -99,6 +109,11 @@ export function GameTypePicker({
     });
   }, [query, category]);
 
+  const randomize = (pool: readonly AnyGameType[]) => {
+    const pick = pickRandom(pool, value);
+    if (pick) onChange(pick);
+  };
+
   if (gameStyle === "housey") {
     const selected = value && (HOUSEY_GAME_TYPES as string[]).includes(value)
       ? (value as HouseyGameType)
@@ -116,15 +131,29 @@ export function GameTypePicker({
             </div>
           </div>
         )}
-        <div className="relative shrink-0">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search HOUSEY types…"
-            className="h-9 pl-8 text-sm"
-            aria-label="Search HOUSEY types"
-          />
+        <div className="flex shrink-0 gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search game types..."
+              className="h-9 pl-8 text-sm"
+              aria-label="Search game types"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            disabled={houseyFiltered.length === 0}
+            aria-label="Pick a random game type"
+            title="Pick a random game type"
+            onClick={() => randomize(houseyFiltered)}
+          >
+            <Shuffle className="h-4 w-4" />
+          </Button>
         </div>
         <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", listHeightClass)} role="listbox">
           <div className="divide-y">
@@ -176,15 +205,29 @@ export function GameTypePicker({
         </div>
       )}
 
-      <div className="relative shrink-0">
-        <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search game types…"
-          className="h-9 pl-8 text-sm"
-          aria-label="Search game types"
-        />
+      <div className="flex shrink-0 gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search game types…"
+            className="h-9 pl-8 text-sm"
+            aria-label="Search game types"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          disabled={bingoFiltered.length === 0}
+          aria-label="Pick a random game type"
+          title="Pick a random game type"
+          onClick={() => randomize(bingoFiltered)}
+        >
+          <Shuffle className="h-4 w-4" />
+        </Button>
       </div>
 
       <div className="-mx-1 flex shrink-0 gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-thin">

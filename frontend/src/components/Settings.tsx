@@ -5,6 +5,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
 import type { RefreshOptions } from "@/hooks/useGameState";
@@ -23,6 +24,7 @@ import {
   type LetterFullMode,
   type CurrentNumberEffect,
   type LedLetterColors,
+  type GameStyle,
 } from "@/types";
 import {
   BINGO_UI_THEME_LABELS,
@@ -34,6 +36,7 @@ import {
 } from "@/lib/bingo-ui-colors";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { GAME_STYLES, GAME_STYLE_LABELS } from "@/lib/game-style";
 import { Check, Copy, FileStack, Lamp, Lock, MonitorPlay, Palette, Volume2, Webhook, Wifi, X } from "lucide-react";
 import { buildCardClaimUrl, generateSignedPrintableCards } from "@/lib/bingo-card-codec";
 
@@ -158,8 +161,8 @@ interface Props {
   onCallerSpeechRateChange?: (rate: number) => void;
   onClose?: () => void;
   onRefresh: (options?: RefreshOptions) => void;
-  /** Board game style — printable packs match bingo vs housey cards. */
-  gameStyle?: import("@/types").GameStyle;
+  /** Board game style — used as the default for printable card packs. */
+  gameStyle?: GameStyle;
 }
 
 export function Settings({
@@ -231,6 +234,7 @@ export function Settings({
   const [localWifiPassword, setLocalWifiPassword] = useState("");
   const [wifiMessage, setWifiMessage] = useState<string | null>(null);
   const [cardCountDraft, setCardCountDraft] = useState("4");
+  const [cardPackStyle, setCardPackStyle] = useState<GameStyle>(gameStyle);
   const [cardsBusy, setCardsBusy] = useState(false);
   const [cardsMessage, setCardsMessage] = useState<string | null>(null);
   const [cardShareLinks, setCardShareLinks] = useState<Array<{ label: string; url: string }> | null>(null);
@@ -649,14 +653,14 @@ export function Settings({
     setCardsMessage(null);
     try {
       const { deviceId } = await api.getDeviceId();
-      const cards = await generateSignedPrintableCards(count, deviceId, gameStyle);
+      const cards = await generateSignedPrintableCards(count, deviceId, cardPackStyle);
       const { buildBingoCardsPdf, downloadBlob } = await import("@/lib/bingo-cards-pdf");
       const blob = await buildBingoCardsPdf(cards, "http://bingo.local");
       const sheets = Math.ceil(cards.length / 4);
-      const prefix = gameStyle === "housey" ? "housey-cards" : "bingo-cards";
+      const prefix = cardPackStyle === "housey" ? "housey-cards" : "bingo-cards";
       downloadBlob(blob, `${prefix}-${cards.length}.pdf`);
       setCardsMessage(
-        `Downloaded ${cards.length} unique authenticated ${gameStyle.toUpperCase()} card${cards.length === 1 ? "" : "s"} across ${sheets} sheet${sheets === 1 ? "" : "s"} (4 per page).`
+        `Downloaded ${cards.length} unique authenticated ${cardPackStyle.toUpperCase()} card${cards.length === 1 ? "" : "s"} across ${sheets} sheet${sheets === 1 ? "" : "s"} (4 per page).`
       );
     } catch (e: unknown) {
       if (isBoardAuthHttpError(e)) {
@@ -676,15 +680,15 @@ export function Settings({
     setCardsMessage(null);
     try {
       const { deviceId } = await api.getDeviceId();
-      const cards = await generateSignedPrintableCards(count, deviceId, gameStyle);
+      const cards = await generateSignedPrintableCards(count, deviceId, cardPackStyle);
       setCardShareLinks(
         cards.map((card, i) => ({
           label: `Card ${i + 1}`,
-          url: buildCardClaimUrl(card.numbers, "http://bingo.local", card.sig, gameStyle),
+          url: buildCardClaimUrl(card.numbers, "http://bingo.local", card.sig, cardPackStyle),
         }))
       );
       setCardsMessage(
-        `Ready: ${count} unique authenticated link${count === 1 ? "" : "s"}. Copy one or copy all to text people.`
+        `Ready: ${count} unique authenticated ${cardPackStyle.toUpperCase()} link${count === 1 ? "" : "s"}. Copy one or copy all to text people.`
       );
     } catch (e: unknown) {
       if (isBoardAuthHttpError(e)) {
@@ -697,6 +701,10 @@ export function Settings({
       setCardsBusy(false);
     }
   };
+
+  useEffect(() => {
+    setCardPackStyle(gameStyle);
+  }, [gameStyle]);
 
   useEffect(() => {
     if (settingsTab === "webhooks") loadWebhooks();
@@ -1473,10 +1481,45 @@ export function Settings({
 
           <TabsContent value="cards" className="mt-0 outline-none">
             <SettingsPanel
-              title="Bingo cards"
+              title="Printable cards"
               description="Create printable PDFs or shareable bingo.local links. Each card is uniquely fingerprinted and signed with this board’s device ID so authenticated scans can verify authenticity."
             >
               <SettingsGroup>
+                <div>
+                  <Label className="mb-2 block">Card style</Label>
+                  <RadioGroup
+                    value={cardPackStyle}
+                    onValueChange={(value) => setCardPackStyle(value as GameStyle)}
+                    className="grid grid-cols-2 gap-2"
+                  >
+                    {GAME_STYLES.map((style) => (
+                      <Label
+                        key={style}
+                        htmlFor={`card-pack-${style}`}
+                        className={cn(
+                          "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
+                          cardPackStyle === style ? "" : "border-border"
+                        )}
+                        style={
+                          cardPackStyle === style
+                            ? {
+                                borderColor: letterColors.N,
+                                backgroundColor: rgbaFromHex(letterColors.N, 0.12),
+                              }
+                            : undefined
+                        }
+                      >
+                        <RadioGroupItem
+                          value={style}
+                          id={`card-pack-${style}`}
+                          className="focus-visible:ring-0 focus-visible:ring-offset-0"
+                          style={{ borderColor: letterColors.N, color: letterColors.N }}
+                        />
+                        {GAME_STYLE_LABELS[style]}
+                      </Label>
+                    ))}
+                  </RadioGroup>
+                </div>
                 <div>
                   <Label className="mb-2 block">How many cards?</Label>
                   <Input
@@ -1498,9 +1541,16 @@ export function Settings({
                 </div>
                 <div className="rounded-lg border border-border/70 bg-background/60 p-3 text-xs text-muted-foreground space-y-1.5">
                   <p>
-                    Packs match the board&apos;s current game style (
-                    <span className="font-medium text-foreground">{gameStyle.toUpperCase()}</span>
-                    ). BINGO: center FREE cell is a QR. HOUSEY: sparse 10–12 numbers with the QR in the footer.
+                    Generating{" "}
+                    <span className="font-medium text-foreground">{cardPackStyle.toUpperCase()}</span> packs
+                    {cardPackStyle !== gameStyle ? (
+                      <>
+                        {" "}
+                        (board is currently{" "}
+                        <span className="font-medium text-foreground">{gameStyle.toUpperCase()}</span>)
+                      </>
+                    ) : null}
+                    . BINGO: center FREE cell is a QR. HOUSEY: sparse 10–12 numbers with the QR in an open cell.
                     Scan with a phone camera to open the card (no board PIN).
                   </p>
                   <p>Print on letter paper. Leave the QR unobstructed when marking or cutting cards.</p>

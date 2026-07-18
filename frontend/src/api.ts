@@ -431,7 +431,23 @@ async function postJson<T = unknown>(
         signal,
       });
       cancel();
-      if (!res.ok) throw new Error(`${res.status}`);
+      if (!res.ok) {
+        // Keep bare "401" for auth retry matching; attach JSON error text otherwise.
+        if (res.status === 401) throw new Error("401");
+        let bodyError: string | undefined;
+        try {
+          const errText = await res.text();
+          if (errText) {
+            const parsed = JSON.parse(errText) as { error?: string };
+            if (typeof parsed?.error === "string" && parsed.error.trim()) {
+              bodyError = parsed.error.trim();
+            }
+          }
+        } catch {
+          // ignore parse failures
+        }
+        throw new Error(bodyError ?? `${res.status}`);
+      }
       const text = await res.text();
       if (!text) return {} as T;
       try {

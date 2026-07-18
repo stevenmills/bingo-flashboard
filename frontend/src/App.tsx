@@ -906,7 +906,12 @@ export default function App() {
                   renderBoardLockedState()
                 )
               ) : (
-                <CardPage state={state} letterColors={uiLetterColors} connected={connected} />
+                <CardPage
+                  state={state}
+                  letterColors={uiLetterColors}
+                  connected={connected}
+                  stateHydrated={hydrated}
+                />
               )}
             </div>
             <div className={cn(!settingsOpen && "hidden")} aria-hidden={!settingsOpen}>

@@ -31,40 +31,72 @@ export interface StoredCardState {
 
 export const CARD_STATE_STORAGE_VERSION = 3;
 
+/**
+ * Uniform int in [0, maxExclusive). Uses crypto.getRandomValues with rejection
+ * sampling so there is no modulo bias (unlike a raw Math.random() multiply).
+ */
+function randomInt(maxExclusive: number): number {
+  if (maxExclusive <= 0) throw new Error("maxExclusive must be > 0");
+  if (maxExclusive === 1) return 0;
+  const max = 0x1_0000_0000;
+  const limit = max - (max % maxExclusive);
+  const buf = new Uint32Array(1);
+  // Prefer Web Crypto when available; fall back for non-browser test hosts.
+  const cryptoObj = typeof globalThis.crypto?.getRandomValues === "function" ? globalThis.crypto : null;
+  for (;;) {
+    if (cryptoObj) {
+      cryptoObj.getRandomValues(buf);
+    } else {
+      buf[0] = Math.floor(Math.random() * max) >>> 0;
+    }
+    const x = buf[0]!;
+    if (x < limit) return x % maxExclusive;
+  }
+}
+
+/** Fisher–Yates shuffle (uniform). */
+function shuffleInPlace<T>(arr: T[]): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [arr[i], arr[j]] = [arr[j]!, arr[i]!];
+  }
+}
+
+/** Uniform sample of `count` distinct values from [min, max], in random order. */
 function pickUniqueRandom(min: number, max: number, count: number): number[] {
   const pool: number[] = [];
   for (let n = min; n <= max; n++) pool.push(n);
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
+  if (count > pool.length) throw new Error(`pickUniqueRandom: count ${count} > pool ${pool.length}`);
+  shuffleInPlace(pool);
   return pool.slice(0, count);
 }
 
-function shuffleInPlace<T>(arr: T[]): void {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-}
-
 export function generateBingoCard(): CardGrid {
-  const columns = LETTERS.map((letter) => {
-    const [min, max] = LETTER_RANGES[letter];
-    return pickUniqueRandom(min, max, 5);
-  });
-
   const grid: CardGrid = Array.from({ length: 5 }, (_, rowIdx) =>
     Array.from({ length: 5 }, (_, colIdx) => ({
-      letter: LETTERS[colIdx],
-      value: columns[colIdx][rowIdx],
+      letter: LETTERS[colIdx]!,
+      value: null as number | null,
       isFree: false,
       isBlank: false,
       marked: false,
     }))
   );
 
-  grid[2][2] = {
+  for (let colIdx = 0; colIdx < 5; colIdx++) {
+    const letter = LETTERS[colIdx]!;
+    const [min, max] = LETTER_RANGES[letter];
+    const isN = letter === "N";
+    // N column: 4 numbers + FREE center. Others: 5 numbers.
+    const nums = pickUniqueRandom(min, max, isN ? 4 : 5);
+    const rows = isN ? [0, 1, 3, 4] : [0, 1, 2, 3, 4];
+    shuffleInPlace(rows);
+    for (let i = 0; i < nums.length; i++) {
+      const cell = grid[rows[i]!]![colIdx]!;
+      cell.value = nums[i]!;
+    }
+  }
+
+  grid[2]![2] = {
     letter: "N",
     value: null,
     isFree: true,
@@ -77,50 +109,39 @@ export function generateBingoCard(): CardGrid {
 
 /** Sparse 5×5 HOUSEY card: 10–12 column-valid numbers, no FREE. */
 export function generateHouseyCard(): CardGrid {
-  const count =
-    HOUSEY_MIN_POPULATED +
-    Math.floor(Math.random() * (HOUSEY_MAX_POPULATED - HOUSEY_MIN_POPULATED + 1));
-  const positions = Array.from({ length: 25 }, (_, i) => i);
-  shuffleInPlace(positions);
-  const chosen = new Set(positions.slice(0, count));
+  const total =
+    HOUSEY_MIN_POPULATED + randomInt(HOUSEY_MAX_POPULATED - HOUSEY_MIN_POPULATED + 1);
 
-  const usedByCol: number[][] = [[], [], [], [], []];
-  const values = new Array<number | null>(25).fill(null);
-
-  const ordered = Array.from(chosen);
-  shuffleInPlace(ordered);
-  for (const idx of ordered) {
-    const col = idx % 5;
-    const letter = LETTERS[col];
-    const [min, max] = LETTER_RANGES[letter];
-    const pick = pickUniqueRandom(min, max, 15).find((n) => !usedByCol[col].includes(n));
-    if (pick == null) continue;
-    usedByCol[col].push(pick);
-    values[idx] = pick;
+  // Uniform random distribution of slot counts across columns (0–5 each).
+  const colCounts = [0, 0, 0, 0, 0];
+  for (let n = 0; n < total; n++) {
+    const open: number[] = [];
+    for (let c = 0; c < 5; c++) if (colCounts[c]! < 5) open.push(c);
+    colCounts[open[randomInt(open.length)]!]!++;
   }
 
-  // Ensure we still have enough populated cells if column collisions trimmed some.
-  let populated = values.filter((v) => v != null).length;
-  if (populated < HOUSEY_MIN_POPULATED) {
-    for (let idx = 0; idx < 25 && populated < HOUSEY_MIN_POPULATED; idx++) {
-      if (values[idx] != null) continue;
-      const col = idx % 5;
-      const letter = LETTERS[col];
-      const [min, max] = LETTER_RANGES[letter];
-      const pick = pickUniqueRandom(min, max, 15).find((n) => !usedByCol[col].includes(n));
-      if (pick == null) continue;
-      usedByCol[col].push(pick);
-      values[idx] = pick;
-      populated++;
+  const values = new Array<number | null>(25).fill(null);
+
+  for (let col = 0; col < 5; col++) {
+    const count = colCounts[col]!;
+    if (count === 0) continue;
+
+    const letter = LETTERS[col]!;
+    const [min, max] = LETTER_RANGES[letter];
+    const nums = pickUniqueRandom(min, max, count);
+    const rows = [0, 1, 2, 3, 4];
+    shuffleInPlace(rows);
+    for (let i = 0; i < count; i++) {
+      values[rows[i]! * 5 + col] = nums[i]!;
     }
   }
 
   return Array.from({ length: 5 }, (_, rowIdx) =>
     Array.from({ length: 5 }, (_, colIdx) => {
       const idx = rowIdx * 5 + colIdx;
-      const value = values[idx];
+      const value = values[idx] ?? null;
       return {
-        letter: LETTERS[colIdx],
+        letter: LETTERS[colIdx]!,
         value,
         isFree: false,
         isBlank: value == null,

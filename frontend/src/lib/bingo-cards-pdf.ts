@@ -2,6 +2,7 @@ import QRCode from "qrcode";
 import { LETTERS } from "@/types";
 import {
   buildCardClaimUrl,
+  type FlatCardNumbers,
   type SignedPrintableCard,
 } from "@/lib/bingo-card-codec";
 import { MiniPdf } from "@/lib/mini-pdf";
@@ -15,6 +16,40 @@ const LETTER_COLORS: Record<string, [number, number, number]> = {
 };
 
 export const CARDS_PER_PAGE = 4;
+
+/** Prefer center, else blank nearest to center (HOUSEY always has blanks). */
+function pickBlankCell(numbers: FlatCardNumbers): number {
+  if (numbers[12] == null) return 12;
+  let best = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < 25; i++) {
+    if (numbers[i] != null) continue;
+    const row = Math.floor(i / 5);
+    const col = i % 5;
+    const dist = Math.abs(row - 2) + Math.abs(col - 2);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = i;
+    }
+  }
+  return best >= 0 ? best : 12;
+}
+
+function drawCellQr(
+  doc: MiniPdf,
+  modules: { size: number; get: (row: number, col: number) => number | boolean },
+  cx: number,
+  cy: number,
+  cellW: number,
+  cellH: number
+) {
+  const inset = Math.max(1.5, Math.min(cellW, cellH) * 0.04);
+  const qrSize = Math.min(cellW, cellH) - inset * 2;
+  const qrX = cx + (cellW - qrSize) / 2;
+  const qrY = cy + (cellH - qrSize) / 2;
+  doc.drawQrModules(modules, qrX, qrY, qrSize, [36, 36, 36]);
+  return { qrX, qrY, qrSize };
+}
 
 function drawCard(
   doc: MiniPdf,
@@ -33,8 +68,7 @@ function drawCard(
   const isHousey = card.gameStyle === "housey";
   const pad = 6;
   const headerH = 16;
-  // Tiny footer for card number only — footer QR for HOUSEY; space goes to the grid.
-  const footerH = isHousey ? 24 : 10;
+  const footerH = 10;
   const headerGap = 3;
   const gridTop = y + pad + headerH + headerGap;
   const gridBottom = y + height - pad - footerH;
@@ -42,6 +76,7 @@ function drawCard(
   const gridW = width - pad * 2;
   const cellW = gridW / 5;
   const cellH = gridH / 5;
+  const houseyQrIdx = isHousey ? pickBlankCell(numbers) : -1;
 
   doc.setStroke(180, 180, 180, 0.6);
   doc.roundedRect(x, y, width, height, 3, "S");
@@ -74,11 +109,7 @@ function drawCard(
 
       if (!isHousey && idx === 12) {
         // FREE cell = large scan-target QR with a modest center label.
-        const inset = Math.max(1.5, Math.min(cellW, cellH) * 0.04);
-        const qrSize = Math.min(cellW, cellH) - inset * 2;
-        const qrX = cx + (cellW - qrSize) / 2;
-        const qrY = cy + (cellH - qrSize) / 2;
-        doc.drawQrModules(qr.modules, qrX, qrY, qrSize, [36, 36, 36]);
+        const { qrX, qrY, qrSize } = drawCellQr(doc, qr.modules, cx, cy, cellW, cellH);
 
         const labelW = qrSize * 0.42;
         const labelH = Math.max(8, qrSize * 0.18);
@@ -96,6 +127,12 @@ function drawCard(
         continue;
       }
 
+      if (isHousey && idx === houseyQrIdx) {
+        // Blank cell = claim QR at the same size as BINGO FREE.
+        drawCellQr(doc, qr.modules, cx, cy, cellW, cellH);
+        continue;
+      }
+
       const val = numbers[idx];
       if (val == null) continue; // HOUSEY blank
       doc.text(String(val), cx + cellW / 2, cy + cellH / 2 + 3.5, {
@@ -107,18 +144,9 @@ function drawCard(
   }
 
   if (isHousey) {
-    // Footer QR with quiet zone (HOUSEY has no FREE cell).
-    const footerQr = 18;
-    const qrX = x + pad;
-    const qrY = y + height - pad - footerQr;
-    doc.drawQrModules(qr.modules, qrX, qrY, footerQr, [36, 36, 36]);
-    doc.text("HOUSEY", x + pad + footerQr + 4, y + height - pad - 4, {
-      size: 6,
-      color: [100, 100, 100],
-    });
-    doc.text(`Card ${cardIndex + 1}`, x + width - pad - 40, y + height - pad - 4, {
+    doc.text(`HOUSEY · Card ${cardIndex + 1}`, x + width / 2, y + height - pad + 1, {
       size: 5.5,
-      align: "left",
+      align: "center",
       color: [170, 170, 170],
     });
   } else {

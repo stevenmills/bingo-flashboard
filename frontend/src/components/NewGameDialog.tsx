@@ -10,6 +10,7 @@ import type { LetterColors } from "@/lib/bingo-ui-colors";
 
 interface Props {
   open: boolean;
+  onOpenChange: (open: boolean) => void;
   state: GameState;
   onStart: () => void;
   onRefresh: (options?: RefreshOptions) => void;
@@ -17,14 +18,18 @@ interface Props {
   letterColors: LetterColors;
 }
 
-export function NewGameDialog({ open, state, onStart, onRefresh, onApplyOptimistic, letterColors }: Props) {
+export function NewGameDialog({
+  open,
+  onOpenChange,
+  state,
+  onStart,
+  onRefresh,
+  onApplyOptimistic,
+  letterColors,
+}: Props) {
   return (
-    <Dialog open={open}>
-      <DialogContent
-        className="flex h-[min(calc(100dvh-1.5rem),40rem)] max-w-lg flex-col gap-3 overflow-hidden sm:h-[min(calc(100dvh-2rem),42rem)] sm:max-w-2xl"
-        hideClose
-        onPointerDownOutside={(e) => e.preventDefault()}
-      >
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex h-[min(calc(100dvh-1.5rem),40rem)] max-w-lg flex-col gap-3 overflow-hidden sm:h-[min(calc(100dvh-2rem),42rem)] sm:max-w-2xl">
         <DialogHeader className="shrink-0">
           <DialogTitle>New Game</DialogTitle>
           <DialogDescription>
