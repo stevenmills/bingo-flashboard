@@ -1,17 +1,17 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// Target board: AITRIP 30-pin CP2102 ESP-WROOM-32 USB-C (Amazon B0CR5Y2JVD).
-// Silkscreen: D4=GPIO4, RX2=GPIO16, TX2=GPIO17, D2=GPIO2. Wiring: WIRING.md
+// Target board: ESP32-S3-WROOM-1 N16R8 (44-pin DevKitC-1 layout). Wiring: WIRING.md
+// Silkscreen: 4=GPIO4, 16=GPIO16, 17=GPIO17, 2=GPIO2 (J3 header — not onboard RGB).
 
-#define DATA_PIN      4   // Silkscreen D4 (right header) → WS2811 DIN
-#define BUTTON1_PIN   16  // Silkscreen RX2 → game type / reset
-#define BUTTON2_PIN   17  // Silkscreen TX2 → draw / winner
+#define DATA_PIN      4   // Silkscreen 4 (J1) → WS2811 DIN
+#define BUTTON1_PIN   16  // Silkscreen 16 (J1) → game type / reset
+#define BUTTON2_PIN   17  // Silkscreen 17 (J1) → draw / winner
 #define NUM_LEDS      105
 #define LED_COLOR_ORDER RGB
 #define STATUS_LED_ENABLED 1
 #define STATUS_LED_PIN 2
-// 0 = HIGH turns LED on (typical AITRIP 30-pin board). 1 = LOW turns LED on (inverted wiring).
+// 0 = HIGH turns LED on. 1 = LOW turns LED on (inverted external LED wiring).
 #define STATUS_LED_ACTIVE_LOW 0
 // Two quick blips (HIGH then LOW drive) at boot — helps if polarity/board wiring differs.
 #define STATUS_LED_BOOT_PROBE 1
@@ -45,6 +45,7 @@
 #define NVS_LED_COLOR_G "lg"
 #define NVS_LED_COLOR_O "lo"
 #define NVS_GAME_TYPE "gt"
+#define NVS_GAME_STYLE "gst"
 #define NVS_CALLING_STYLE "cs"
 #define NVS_BOARD_PIN "bp"
 #define NVS_DEVICE_ID "di"

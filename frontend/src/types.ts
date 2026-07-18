@@ -13,11 +13,32 @@ import {
   GAME_TYPE_REQUIRED_HITS,
   isGameType,
 } from "@/lib/game-types.generated";
+import {
+  type AnyGameType,
+  type GameStyle,
+  type HouseyGameType,
+  GAME_STYLES,
+  GAME_STYLE_LABELS,
+  HOUSEY_GAME_TYPES,
+  HOUSEY_GAME_TYPE_LABELS,
+  HOUSEY_GAME_TYPE_DESCRIPTIONS,
+  HOUSEY_GAME_TYPE_MIN_CALLS,
+  HOUSEY_DISPLAY_CELLS,
+  defaultGameTypeForStyle,
+  isGameStyle,
+  isHouseyGameType,
+  isValidGameSelection,
+  labelForGameType,
+  minCallsForSelection,
+} from "@/lib/game-style";
 
 export type {
   GameType,
   GameTypeCategoryId,
   GameTypeDef,
+  AnyGameType,
+  GameStyle,
+  HouseyGameType,
 };
 
 export {
@@ -31,6 +52,19 @@ export {
   CYCLING_PATTERNS,
   GAME_TYPE_REQUIRED_HITS,
   isGameType,
+  GAME_STYLES,
+  GAME_STYLE_LABELS,
+  HOUSEY_GAME_TYPES,
+  HOUSEY_GAME_TYPE_LABELS,
+  HOUSEY_GAME_TYPE_DESCRIPTIONS,
+  HOUSEY_GAME_TYPE_MIN_CALLS,
+  HOUSEY_DISPLAY_CELLS,
+  defaultGameTypeForStyle,
+  isGameStyle,
+  isHouseyGameType,
+  isValidGameSelection,
+  labelForGameType,
+  minCallsForSelection,
 };
 
 export interface GameState {
@@ -38,7 +72,8 @@ export interface GameState {
   called: number[];
   remaining: number;
   boardSeed: number;
-  gameType: GameType;
+  gameStyle: GameStyle;
+  gameType: AnyGameType;
   callingStyle: CallingStyle;
   gameEstablished: boolean;
   winnerDeclared: boolean;
@@ -85,6 +120,10 @@ export interface GameState {
   wifiConnected?: boolean;
   wifiMode?: "sta" | "ap";
   patternIndex: number;
+  /** HOUSEY Battleship: cards still afloat */
+  survivorCount?: number;
+  /** HOUSEY Battleship: cards sunk */
+  eliminatedCount?: number;
 }
 
 export interface WebhookSettings {
@@ -254,6 +293,7 @@ export const DEFAULT_STATE: GameState = {
   called: [],
   remaining: 75,
   boardSeed: 1000,
+  gameStyle: "bingo",
   gameType: "cover_all",
   callingStyle: "automatic",
   gameEstablished: false,

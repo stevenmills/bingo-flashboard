@@ -38,6 +38,7 @@ export default defineConfig({
       "/call": API_TARGET,
       "/calling-style": API_TARGET,
       "/game-type": API_TARGET,
+      "/game-selection": API_TARGET,
       "/declare-winner": API_TARGET,
       "/clear-winner": API_TARGET,
       "/led-test": API_TARGET,

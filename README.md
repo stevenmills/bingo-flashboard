@@ -1,6 +1,6 @@
 # 🎱 Bingo Flashboard
 
-An **AITRIP 30-pin ESP32** drives a **105-LED 12V WS2811** bingo board — and serves a full **React web UI** over WiFi so phones, tablets, and laptops can call games, join cards, hear call-outs, and print signed bingo sheets.
+An **ESP32-S3 N16R8** development board drives a **105-LED 12V WS2811** bingo board — and serves a full **React web UI** over WiFi so phones, tablets, and laptops can call games, join cards, hear call-outs, and print signed bingo sheets.
 
 Connect to the **`BINGO`** network → open **`http://bingo.local`** (fallback **`http://192.168.4.1`**) → pick **Board** or **Card** mode → play.
 
@@ -19,21 +19,21 @@ Connect to the **`BINGO`** network → open **`http://bingo.local`** (fallback *
 
 ## 🧩 Hardware
 
-**Board:** [AITRIP 30-pin CP2102 ESP-WROOM-32 USB-C](https://www.amazon.com/dp/B0CR5Y2JVD) (ESP-32D, **4 MB** flash)
+**Board:** [ESP32-S3 N16R8 development board](https://www.amazon.com/dp/B0F5QCK6X5) — ESP32-S3-WROOM-1, **16 MB** flash, **8 MB** PSRAM, dual USB-C, 44-pin DevKitC-1 layout
 
 **Strip:** WS2811 × **105**, **12V**, single data line
 
-Wire by **silkscreen labels** (not generic 38-pin charts). Full pinout + photo: **[WIRING.md](WIRING.md)** · `docs/aitrip-30pin-pinout.png`
+Wire by **GPIO numbers on the silkscreen** (not classic 30-pin ESP32 charts). Full pinout: **[WIRING.md](WIRING.md)**
 
 | Function | GPIO | Silkscreen | Connect |
 |---|---|---|---|
-| LED data | **4** | **`D4`** | Strip **DIN** |
-| Button 1 | **16** | **`RX2`** | Momentary → **GND** |
-| Button 2 | **17** | **`TX2`** | Momentary → **GND** |
-| Status LED | **2** | **`D2`** | Onboard |
-| Ground | — | **`GND`** | 12V (−) + strip GND |
+| LED data | **4** | **`4`** (J1) | Strip **DIN** |
+| Button 1 | **16** | **`16`** (J1) | Momentary → **GND** |
+| Button 2 | **17** | **`17`** (J1) | Momentary → **GND** |
+| Status LED | **2** | **`2`** (J3) | Header GPIO (onboard RGB is separate) |
+| Ground | — | **`G`** | 12V (−) + strip GND |
 
-⚠️ **Never** put 12V on ESP32 pins. Tie all grounds together. Power ESP32 via USB-C (or **VIN** 5V).
+⚠️ **Never** put 12V on ESP32 pins. Tie all grounds together. Power the board via USB-C (UART port) or **5V** (J1).
 
 ### 🎛️ Physical buttons
 
@@ -72,13 +72,25 @@ Any button exits LED test / screensaver.
 - **Power-loss recovery** — call order / current / pool restore from NVS
 - Default auto-call interval: **10 seconds** (configurable; Play stays UI-driven)
 
-### Game types
+### Game styles & types
 
-**42 types** in six categories (Classics, Letters & Symbols, Shapes & Frames, Blocks & Arrows, Pictures, Combos & Rules). The board/new-game UI uses a **searchable, filterable picker** with mini pattern previews. Physical **Button 1** cycles every type in catalog order when changing type is allowed.
+**Game style** is **BINGO** (default) or **HOUSEY**.
 
-Canonical definitions live in `scripts/generate-game-types.mjs` (generates frontend + firmware tables). Multi-orientation types (Traditional, Postage Stamp, Big Stamp, Arrow, Lightning, BINGO Glyph, Railroad, and others) **cycle** display patterns on the LED matrix (synced to the UI). **Double Bingo** wins on any two Traditional lines and cycles all 66 two-line combinations on the indicator; **Blackout Lite** wins at any 20 covered cells.
+**BINGO — 42 types** in six categories (Classics, Letters & Symbols, Shapes & Frames, Blocks & Arrows, Pictures, Combos & Rules). The board/new-game UI uses a **searchable, filterable picker** with mini pattern previews. Physical **Button 1** cycles every type in catalog order within the current style when changing type is allowed.
 
-Classes include: Traditional, Double Bingo, Four Corners, Postage Stamp, Cover All, Blackout Lite, Letter X/Y/O/H, Lucky 7, Plus Sign, frames, diamond, bullseye, hourglass, pyramid, bow tie, infinity, lightning, big stamp, brick, L-block, arrow, field goal, anchor, heart, smiley, rocket, UFO, top hat, Pac-Man, clover, BINGO Glyph, snake, railroad, VIP Cross, Four Horsemen, Split the Room, Top vs Bottom, Diagonal Band.
+Canonical BINGO definitions live in `scripts/generate-game-types.mjs` (generates frontend + firmware tables). Multi-orientation types cycle display patterns on the LED matrix (synced to the UI). **Double Bingo** wins on any two Traditional lines; **Blackout Lite** wins at any 20 covered cells.
+
+**HOUSEY — 5×5 sparse cards** (same B-I-N-G-O column ranges / 1–75 pool, **not** UK 9×3 tickets): 10–12 numbers, no FREE cell. Types:
+
+| Type | Rule |
+|---|---|
+| Battleship | Last card still afloat; a card sinks when all its numbers are called (same-call co-survivors share) |
+| Four Corners | Populated corners `{B top, O top, B bottom, O bottom}`; completing call must be a corner |
+| Line | Any one horizontal row (populated cells only) |
+| Two Lines | Any two complete horizontal rows |
+| Full House | All populated numbers called |
+
+HOUSEY winner mode auto-alerts when a pattern is complete (same as BINGO); the real-world host adjudicates. Keep-going dismisses the prize and continues. LED indicators: Battleship loops a 1→25 chase at the standard pattern cycle speed; Four Corners lights corners; Line middle row; Two Lines two rows; Full House all 25.
 
 ### Winners
 - Declare / clear winner (UI + Button 2 long-press)
@@ -182,15 +194,15 @@ Realtime: WebSocket `/ws` (subscribe as `board` / `card` / `none`) + HTTP pollin
 
 ```bash
 make deploy
-# or pin the serial port:
-make deploy PIO_PORT=/dev/cu.usbserial-0001
+# or pin the serial port (S3 boards often use usbmodem):
+make deploy PIO_PORT=/dev/cu.usbmodem101
 ```
 
 ### Pieces
 
 ```bash
 make frontend-build   # Vite → data/ (prunes stale hashed assets; keeps MP3s)
-make fw-upload        # firmware (esp32dev + partitions/bingo.csv)
+make fw-upload        # firmware (esp32s3 + partitions/bingo.csv)
 make fs-upload        # SPIFFS
 make monitor          # serial @ 115200
 make qa               # smoke tests → QA_BASE / QA_PIN
@@ -231,8 +243,8 @@ bingo-flashboard/
 ├── include/config.h          # Pins, AP, PIN, NVS keys
 ├── include/led_map.h         # Physical LED index maps
 ├── partitions/bingo.csv      # Larger SPIFFS layout
-├── WIRING.md                 # AITRIP wiring + pinout image
-├── docs/                     # Hardware diagrams
+├── WIRING.md                 # ESP32-S3 wiring + pinout
+├── docs/                     # Hardware reference (optional diagrams)
 ├── data/                     # SPIFFS payload (built UI + MP3s)
 ├── frontend/                 # React app source
 │   └── public/caller-*.mp3   # Call-out audio (copied into data/)
@@ -248,7 +260,7 @@ bingo-flashboard/
 
 ## 🔑 Persistence cheatsheet
 
-**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
+**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game style, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
 
 **Browser:** UI themes (per mode), UI letter colors, auto-call seconds UI, board token/expiry, card id + card state, caller speech/jokes/rate prefs.
 

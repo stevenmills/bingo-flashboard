@@ -1,5 +1,5 @@
 /**
- * Bingo Flashboard – AITRIP 30-pin ESP-WROOM-32 + 105-LED WS2811 + WiFi AP
+ * Bingo Flashboard – ESP32-S3 N16R8 + 105-LED WS2811 + WiFi AP
  * Plan: arduino_bingo_led_board_179bac68.plan.md
  */
 
@@ -22,6 +22,7 @@
 #include "config.h"
 #include "led_map.h"
 #include "game_types.generated.h"
+#include "housey_types.h"
 
 // --- LED strip ---
 CRGB leds[NUM_LEDS];
@@ -79,9 +80,15 @@ int callOrderCount = 0;
 static char callingStyleBuf[12] = "automatic";
 const char* callingStyle = callingStyleBuf;
 bool gameEstablished = false;
+static char gameStyleBuf[8] = "bingo";
+const char* gameStyle = gameStyleBuf;
 static char gameTypeBuf[GAME_TYPE_ID_MAX + 1] = "cover_all";
 const char* gameType = gameTypeBuf;
 int gameTypeIdx = 4; // cover_all in generated catalog; refreshed on load/select
+int houseyTypeIdx = -1;
+int survivorCount = 0;
+int eliminatedCount = 0;
+unsigned long houseyBattleshipChaseStartMs = 0;
 bool winnerDeclared = false;
 bool manualWinnerDeclared = false;
 bool winnerSuppressed = false;
@@ -154,9 +161,12 @@ const int MAX_CARD_SESSIONS = 32;
 struct CardSession {
   bool active;
   char cardId[17];
-  int numbers[25];   // 0 means FREE/empty
+  int numbers[25];   // 0 means FREE (bingo center) or blank (housey)
   bool marks[25];
   bool winner;
+  bool houseyFormat;       // true = sparse HOUSEY card (no FREE)
+  bool houseyClaimed;      // keep-going: current HOUSEY prize already dismissed
+  bool eliminated;         // HOUSEY Battleship: sunk
   uint32_t claimedPatternMasks[GAME_TYPE_COUNT];
 };
 CardSession cardSessions[MAX_CARD_SESSIONS];
@@ -206,6 +216,7 @@ unsigned long lastPatternChange = 0;
 const unsigned long PATTERN_CYCLE_MS = 1500;
 
 const GameTypeDef* currentGameTypeDef() {
+  if (isGameStyleHousey(gameStyle)) return nullptr;
   if (gameTypeIdx < 0 || gameTypeIdx >= GAME_TYPE_COUNT) {
     gameTypeIdx = findGameTypeIndex(gameType);
   }
@@ -214,14 +225,58 @@ const GameTypeDef* currentGameTypeDef() {
 }
 
 bool applyGameTypeId(const char* gt) {
+  // Legacy BINGO-only helper.
+  if (!isGameStyleBingo(gameStyle)) return false;
   int idx = findGameTypeIndex(gt);
   if (idx < 0) return false;
   strncpy(gameTypeBuf, GAME_TYPE_TABLE[idx].id, sizeof(gameTypeBuf) - 1);
   gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
   gameTypeIdx = idx;
+  houseyTypeIdx = -1;
   patternIdx = 0;
   lastPatternChange = millis();
   return true;
+}
+
+bool applyGameSelection(const char* style, const char* gt) {
+  if (!style || !gt) return false;
+  if (strcmp(style, "bingo") == 0) {
+    int idx = findGameTypeIndex(gt);
+    if (idx < 0) return false;
+    strncpy(gameStyleBuf, "bingo", sizeof(gameStyleBuf) - 1);
+    gameStyleBuf[sizeof(gameStyleBuf) - 1] = '\0';
+    strncpy(gameTypeBuf, GAME_TYPE_TABLE[idx].id, sizeof(gameTypeBuf) - 1);
+    gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
+    gameTypeIdx = idx;
+    houseyTypeIdx = -1;
+  } else if (strcmp(style, "housey") == 0) {
+    int idx = findHouseyGameTypeIndex(gt);
+    if (idx < 0) return false;
+    strncpy(gameStyleBuf, "housey", sizeof(gameStyleBuf) - 1);
+    gameStyleBuf[sizeof(gameStyleBuf) - 1] = '\0';
+    strncpy(gameTypeBuf, HOUSEY_GAME_TYPES[idx], sizeof(gameTypeBuf) - 1);
+    gameTypeBuf[sizeof(gameTypeBuf) - 1] = '\0';
+    gameTypeIdx = -1;
+    houseyTypeIdx = idx;
+    if (strcmp(gt, "battleship") == 0) {
+      // Continuous chase at PATTERN_CYCLE_MS per cell (same cadence as BINGO orientation cycling).
+      houseyBattleshipChaseStartMs = millis();
+    } else {
+      houseyBattleshipChaseStartMs = 0;
+    }
+  } else {
+    return false;
+  }
+  patternIdx = 0;
+  lastPatternChange = millis();
+  return true;
+}
+
+bool isValidGameSelectionPair(const char* style, const char* gt) {
+  if (!style || !gt) return false;
+  if (strcmp(style, "bingo") == 0) return isValidGameTypeId(gt);
+  if (strcmp(style, "housey") == 0) return isValidHouseyGameTypeId(gt);
+  return false;
 }
 
 // --- NVS ---
@@ -1402,6 +1457,9 @@ void clearCardSession(CardSession& s) {
     s.marks[i] = false;
   }
   s.winner = false;
+  s.houseyFormat = false;
+  s.houseyClaimed = false;
+  s.eliminated = false;
   for (int i = 0; i < GAME_TYPE_COUNT; i++) s.claimedPatternMasks[i] = 0;
 }
 
@@ -1450,22 +1508,35 @@ void ensureDeviceIdLoaded() {
   }
 }
 
-/** Message: for each non-FREE cell, byte(index) then byte(number). */
-void buildCardAuthMessage(const int nums[25], uint8_t* out, size_t* outLen) {
+/** Message: legacy bingo (skip FREE) or housey domain + all 25 cells. */
+void buildCardAuthMessage(const int nums[25], bool housey, uint8_t* out, size_t* outLen) {
   size_t n = 0;
-  for (int idx = 0; idx < 25; idx++) {
-    if (idx == 12) continue;
-    out[n++] = (uint8_t)idx;
-    out[n++] = (uint8_t)(nums[idx] & 0xFF);
+  if (housey) {
+    static const char* domain = "housey-card-v2";
+    while (domain[n]) {
+      out[n] = (uint8_t)domain[n];
+      n++;
+    }
+    out[n++] = 1;
+    for (int idx = 0; idx < 25; idx++) {
+      out[n++] = (uint8_t)idx;
+      out[n++] = (uint8_t)(nums[idx] & 0xFF);
+    }
+  } else {
+    for (int idx = 0; idx < 25; idx++) {
+      if (idx == 12) continue;
+      out[n++] = (uint8_t)idx;
+      out[n++] = (uint8_t)(nums[idx] & 0xFF);
+    }
   }
   *outLen = n;
 }
 
-bool hmacSha256Card(const int nums[25], uint8_t out[32]) {
+bool hmacSha256Card(const int nums[25], bool housey, uint8_t out[32]) {
   ensureDeviceIdLoaded();
-  uint8_t msg[48];
+  uint8_t msg[80];
   size_t msgLen = 0;
-  buildCardAuthMessage(nums, msg, &msgLen);
+  buildCardAuthMessage(nums, housey, msg, &msgLen);
   const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
   if (!info) return false;
   return mbedtls_md_hmac(
@@ -1510,10 +1581,10 @@ bool decodeHexToBytes(const char* in, uint8_t* out, size_t outLen) {
   return true;
 }
 
-bool verifyCardSignature(const int nums[25], const char* sig) {
+bool verifyCardSignature(const int nums[25], const char* sig, bool housey = false) {
   if (!sig || !*sig) return false;
   uint8_t mac[32];
-  if (!hmacSha256Card(nums, mac)) return false;
+  if (!hmacSha256Card(nums, housey, mac)) return false;
   uint8_t got[16];
   if (!decodeHexToBytes(sig, got, 16)) return false;
   uint8_t diff = 0;
@@ -1604,11 +1675,32 @@ bool validateBingoCardNumbers(const int nums[25]) {
   return true;
 }
 
+bool validateHouseyCardNumbers(const int nums[25]) {
+  static const int colMin[5] = {1, 16, 31, 46, 61};
+  static const int colMax[5] = {15, 30, 45, 60, 75};
+  bool seenGlobal[76] = {false};
+  int populated = 0;
+  for (int col = 0; col < 5; col++) {
+    bool seenCol[15] = {false};
+    for (int row = 0; row < 5; row++) {
+      const int idx = row * 5 + col;
+      const int n = nums[idx];
+      if (n == 0) continue;
+      if (n < colMin[col] || n > colMax[col]) return false;
+      const int offset = n - colMin[col];
+      if (offset < 0 || offset >= 15 || seenCol[offset] || seenGlobal[n]) return false;
+      seenCol[offset] = true;
+      seenGlobal[n] = true;
+      populated++;
+    }
+  }
+  return populated >= HOUSEY_MIN_POPULATED && populated <= HOUSEY_MAX_POPULATED;
+}
+
 /** Content-addressed id from card numbers — QR payload is the identity; no print registry. */
 void cardIdFromCardNumbers(const int nums[25], char* out, size_t len) {
   uint32_t h = 2166136261u;
   for (int i = 0; i < 25; i++) {
-    if (i == 12) continue;
     h ^= (uint8_t)(nums[i] & 0xFF);
     h *= 16777619u;
   }
@@ -1617,7 +1709,7 @@ void cardIdFromCardNumbers(const int nums[25], char* out, size_t len) {
 
 void syncSessionMarksFromCalled(CardSession& s) {
   for (int i = 0; i < 25; i++) {
-    if (i == 12) {
+    if (!s.houseyFormat && i == 12) {
       s.marks[i] = true;
       continue;
     }
@@ -1628,7 +1720,11 @@ void syncSessionMarksFromCalled(CardSession& s) {
 
 void syncSessionMarksFreeOnly(CardSession& s) {
   for (int i = 0; i < 25; i++) {
-    s.marks[i] = (i == 12);
+    if (s.houseyFormat) {
+      s.marks[i] = false;
+    } else {
+      s.marks[i] = (i == 12);
+    }
   }
 }
 
@@ -1720,6 +1816,8 @@ void processWebhookQueue() {
 
 void resetSessionClaimedMasks(CardSession& s) {
   for (int i = 0; i < GAME_TYPE_COUNT; i++) s.claimedPatternMasks[i] = 0;
+  s.houseyClaimed = false;
+  s.eliminated = false;
 }
 
 bool wsCanReceiveState(uint32_t clientId) {
@@ -1740,7 +1838,7 @@ bool wsCanReceiveCardState(uint32_t clientId, const char* cardId) {
 
 bool isPatternCellSatisfied(const CardSession& s, int idx) {
   if (idx < 0 || idx >= 25) return false;
-  if (idx == 12) return true;  // FREE center
+  if (!s.houseyFormat && idx == 12) return true;  // FREE center (bingo)
   if (!s.marks[idx]) return false;
   int n = s.numbers[idx];
   if (n < 1 || n > 75) return false;
@@ -1782,7 +1880,101 @@ uint32_t& claimedMaskForCurrentGameType(CardSession& s) {
   return s.claimedPatternMasks[gameTypeIdx];
 }
 
+bool houseyCardAllPopulatedCalled(const CardSession& s) {
+  int populated = 0;
+  for (int i = 0; i < 25; i++) {
+    int n = s.numbers[i];
+    if (n < 1 || n > 75) continue;
+    populated++;
+    if (!called[n]) return false;
+  }
+  return populated > 0;
+}
+
+bool houseyRowComplete(const CardSession& s, int row) {
+  int populated = 0;
+  for (int c = 0; c < 5; c++) {
+    int idx = row * 5 + c;
+    int n = s.numbers[idx];
+    if (n < 1 || n > 75) continue;
+    populated++;
+    if (!called[n]) return false;
+  }
+  return populated > 0;
+}
+
+bool houseyRowContainsNumber(const CardSession& s, int row, int number) {
+  if (number < 1 || number > 75) return false;
+  for (int c = 0; c < 5; c++) {
+    if (s.numbers[row * 5 + c] == number) return true;
+  }
+  return false;
+}
+
+bool houseySessionHasPatternWin(const CardSession& s) {
+  if (s.houseyClaimed) return false;
+  if (strcmp(gameType, "four_corners") == 0) {
+    static const int corners[4] = {0, 4, 20, 24};
+    int populated = 0;
+    bool hasCurrent = false;
+    for (int i = 0; i < 4; i++) {
+      int n = s.numbers[corners[i]];
+      if (n < 1 || n > 75) continue;
+      populated++;
+      if (!called[n]) return false;
+      if (n == currentNumber) hasCurrent = true;
+    }
+    if (populated == 0) return false;
+    if (currentNumber >= 1 && !hasCurrent) return false;
+    return true;
+  }
+  if (strcmp(gameType, "line") == 0) {
+    for (int r = 0; r < 5; r++) {
+      if (!houseyRowComplete(s, r)) continue;
+      if (currentNumber >= 1 && !houseyRowContainsNumber(s, r, currentNumber)) continue;
+      return true;
+    }
+    return false;
+  }
+  if (strcmp(gameType, "two_lines") == 0) {
+    int completeRows[5];
+    int completeCount = 0;
+    for (int r = 0; r < 5; r++) {
+      if (houseyRowComplete(s, r)) completeRows[completeCount++] = r;
+    }
+    if (completeCount < 2) return false;
+    if (currentNumber >= 1) {
+      bool onComplete = false;
+      for (int i = 0; i < completeCount; i++) {
+        if (houseyRowContainsNumber(s, completeRows[i], currentNumber)) {
+          onComplete = true;
+          break;
+        }
+      }
+      if (!onComplete) return false;
+    }
+    return true;
+  }
+  if (strcmp(gameType, "full_house") == 0) {
+    if (!houseyCardAllPopulatedCalled(s)) return false;
+    if (currentNumber >= 1) {
+      bool onCard = false;
+      for (int i = 0; i < 25; i++) {
+        if (s.numbers[i] == currentNumber) { onCard = true; break; }
+      }
+      if (!onCard) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 bool sessionHasWinningPattern(CardSession& s) {
+  if (isGameStyleHousey(gameStyle)) {
+    // Battleship eligibility is computed in recomputeCardWinners.
+    if (strcmp(gameType, "battleship") == 0) return s.winner;
+    return houseySessionHasPatternWin(s);
+  }
   const GameTypeDef* def = currentGameTypeDef();
   const uint32_t satisfied = satisfiedMaskForCurrentGameType(s);
   const uint32_t claimed = claimedMaskForCurrentGameType(s);
@@ -1795,6 +1987,11 @@ bool sessionHasWinningPattern(CardSession& s) {
 }
 
 void claimCurrentWinningPatterns(CardSession& s) {
+  if (isGameStyleHousey(gameStyle)) {
+    s.houseyClaimed = true;
+    s.winner = false;
+    return;
+  }
   uint32_t& claimed = claimedMaskForCurrentGameType(s);
   claimed |= satisfiedMaskForCurrentGameType(s);
 }
@@ -1843,16 +2040,72 @@ int getActiveCardCount() {
 
 void recomputeCardWinners() {
   winnerCount = 0;
+  survivorCount = 0;
+  eliminatedCount = 0;
   bool hasNewWinnerEvent = false;
-  for (int i = 0; i < MAX_CARD_SESSIONS; i++) {
-    if (!cardSessions[i].active) continue;
-    const bool wasWinner = cardSessions[i].winner;
-    cardSessions[i].winner = sessionHasWinningPattern(cardSessions[i]);
-    if (!wasWinner && cardSessions[i].winner) hasNewWinnerEvent = true;
-    if (cardSessions[i].winner) winnerCount++;
+
+  if (isGameStyleHousey(gameStyle) && strcmp(gameType, "battleship") == 0) {
+    int afloatBefore = 0;
+    bool wasEliminated[MAX_CARD_SESSIONS];
+    for (int i = 0; i < MAX_CARD_SESSIONS; i++) {
+      wasEliminated[i] = false;
+      if (!cardSessions[i].active || !cardSessions[i].houseyFormat) continue;
+      wasEliminated[i] = cardSessions[i].eliminated;
+      if (!cardSessions[i].eliminated) afloatBefore++;
+    }
+
+    int justSunk[MAX_CARD_SESSIONS];
+    int justSunkCount = 0;
+    for (int i = 0; i < MAX_CARD_SESSIONS; i++) {
+      if (!cardSessions[i].active || !cardSessions[i].houseyFormat) continue;
+      const bool sunk = houseyCardAllPopulatedCalled(cardSessions[i]);
+      if (sunk && !cardSessions[i].eliminated) {
+        cardSessions[i].eliminated = true;
+        justSunk[justSunkCount++] = i;
+      }
+      if (cardSessions[i].eliminated) eliminatedCount++;
+      else survivorCount++;
+    }
+
+    for (int i = 0; i < MAX_CARD_SESSIONS; i++) {
+      if (!cardSessions[i].active) continue;
+      const bool wasWinner = cardSessions[i].winner;
+      bool win = false;
+      if (!cardSessions[i].houseyClaimed) {
+        if (survivorCount == 1 && eliminatedCount >= 1 && !cardSessions[i].eliminated) {
+          win = true;
+        } else if (survivorCount == 0 && justSunkCount > 0) {
+          // Final call sank all remaining ships → co-winners among just-sunk.
+          for (int j = 0; j < justSunkCount; j++) {
+            if (justSunk[j] == i) { win = true; break; }
+          }
+        }
+      }
+      cardSessions[i].winner = win;
+      if (!wasWinner && win) hasNewWinnerEvent = true;
+      if (win) winnerCount++;
+    }
+    (void)afloatBefore;
+    (void)wasEliminated;
+  } else {
+    for (int i = 0; i < MAX_CARD_SESSIONS; i++) {
+      if (!cardSessions[i].active) continue;
+      if (isGameStyleHousey(gameStyle) && !cardSessions[i].houseyFormat) {
+        cardSessions[i].winner = false;
+        continue;
+      }
+      if (isGameStyleBingo(gameStyle) && cardSessions[i].houseyFormat) {
+        cardSessions[i].winner = false;
+        continue;
+      }
+      const bool wasWinner = cardSessions[i].winner;
+      cardSessions[i].winner = sessionHasWinningPattern(cardSessions[i]);
+      if (!wasWinner && cardSessions[i].winner) hasNewWinnerEvent = true;
+      if (cardSessions[i].winner) winnerCount++;
+    }
   }
+
   if (winnerSuppressed && hasNewWinnerEvent) {
-    // A new unclaimed winner emerged after "keep going"; lift suppression.
     winnerSuppressed = false;
   }
   if (hasNewWinnerEvent) {
@@ -1873,11 +2126,42 @@ void getGameTypePhysicalIndices(int* out, int* count) {
     if (*count >= 25) return;
     int p = gameTypeCellToPhysical(cell);
     if (p >= 0) {
-      // Deduplicate
       for (int i = 0; i < *count; i++) if (out[i] == p) return;
       out[(*count)++] = p;
     }
   };
+
+  if (isGameStyleHousey(gameStyle)) {
+    if (strcmp(gameType, "battleship") == 0) {
+      // Continuous chase 1→25 at PATTERN_CYCLE_MS per cell (loops like BINGO orientations).
+      if (houseyBattleshipChaseStartMs == 0) {
+        houseyBattleshipChaseStartMs = millis();
+      }
+      const unsigned long ms = millis() - houseyBattleshipChaseStartMs;
+      int cell = (int)((ms / PATTERN_CYCLE_MS) % 25UL) + 1;
+      add(cell);
+      return;
+    }
+    if (strcmp(gameType, "four_corners") == 0) {
+      add(1); add(5); add(21); add(25);
+      return;
+    }
+    if (strcmp(gameType, "line") == 0) {
+      for (int c = 11; c <= 15; c++) add(c);
+      return;
+    }
+    if (strcmp(gameType, "two_lines") == 0) {
+      for (int c = 6; c <= 10; c++) add(c);
+      for (int c = 21; c <= 25; c++) add(c);
+      return;
+    }
+    if (strcmp(gameType, "full_house") == 0) {
+      for (int c = 1; c <= 25; c++) add(c);
+      return;
+    }
+    return;
+  }
+
   const GameTypeDef* def = currentGameTypeDef();
   if (!def || def->displayCount <= 0) return;
   int idx = patternIdx % def->displayCount;
@@ -2576,16 +2860,21 @@ void loadNvs() {
   if (nvs_get_u32(nvs, NVS_LED_HEADER_COLOR, &hc) == ESP_OK) letterHeaderColor = hc;
   uint32_t gc;
   if (nvs_get_u32(nvs, NVS_GAME_TYPE_LED_COLOR, &gc) == ESP_OK) gameTypeLedColor = gc;
+  size_t styleLen = sizeof(gameStyleBuf);
+  if (nvs_get_str(nvs, NVS_GAME_STYLE, gameStyleBuf, &styleLen) != ESP_OK) {
+    strcpy(gameStyleBuf, "bingo");
+  } else if (strcmp(gameStyleBuf, "bingo") != 0 && strcmp(gameStyleBuf, "housey") != 0) {
+    strcpy(gameStyleBuf, "bingo");
+  }
   size_t len = sizeof(gameTypeBuf);
   if (nvs_get_str(nvs, NVS_GAME_TYPE, gameTypeBuf, &len) == ESP_OK) {
-    if (!isValidGameTypeId(gameTypeBuf))
-      strcpy(gameTypeBuf, "cover_all");
+    // validated below with style
   }
-  gameTypeIdx = findGameTypeIndex(gameTypeBuf);
-  if (gameTypeIdx < 0) {
+  if (!isValidGameSelectionPair(gameStyleBuf, gameTypeBuf)) {
+    strcpy(gameStyleBuf, "bingo");
     strcpy(gameTypeBuf, "cover_all");
-    gameTypeIdx = findGameTypeIndex("cover_all");
   }
+  applyGameSelection(gameStyleBuf, gameTypeBuf);
   size_t csLen = sizeof(callingStyleBuf);
   if (nvs_get_str(nvs, NVS_CALLING_STYLE, callingStyleBuf, &csLen) == ESP_OK) {
     if (strcmp(callingStyleBuf, "automatic") != 0 && strcmp(callingStyleBuf, "manual") != 0)
@@ -2708,8 +2997,8 @@ void saveNvsSettings() {
   nvs_set_u32(nvs, NVS_LED_COLOR_N, customLetterColors[2]);
   nvs_set_u32(nvs, NVS_LED_COLOR_G, customLetterColors[3]);
   nvs_set_u32(nvs, NVS_LED_COLOR_O, customLetterColors[4]);
+  nvs_set_str(nvs, NVS_GAME_STYLE, gameStyle);
   nvs_set_str(nvs, NVS_GAME_TYPE, gameType);
-  nvs_set_str(nvs, NVS_CALLING_STYLE, callingStyle);
   nvs_set_str(nvs, NVS_BOARD_PIN, boardPinBuf);
   if (deviceIdBuf[0] != '\0') nvs_set_str(nvs, NVS_DEVICE_ID, deviceIdBuf);
   nvs_set_str(nvs, NVS_SCREENSAVER_TEXT, screensaverText);
@@ -2727,6 +3016,7 @@ void saveNvsSettings() {
 
 void saveNvsGameTypeOnly() {
   if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+  nvs_set_str(nvs, NVS_GAME_STYLE, gameStyle);
   nvs_set_str(nvs, NVS_GAME_TYPE, gameType);
   nvs_commit(nvs);
   nvs_close(nvs);
@@ -2750,6 +3040,7 @@ void populateStateJson(JsonObject doc) {
   doc["current"] = currentNumber;
   doc["remaining"] = poolCount;
   doc["boardSeed"] = boardSeed;
+  doc["gameStyle"] = gameStyle;
   doc["gameType"] = gameType;
   doc["callingStyle"] = callingStyle;
   doc["gameEstablished"] = gameEstablished;
@@ -2758,6 +3049,8 @@ void populateStateJson(JsonObject doc) {
   doc["manualWinnerDeclared"] = manualWinnerDeclared;
   doc["winnerEventId"] = winnerEventId;
   doc["winnerCount"] = pendingWinnerActivation ? 0 : winnerCount;
+  doc["survivorCount"] = survivorCount;
+  doc["eliminatedCount"] = eliminatedCount;
   const int activeCards = getActiveCardCount();
   doc["cardCount"] = activeCards;
   doc["playerCount"] = activeCards;
@@ -3052,6 +3345,28 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     return;
   }
 
+  if (action == "set_game_selection") {
+    const char* err = nullptr;
+    if (!requireBoardToken(err)) { sendWsCommandResult(client, requestId, false, 401, "{}", err); return; }
+    if (!canChangeGameTypeNow()) {
+      sendWsCommandResult(client, requestId, false, 409, "{}", "game in progress");
+      return;
+    }
+    const char* style = payload["gameStyle"] | "";
+    const char* gt = payload["gameType"] | "";
+    if (!applyGameSelection(style, gt)) {
+      sendWsCommandResult(client, requestId, false, 400, "{}", "invalid");
+      return;
+    }
+    recomputeCardWinners();
+    updateAllLeds();
+    broadcastStateWs("game_type_changed");
+    broadcastAllCardStatesWs("card_state");
+    saveNvsGameTypeOnly();
+    sendWsCommandResult(client, requestId, true, 200, "{}");
+    return;
+  }
+
   if (action == "declare_winner") {
     const char* err = nullptr;
     if (!requireBoardToken(err)) { sendWsCommandResult(client, requestId, false, 401, "{}", err); return; }
@@ -3101,14 +3416,21 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     for (int i = 0; i < 25; i++) {
       cardNums[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
     }
-    if (!validateBingoCardNumbers(cardNums)) {
+    const char* styleIn = payload["gameStyle"] | "bingo";
+    const bool housey = (strcmp(styleIn, "housey") == 0);
+    if (isGameStyleHousey(gameStyle) != housey) {
+      sendWsCommandResult(client, requestId, false, 409, "{}", "card style mismatch");
+      return;
+    }
+    if (housey ? !validateHouseyCardNumbers(cardNums) : !validateBingoCardNumbers(cardNums)) {
       sendWsCommandResult(client, requestId, false, 400, "{}", "invalid card numbers");
       return;
     }
     for (int i = 0; i < 25; i++) {
       s->numbers[i] = cardNums[i];
-      s->marks[i] = (i == 12);
+      s->marks[i] = (!housey && i == 12);
     }
+    s->houseyFormat = housey;
     s->winner = false;
     resetSessionClaimedMasks(*s);
     recomputeCardWinners();
@@ -3131,7 +3453,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     bool marked = payload["marked"] | false;
     CardSession* s = findCardSessionById(cardId);
     if (!s) { sendWsCommandResult(client, requestId, false, 404, "{}", "card not found"); return; }
-    if (cellIndex < 0 || cellIndex >= 25 || cellIndex == 12) {
+    if (cellIndex < 0 || cellIndex >= 25 || (!s->houseyFormat && cellIndex == 12)) {
       sendWsCommandResult(client, requestId, false, 400, "{}", "invalid cell");
       return;
     }
@@ -3643,6 +3965,25 @@ void setup() {
     JsonObject obj = json.as<JsonObject>();
     const char* gt = obj["gameType"];
     if (gt && applyGameTypeId(gt)) {
+      recomputeCardWinners();
+      updateAllLeds();
+      req->send(200, "application/json", "{}");
+      broadcastStateWs("game_type_changed");
+      broadcastAllCardStatesWs("card_state");
+      saveNvsGameTypeOnly();
+    } else req->send(400, "application/json", "{\"error\":\"invalid\"}");
+  }));
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/game-selection", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    if (!canChangeGameTypeNow()) {
+      req->send(409, "application/json", "{\"error\":\"game in progress\"}");
+      return;
+    }
+    JsonObject obj = json.as<JsonObject>();
+    const char* style = obj["gameStyle"] | "";
+    const char* gt = obj["gameType"] | "";
+    if (applyGameSelection(style, gt)) {
       recomputeCardWinners();
       updateAllLeds();
       req->send(200, "application/json", "{}");
@@ -4188,14 +4529,21 @@ void setup() {
     for (int i = 0; i < 25; i++) {
       cardNums[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
     }
-    if (!validateBingoCardNumbers(cardNums)) {
+    const char* styleIn = obj["gameStyle"] | "bingo";
+    const bool housey = (strcmp(styleIn, "housey") == 0);
+    if (isGameStyleHousey(gameStyle) != housey) {
+      req->send(409, "application/json", "{\"error\":\"card style mismatch\"}");
+      return;
+    }
+    if (housey ? !validateHouseyCardNumbers(cardNums) : !validateBingoCardNumbers(cardNums)) {
       req->send(400, "application/json", "{\"error\":\"invalid card numbers\"}");
       return;
     }
     for (int i = 0; i < 25; i++) {
       s->numbers[i] = cardNums[i];
-      s->marks[i] = (i == 12);
+      s->marks[i] = (!housey && i == 12);
     }
+    s->houseyFormat = housey;
     s->winner = false;
     resetSessionClaimedMasks(*s);
     recomputeCardWinners();
@@ -4225,14 +4573,20 @@ void setup() {
     for (int i = 0; i < 25; i++) {
       cardNums[i] = nums[i].isNull() ? 0 : nums[i].as<int>();
     }
-    if (!validateBingoCardNumbers(cardNums)) {
+    const char* styleIn = obj["gameStyle"] | "bingo";
+    const bool housey = (strcmp(styleIn, "housey") == 0);
+    if (isGameStyleHousey(gameStyle) != housey) {
+      req->send(409, "application/json", "{\"error\":\"card style mismatch\"}");
+      return;
+    }
+    if (housey ? !validateHouseyCardNumbers(cardNums) : !validateBingoCardNumbers(cardNums)) {
       req->send(400, "application/json", "{\"error\":\"invalid card numbers\"}");
       return;
     }
 
     const char* sig = obj["sig"].as<const char*>();
     if (!sig) sig = obj["signature"].as<const char*>();
-    const bool authentic = verifyCardSignature(cardNums, sig);
+    const bool authentic = verifyCardSignature(cardNums, sig, housey);
 
     char contentId[17];
     cardIdFromCardNumbers(cardNums, contentId, sizeof(contentId));
@@ -4247,6 +4601,7 @@ void setup() {
     strncpy(s->cardId, contentId, sizeof(s->cardId) - 1);
     s->cardId[sizeof(s->cardId) - 1] = '\0';
     for (int i = 0; i < 25; i++) s->numbers[i] = cardNums[i];
+    s->houseyFormat = housey;
     resetSessionClaimedMasks(*s);
     const bool syncMarks = obj.containsKey("autoSync") ? obj["autoSync"].as<bool>() : true;
     if (syncMarks) syncSessionMarksFromCalled(*s);
@@ -4278,7 +4633,7 @@ void setup() {
       req->send(404, "application/json", "{\"error\":\"card not found\"}");
       return;
     }
-    if (cellIndex < 0 || cellIndex >= 25 || cellIndex == 12) {
+    if (cellIndex < 0 || cellIndex >= 25 || (!s->houseyFormat && cellIndex == 12)) {
       req->send(400, "application/json", "{\"error\":\"invalid cell\"}");
       return;
     }
@@ -4368,10 +4723,17 @@ void setup() {
 void handleButton1ShortPress() {
   if (!canChangeGameTypeNow()) return;
 
-  int currentIdx = findGameTypeIndex(gameType);
-  if (currentIdx < 0) currentIdx = 0;
-  int nextIdx = (currentIdx + 1) % GAME_TYPE_COUNT;
-  applyGameTypeId(GAME_TYPE_TABLE[nextIdx].id);
+  if (isGameStyleHousey(gameStyle)) {
+    int currentIdx = findHouseyGameTypeIndex(gameType);
+    if (currentIdx < 0) currentIdx = 0;
+    int nextIdx = (currentIdx + 1) % HOUSEY_GAME_TYPE_COUNT;
+    applyGameSelection("housey", HOUSEY_GAME_TYPES[nextIdx]);
+  } else {
+    int currentIdx = findGameTypeIndex(gameType);
+    if (currentIdx < 0) currentIdx = 0;
+    int nextIdx = (currentIdx + 1) % GAME_TYPE_COUNT;
+    applyGameSelection("bingo", GAME_TYPE_TABLE[nextIdx].id);
+  }
   recomputeCardWinners();
   updateAllLeds();
   broadcastStateWs("game_type_changed");
@@ -4495,6 +4857,14 @@ void loop() {
       lastPatternChange = millis();
       broadcastPatternIndexWs();
     }
+  }
+
+  // HOUSEY Battleship chase loops at PATTERN_CYCLE_MS per cell (same cadence as BINGO).
+  static unsigned long lastHouseyChaseMs = 0;
+  if (isGameStyleHousey(gameStyle) && strcmp(gameType, "battleship") == 0 &&
+      (millis() - lastHouseyChaseMs) >= PATTERN_CYCLE_MS) {
+    lastHouseyChaseMs = millis();
+    updateAllLeds();
   }
 
   static unsigned long lastAutoCallingProgressMs = 0;

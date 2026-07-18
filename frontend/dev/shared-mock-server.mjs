@@ -17,6 +17,25 @@ const CYCLING_PATTERN_COUNTS = Object.fromEntries(
     .map((t) => [t.id, t.displayPatterns.length])
 );
 
+const HOUSEY_GAME_TYPES = ["battleship", "four_corners", "line", "two_lines", "full_house"];
+const HOUSEY_CORNER_INDICES = [0, 4, 20, 24];
+const HOUSEY_MIN_POPULATED = 10;
+const HOUSEY_MAX_POPULATED = 12;
+
+function isGameType(id) {
+  return ALL_GAME_TYPES.includes(id);
+}
+
+function isHouseyGameType(id) {
+  return HOUSEY_GAME_TYPES.includes(id);
+}
+
+function isValidGameSelection(style, gameType) {
+  if (style === "bingo") return isGameType(gameType);
+  if (style === "housey") return isHouseyGameType(gameType);
+  return false;
+}
+
 const PORT = Number.parseInt(process.env.SHARED_MOCK_PORT ?? "8787", 10);
 const BOARD_AUTH_TTL_MS = 30 * 60 * 1000;
 const BOARD_UNLOCK_MAX_FAILURES = 5;
@@ -29,12 +48,15 @@ const state = {
   called: [],
   remaining: 75,
   boardSeed: randomSeed(),
+  gameStyle: "bingo",
   gameType: "traditional",
   callingStyle: "automatic",
   gameEstablished: false,
   winnerDeclared: false,
   manualWinnerDeclared: false,
   winnerCount: 0,
+  survivorCount: 0,
+  eliminatedCount: 0,
   playerCount: 0,
   cardCount: 0,
   ledTestMode: false,
@@ -103,7 +125,7 @@ function syncCardCounts() {
 }
 
 function effectiveMarked(session, idx) {
-  if (idx === 12) return true;
+  if (!session.houseyFormat && idx === 12) return true;
   if (!session.marks[idx]) return false;
   const n = session.numbers[idx];
   return Number.isInteger(n) && state.called.includes(n);
@@ -118,7 +140,108 @@ function gameTypeIndex(gameType = state.gameType) {
   return idx >= 0 ? idx : 0;
 }
 
-function sessionWin(session) {
+function populatedCount(numbers) {
+  let n = 0;
+  for (const v of numbers) {
+    if (Number.isInteger(v) && v >= 1 && v <= 75) n++;
+  }
+  return n;
+}
+
+function validateHouseyCardNumbers(numbers) {
+  const n = populatedCount(numbers);
+  return n >= HOUSEY_MIN_POPULATED && n <= HOUSEY_MAX_POPULATED;
+}
+
+function houseyCardAllPopulatedCalled(session) {
+  let populated = 0;
+  for (let i = 0; i < 25; i++) {
+    const n = session.numbers[i];
+    if (!Number.isInteger(n) || n < 1 || n > 75) continue;
+    populated++;
+    if (!state.called.includes(n)) return false;
+  }
+  return populated > 0;
+}
+
+function houseyRowComplete(session, row) {
+  let populated = 0;
+  for (let c = 0; c < 5; c++) {
+    const n = session.numbers[row * 5 + c];
+    if (!Number.isInteger(n) || n < 1 || n > 75) continue;
+    populated++;
+    if (!state.called.includes(n)) return false;
+  }
+  return populated > 0;
+}
+
+function houseyRowContainsNumber(session, row, number) {
+  if (number < 1 || number > 75) return false;
+  for (let c = 0; c < 5; c++) {
+    if (session.numbers[row * 5 + c] === number) return true;
+  }
+  return false;
+}
+
+function houseySessionHasPatternWin(session) {
+  if (session.houseyClaimed) return false;
+  const gt = state.gameType;
+  const current = state.current;
+
+  if (gt === "four_corners") {
+    let populated = 0;
+    let hasCurrent = false;
+    for (const idx of HOUSEY_CORNER_INDICES) {
+      const n = session.numbers[idx];
+      if (!Number.isInteger(n) || n < 1 || n > 75) continue;
+      populated++;
+      if (!state.called.includes(n)) return false;
+      if (n === current) hasCurrent = true;
+    }
+    if (populated === 0) return false;
+    if (current >= 1 && !hasCurrent) return false;
+    return true;
+  }
+
+  if (gt === "line") {
+    for (let r = 0; r < 5; r++) {
+      if (!houseyRowComplete(session, r)) continue;
+      if (current >= 1 && !houseyRowContainsNumber(session, r, current)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  if (gt === "two_lines") {
+    const completeRows = [];
+    for (let r = 0; r < 5; r++) {
+      if (houseyRowComplete(session, r)) completeRows.push(r);
+    }
+    if (completeRows.length < 2) return false;
+    if (current >= 1) {
+      const onComplete = completeRows.some((r) => houseyRowContainsNumber(session, r, current));
+      if (!onComplete) return false;
+    }
+    return true;
+  }
+
+  if (gt === "full_house") {
+    if (!houseyCardAllPopulatedCalled(session)) return false;
+    if (current >= 1) {
+      const onCard = session.numbers.some((n) => n === current);
+      if (!onCard) return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function sessionHasWinningPattern(session) {
+  if (state.gameStyle === "housey") {
+    if (state.gameType === "battleship") return Boolean(session.winner);
+    return houseySessionHasPatternWin(session);
+  }
   const satisfied = satisfiedMaskForCurrentGameType(session);
   const claimed = claimedMaskForCurrentGameType(session);
   const available = satisfied & ~claimed;
@@ -153,6 +276,11 @@ function claimedMaskForCurrentGameType(session) {
 }
 
 function claimCurrentWinningPatterns(session) {
+  if (state.gameStyle === "housey") {
+    session.houseyClaimed = true;
+    session.winner = false;
+    return;
+  }
   if (!session.claimedPatternMasks) session.claimedPatternMasks = emptyClaimedMasks();
   const idx = gameTypeIndex();
   session.claimedPatternMasks[idx] = (session.claimedPatternMasks[idx] ?? 0) | satisfiedMaskForCurrentGameType(session);
@@ -161,12 +289,56 @@ function claimCurrentWinningPatterns(session) {
 function recomputeWinners() {
   let winners = 0;
   let hasNewWinnerEvent = false;
-  for (const session of cardSessions.values()) {
-    const wasWinner = Boolean(session.winner);
-    session.winner = sessionWin(session);
-    if (!wasWinner && session.winner) hasNewWinnerEvent = true;
-    if (session.winner) winners++;
+  state.survivorCount = 0;
+  state.eliminatedCount = 0;
+
+  if (state.gameStyle === "housey" && state.gameType === "battleship") {
+    const justSunk = [];
+    for (const session of cardSessions.values()) {
+      if (!session.houseyFormat) {
+        session.winner = false;
+        continue;
+      }
+      const sunk = houseyCardAllPopulatedCalled(session);
+      if (sunk && !session.eliminated) {
+        session.eliminated = true;
+        justSunk.push(session);
+      }
+      if (session.eliminated) state.eliminatedCount++;
+      else state.survivorCount++;
+    }
+
+    for (const session of cardSessions.values()) {
+      const wasWinner = Boolean(session.winner);
+      let win = false;
+      if (session.houseyFormat && !session.houseyClaimed) {
+        if (state.survivorCount === 1 && state.eliminatedCount >= 1 && !session.eliminated) {
+          win = true;
+        } else if (state.survivorCount === 0 && justSunk.length > 0) {
+          win = justSunk.includes(session);
+        }
+      }
+      session.winner = win;
+      if (!wasWinner && win) hasNewWinnerEvent = true;
+      if (win) winners++;
+    }
+  } else {
+    for (const session of cardSessions.values()) {
+      if (state.gameStyle === "housey" && !session.houseyFormat) {
+        session.winner = false;
+        continue;
+      }
+      if (state.gameStyle === "bingo" && session.houseyFormat) {
+        session.winner = false;
+        continue;
+      }
+      const wasWinner = Boolean(session.winner);
+      session.winner = sessionHasWinningPattern(session);
+      if (!wasWinner && session.winner) hasNewWinnerEvent = true;
+      if (session.winner) winners++;
+    }
   }
+
   if (winnerSuppressed && hasNewWinnerEvent) {
     // New unclaimed winner appeared after keep-going.
     winnerSuppressed = false;
@@ -191,13 +363,17 @@ function resetGame() {
   state.winnerDeclared = false;
   state.winnerEventId = winnerEventId;
   state.winnerCount = 0;
+  state.survivorCount = 0;
+  state.eliminatedCount = 0;
   state.boardSeed = randomSeed();
   pool = Array.from({ length: 75 }, (_, i) => i + 1);
   callOrder = [];
   for (const s of cardSessions.values()) {
-    s.marks = Array.from({ length: 25 }, (_, i) => i === 12);
+    s.marks = Array.from({ length: 25 }, (_, i) => !s.houseyFormat && i === 12);
     s.winner = false;
     s.claimedPatternMasks = emptyClaimedMasks();
+    s.houseyClaimed = false;
+    s.eliminated = false;
   }
   syncCardCounts();
 }
@@ -257,6 +433,7 @@ function cardStateEnvelope(cardId, type = "card_state") {
 
 function startPatternCycling() {
   setInterval(() => {
+    if (state.gameStyle !== "bingo") return;
     const count = CYCLING_PATTERN_COUNTS[state.gameType];
     if (!count) return;
     state.patternIndex = (state.patternIndex + 1) % count;
@@ -407,7 +584,22 @@ const server = http.createServer(async (req, res) => {
   if (method === "POST" && path === "/game-type") {
     if (!requireBoardAuth(req, res)) return;
     const body = await parseBody(req);
-    if (!ALL_GAME_TYPES.includes(body.gameType)) return badRequest(res, "invalid");
+    if (state.gameEstablished && !state.winnerDeclared) return json(res, 409, { error: "game in progress" });
+    if (!isGameType(body.gameType)) return badRequest(res, "invalid");
+    state.gameStyle = "bingo";
+    state.gameType = body.gameType;
+    state.patternIndex = 0;
+    recomputeWinners();
+    broadcastState("game_type_changed");
+    broadcastAllCardStates("card_state");
+    return json(res, 200, {});
+  }
+  if (method === "POST" && path === "/game-selection") {
+    if (!requireBoardAuth(req, res)) return;
+    const body = await parseBody(req);
+    if (state.gameEstablished && !state.winnerDeclared) return json(res, 409, { error: "game in progress" });
+    if (!isValidGameSelection(body.gameStyle, body.gameType)) return badRequest(res, "invalid");
+    state.gameStyle = body.gameStyle;
     state.gameType = body.gameType;
     state.patternIndex = 0;
     recomputeWinners();
@@ -476,12 +668,30 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const numbers = Array.isArray(body.numbers) ? body.numbers : [];
     if (numbers.length !== 25) return badRequest(res, "numbers[25] required");
+    const style = body.gameStyle === "housey" ? "housey" : "bingo";
+    if (style !== state.gameStyle) return badRequest(res, "game style mismatch");
+    const normalized = numbers.slice(0, 25).map((n) => (n == null ? null : Number(n)));
+    if (style === "housey" && !validateHouseyCardNumbers(normalized)) {
+      return badRequest(res, "invalid housey card");
+    }
     const id = String(body.cardId || genToken().slice(0, 16));
-    const session = cardSessions.get(id) ?? { cardId: id, numbers: [], marks: [], winner: false };
-    session.numbers = numbers.slice(0, 25).map((n) => (n == null ? null : Number(n)));
-    session.marks = Array.from({ length: 25 }, (_, i) => i === 12);
+    const housey = style === "housey";
+    const session = cardSessions.get(id) ?? {
+      cardId: id,
+      numbers: [],
+      marks: [],
+      winner: false,
+      houseyFormat: housey,
+      houseyClaimed: false,
+      eliminated: false,
+    };
+    session.numbers = normalized;
+    session.marks = Array.from({ length: 25 }, (_, i) => !housey && i === 12);
     session.winner = false;
     session.claimedPatternMasks = emptyClaimedMasks();
+    session.houseyFormat = housey;
+    session.houseyClaimed = false;
+    session.eliminated = false;
     cardSessions.set(id, session);
     recomputeWinners();
     broadcastState("card_joined");
@@ -495,7 +705,8 @@ const server = http.createServer(async (req, res) => {
     const marked = Boolean(body.marked);
     const session = cardSessions.get(cardId);
     if (!session) return json(res, 404, { error: "card not found" });
-    if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex > 24 || cellIndex === 12) return badRequest(res, "invalid cell");
+    if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex > 24) return badRequest(res, "invalid cell");
+    if (!session.houseyFormat && cellIndex === 12) return badRequest(res, "invalid cell");
     session.marks[cellIndex] = marked;
     recomputeWinners();
     broadcastState("card_mark_changed");
@@ -510,7 +721,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) return json(res, 404, { error: "card not found" });
     if (!Array.isArray(marks) || marks.length !== 25) return badRequest(res, "marks[25] required");
     for (let i = 0; i < 25; i++) {
-      session.marks[i] = i === 12 ? true : Boolean(marks[i]);
+      session.marks[i] = !session.houseyFormat && i === 12 ? true : Boolean(marks[i]);
     }
     recomputeWinners();
     broadcastState("card_mark_changed");
@@ -667,11 +878,33 @@ function handleWsCommand(ws, msg) {
   if (action === "set_game_type") {
     const auth = guarded();
     if (!auth.ok) return wsResult(ws, requestId, false, auth.status, null, auth.error);
+    if (state.gameEstablished && !state.winnerDeclared) {
+      return wsResult(ws, requestId, false, 409, null, "game in progress");
+    }
     const gameType = payload.gameType;
-    if (!ALL_GAME_TYPES.includes(gameType)) {
+    if (!isGameType(gameType)) {
       return wsResult(ws, requestId, false, 400, null, "invalid");
     }
+    state.gameStyle = "bingo";
     state.gameType = gameType;
+    state.patternIndex = 0;
+    recomputeWinners();
+    broadcastState("game_type_changed");
+    broadcastAllCardStates("card_state");
+    wsResult(ws, requestId, true, 200, {});
+    return;
+  }
+  if (action === "set_game_selection") {
+    const auth = guarded();
+    if (!auth.ok) return wsResult(ws, requestId, false, auth.status, null, auth.error);
+    if (state.gameEstablished && !state.winnerDeclared) {
+      return wsResult(ws, requestId, false, 409, null, "game in progress");
+    }
+    if (!isValidGameSelection(payload.gameStyle, payload.gameType)) {
+      return wsResult(ws, requestId, false, 400, null, "invalid");
+    }
+    state.gameStyle = payload.gameStyle;
+    state.gameType = payload.gameType;
     state.patternIndex = 0;
     recomputeWinners();
     broadcastState("game_type_changed");
@@ -706,12 +939,30 @@ function handleWsCommand(ws, msg) {
   if (action === "join_card") {
     const numbers = Array.isArray(payload.numbers) ? payload.numbers : [];
     if (numbers.length !== 25) return wsResult(ws, requestId, false, 400, null, "numbers[25] required");
+    const style = payload.gameStyle === "housey" ? "housey" : "bingo";
+    if (style !== state.gameStyle) return wsResult(ws, requestId, false, 400, null, "game style mismatch");
+    const normalized = numbers.slice(0, 25).map((n) => (n == null ? null : Number(n)));
+    if (style === "housey" && !validateHouseyCardNumbers(normalized)) {
+      return wsResult(ws, requestId, false, 400, null, "invalid housey card");
+    }
     const id = String(payload.cardId || genToken().slice(0, 16));
-    const session = cardSessions.get(id) ?? { cardId: id, numbers: [], marks: [], winner: false };
-    session.numbers = numbers.slice(0, 25).map((n) => (n == null ? null : Number(n)));
-    session.marks = Array.from({ length: 25 }, (_, i) => i === 12);
+    const housey = style === "housey";
+    const session = cardSessions.get(id) ?? {
+      cardId: id,
+      numbers: [],
+      marks: [],
+      winner: false,
+      houseyFormat: housey,
+      houseyClaimed: false,
+      eliminated: false,
+    };
+    session.numbers = normalized;
+    session.marks = Array.from({ length: 25 }, (_, i) => !housey && i === 12);
     session.winner = false;
     session.claimedPatternMasks = emptyClaimedMasks();
+    session.houseyFormat = housey;
+    session.houseyClaimed = false;
+    session.eliminated = false;
     cardSessions.set(id, session);
     recomputeWinners();
     broadcastState("card_joined");
@@ -725,7 +976,10 @@ function handleWsCommand(ws, msg) {
     const marked = Boolean(payload.marked);
     const session = cardSessions.get(cardId);
     if (!session) return wsResult(ws, requestId, false, 404, null, "card not found");
-    if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex > 24 || cellIndex === 12) {
+    if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex > 24) {
+      return wsResult(ws, requestId, false, 400, null, "invalid cell");
+    }
+    if (!session.houseyFormat && cellIndex === 12) {
       return wsResult(ws, requestId, false, 400, null, "invalid cell");
     }
     session.marks[cellIndex] = marked;

@@ -30,10 +30,11 @@ function drawCard(
 ) {
   const { x, y, width, height, cardIndex, claimUrl } = opts;
   const numbers = card.numbers;
+  const isHousey = card.gameStyle === "housey";
   const pad = 6;
   const headerH = 16;
-  // Tiny footer for card number only — footer QR removed; space goes to the grid.
-  const footerH = 10;
+  // Tiny footer for card number only — footer QR for HOUSEY; space goes to the grid.
+  const footerH = isHousey ? 24 : 10;
   const headerGap = 3;
   const gridTop = y + pad + headerH + headerGap;
   const gridBottom = y + height - pad - footerH;
@@ -71,7 +72,7 @@ function drawCard(
       doc.setFill(255, 255, 255);
       doc.rect(cx, cy, cellW, cellH, "B");
 
-      if (idx === 12) {
+      if (!isHousey && idx === 12) {
         // FREE cell = large scan-target QR with a modest center label.
         const inset = Math.max(1.5, Math.min(cellW, cellH) * 0.04);
         const qrSize = Math.min(cellW, cellH) - inset * 2;
@@ -79,14 +80,12 @@ function drawCard(
         const qrY = cy + (cellH - qrSize) / 2;
         doc.drawQrModules(qr.modules, qrX, qrY, qrSize, [36, 36, 36]);
 
-        // Keep overlay small (~20% of QR) so finder patterns stay clear.
         const labelW = qrSize * 0.42;
         const labelH = Math.max(8, qrSize * 0.18);
         const labelX = qrX + (qrSize - labelW) / 2;
         const labelY = qrY + (qrSize - labelH) / 2;
         doc.setFill(255, 255, 255);
         doc.roundedRect(labelX, labelY, labelW, labelH, Math.min(2, labelH / 3), "f");
-        // Center in the pill itself; +optical nudge (bold caps look slightly left of metric center).
         const labelCenterX = labelX + labelW / 2 + Math.max(0.35, labelW * 0.02);
         doc.text("FREE", labelCenterX, labelY + labelH / 2 + labelH * 0.28, {
           size: Math.min(9, Math.max(5.5, labelH * 0.72)),
@@ -98,7 +97,8 @@ function drawCard(
       }
 
       const val = numbers[idx];
-      doc.text(String(val ?? ""), cx + cellW / 2, cy + cellH / 2 + 3.5, {
+      if (val == null) continue; // HOUSEY blank
+      doc.text(String(val), cx + cellW / 2, cy + cellH / 2 + 3.5, {
         size: Math.min(12, Math.max(9, cellH * 0.38)),
         align: "center",
         color: [30, 30, 30],
@@ -106,11 +106,28 @@ function drawCard(
     }
   }
 
-  doc.text(`Card ${cardIndex + 1}`, x + width / 2, y + height - pad + 1, {
-    size: 5.5,
-    align: "center",
-    color: [170, 170, 170],
-  });
+  if (isHousey) {
+    // Footer QR with quiet zone (HOUSEY has no FREE cell).
+    const footerQr = 18;
+    const qrX = x + pad;
+    const qrY = y + height - pad - footerQr;
+    doc.drawQrModules(qr.modules, qrX, qrY, footerQr, [36, 36, 36]);
+    doc.text("HOUSEY", x + pad + footerQr + 4, y + height - pad - 4, {
+      size: 6,
+      color: [100, 100, 100],
+    });
+    doc.text(`Card ${cardIndex + 1}`, x + width - pad - 40, y + height - pad - 4, {
+      size: 5.5,
+      align: "left",
+      color: [170, 170, 170],
+    });
+  } else {
+    doc.text(`Card ${cardIndex + 1}`, x + width / 2, y + height - pad + 1, {
+      size: 5.5,
+      align: "center",
+      color: [170, 170, 170],
+    });
+  }
 }
 
 /**
@@ -142,7 +159,7 @@ export async function buildBingoCardsPdf(
       width: cardW,
       height: cardH,
       cardIndex: i,
-      claimUrl: buildCardClaimUrl(cards[i].numbers, origin, cards[i].sig),
+      claimUrl: buildCardClaimUrl(cards[i].numbers, origin, cards[i].sig, cards[i].gameStyle ?? "bingo"),
     });
   }
 

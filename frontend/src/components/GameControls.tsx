@@ -6,20 +6,23 @@ import { GameOverDialog } from "@/components/GameOverDialog";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
 import type { RefreshOptions } from "@/hooks/useGameState";
-import type { CallingStyle, GameState, GameType } from "@/types";
-import { GAME_TYPE_MIN_CALLS } from "@/types";
+import type { CallingStyle, GameState, AnyGameType, GameStyle } from "@/types";
+import { minCallsForSelection } from "@/types";
 import { Dices, Trophy, RotateCcw } from "lucide-react";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
 import { cn } from "@/lib/utils";
 
 interface Props {
   callingStyle: CallingStyle;
-  gameType: GameType;
+  gameStyle?: GameStyle;
+  gameType: AnyGameType;
   called: number[];
   remaining: number;
   winnerDeclared: boolean;
   winnerEventId?: number;
   winnerCount?: number;
+  survivorCount?: number;
+  eliminatedCount?: number;
   onRefresh: (options?: RefreshOptions) => void;
   onApplyOptimistic?: (updater: (prev: GameState) => GameState) => void;
   onApplyServerState?: (state: GameState) => void;
@@ -32,12 +35,15 @@ interface Props {
 
 export function GameControls({
   callingStyle,
+  gameStyle = "bingo",
   gameType,
   called,
   remaining,
   winnerDeclared,
   winnerEventId,
   winnerCount,
+  survivorCount,
+  eliminatedCount,
   onRefresh,
   onApplyOptimistic,
   onApplyServerState,
@@ -228,7 +234,7 @@ export function GameControls({
 
   const poolEmpty = remaining === 0 && called.length > 0;
   const drawDisabled = poolEmpty || drawing;
-  const minCalls = GAME_TYPE_MIN_CALLS[gameType];
+  const minCalls = minCallsForSelection(gameStyle, gameType);
   // While the winner dialog is up (announce or change-type), Winner stays idle.
   const winnerDisabled = called.length < minCalls || winnerOpen || winnerDeclared || declareBusy;
   const gridClassName =
@@ -298,7 +304,18 @@ export function GameControls({
         onRefresh={onRefresh}
         winnerCount={winnerCount}
         letterColors={letterColors}
+        gameStyle={gameStyle}
       />
+      {gameStyle === "housey" && gameType === "battleship" && (
+        <p className="mt-2 text-xs text-muted-foreground tabular-nums">
+          Afloat {survivorCount ?? 0} · Sunk {eliminatedCount ?? 0}
+        </p>
+      )}
+      {gameStyle === "housey" && gameType !== "battleship" && (winnerCount ?? 0) > 0 && !winnerDeclared && (
+        <p className="mt-2 text-xs text-muted-foreground tabular-nums">
+          Pattern complete · {winnerCount} card{(winnerCount ?? 0) === 1 ? "" : "s"}
+        </p>
+      )}
       <GameOverDialog open={gameOverOpen} onOpenChange={setGameOverOpen} onReset={handleReset} />
     </>
   );

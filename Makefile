@@ -3,7 +3,7 @@
 QA_BASE ?= http://bingo.local
 QA_PIN ?= 1975
 
-PIO_ENV ?= esp32dev
+PIO_ENV ?= esp32s3
 PIO_PORT ?=
 MONITOR_SPEED ?= 115200
 
@@ -28,8 +28,8 @@ help:
 	@echo "make monitor              Open serial monitor"
 	@echo ""
 	@echo "Optional variables:"
-	@echo "  PIO_ENV=esp32dev        PlatformIO environment"
-	@echo "  PIO_PORT=/dev/cu.usb*   Force serial port for upload/monitor"
+	@echo "  PIO_ENV=esp32s3         PlatformIO environment"
+	@echo "  PIO_PORT=/dev/cu.usb*   Force serial port for upload/monitor (often usbmodem on S3)"
 	@echo "  MONITOR_SPEED=115200    Serial monitor baud"
 
 frontend-install:

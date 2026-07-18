@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
 import type { RefreshOptions } from "@/hooks/useGameState";
-import type { GameType } from "@/types";
+import type { AnyGameType, GameStyle } from "@/types";
 import { PartyPopper } from "lucide-react";
 import confetti from "canvas-confetti";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
@@ -22,6 +22,7 @@ interface Props {
   letterColors: LetterColors;
   /** Bumps whenever a new winner announcement should start (force winner phase). */
   announcementKey?: number;
+  gameStyle?: GameStyle;
 }
 
 export function WinnerDialog({
@@ -33,9 +34,10 @@ export function WinnerDialog({
   winnerCount,
   letterColors,
   announcementKey = 0,
+  gameStyle = "bingo",
 }: Props) {
   const [phase, setPhase] = useState<"winner" | "changeType">("winner");
-  const [newType, setNewType] = useState<GameType | "">("");
+  const [newType, setNewType] = useState<AnyGameType | "">("");
   const [actionBusy, setActionBusy] = useState(false);
 
   const fireConfetti = useCallback(() => {
@@ -137,7 +139,7 @@ export function WinnerDialog({
     if (actionBusy || !newType) return;
     setActionBusy(true);
     try {
-      await api.setGameType(newType);
+      await api.setGameSelection(gameStyle, newType);
       closeDialog();
     } catch (error) {
       handleActionError(error);
@@ -175,6 +177,7 @@ export function WinnerDialog({
               </DialogDescription>
             </DialogHeader>
             <GameTypePicker
+              gameStyle={gameStyle}
               value={newType}
               onChange={(gt) => setNewType(gt)}
               letterColors={letterColors}
