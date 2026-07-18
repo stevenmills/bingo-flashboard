@@ -58,7 +58,8 @@ ESP32 GPIO 4      ────────────────────�
 
 - **105 LEDs** total (80 flashboard + 25 game-type matrix).
 - Color order: **RGB** (WS2811), set by `LED_COLOR_ORDER` in `include/config.h`.
-- A **3.3V → 5V level shifter** on the data line is recommended for 12V strips.
+- Strip output: **FastLED 3.7.8** (RMT4) on GPIO 4. Build disables the core’s builtin RGB RMT claim so the strip can use it.
+- **12V must power the strip** (USB only powers the ESP32). Common GND is required; DIN alone will not light anything.
 
 ## Pin diagram (DevKitC-1 layout, USB at bottom)
 
