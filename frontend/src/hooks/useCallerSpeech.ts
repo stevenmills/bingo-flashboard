@@ -15,9 +15,14 @@ const JOKE_NUMBERS = new Set<number>([4, 67]);
 /** Pause after the number call-out before playing a joke clip. */
 const JOKE_AFTER_NUMBER_PAUSE_MS = 1000;
 
-/** HTTP-cache warm gap — slower on phones so play fetches are not starved. */
-const NUMBER_PREFETCH_GAP_DESKTOP_MS = 180;
-const NUMBER_PREFETCH_GAP_MOBILE_MS = 450;
+/**
+ * Concurrent HTTP-cache warm batch size + gap between batches.
+ * Bunching downloads SPIFFS clips faster while still yielding so play fetches can win.
+ */
+const PREFETCH_BATCH_DESKTOP = 6;
+const PREFETCH_BATCH_MOBILE = 3;
+const PREFETCH_BATCH_GAP_DESKTOP_MS = 40;
+const PREFETCH_BATCH_GAP_MOBILE_MS = 100;
 
 /** Keep iOS/Android media session alive so timer-driven auto-call clips can play. */
 const AUDIO_KEEPALIVE_MS = 12000;
@@ -148,7 +153,9 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   /** Bingo clip deferred until the in-flight number(+joke) finishes. */
   const pendingBingoRef = useRef(false);
   const httpCacheWarmedRef = useRef<Set<string>>(new Set());
-  const numberPrefetchStartedRef = useRef(false);
+  /** Bumps cancel in-flight number / joke prefetch queues. */
+  const numberPrefetchGenRef = useRef(0);
+  const jokePrefetchGenRef = useRef(0);
   const mobileRef = useRef(false);
 
   const audioContextRef = useRef<AudioContextType | null>(null);
@@ -205,7 +212,11 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   }, []);
 
   const releaseAutoCallingHold = useCallback((force = false) => {
-    if (!force && !audioHoldActiveRef.current) return;
+    if (!audioHoldActiveRef.current) {
+      // Still nudge firmware when forced so deferred winner mode can flush.
+      if (force) notifyBoardAutoCallingHold(false);
+      return;
+    }
     audioHoldActiveRef.current = false;
     // Always release so firmware can flush deferred winner mode after the call finishes.
     notifyBoardAutoCallingHold(false);
@@ -215,6 +226,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     if (!activeRef.current) return;
     if (!speechOnRef.current || !speechUnlockedRef.current) return;
     // Mark call-out in progress (even when auto-calling is off) so winner mode waits.
+    if (audioHoldActiveRef.current) return;
     audioHoldActiveRef.current = true;
     notifyBoardAutoCallingHold(true);
   }, [notifyBoardAutoCallingHold]);
@@ -272,13 +284,46 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   }, []);
 
   /** Warm HTTP cache only (no Web Audio decode). Cheap and works for HTML Audio later. */
-  const warmHttpCache = useCallback((url: string) => {
-    if (httpCacheWarmedRef.current.has(url)) return;
+  const warmHttpCache = useCallback((url: string): Promise<void> => {
+    if (httpCacheWarmedRef.current.has(url)) return Promise.resolve();
     httpCacheWarmedRef.current.add(url);
-    void fetch(url, { cache: "force-cache", credentials: "same-origin" })
-      .then((res) => (res.ok ? res.arrayBuffer() : null))
-      .catch(() => undefined);
+    return fetch(url, { cache: "force-cache", credentials: "same-origin" })
+      .then((res) => {
+        if (res.ok) return res.arrayBuffer().then(() => undefined);
+        // Allow a later retry if the first warm failed.
+        httpCacheWarmedRef.current.delete(url);
+      })
+      .catch(() => {
+        httpCacheWarmedRef.current.delete(url);
+      });
   }, []);
+
+  const waitWhilePrefetchBlocked = useCallback(async (alive: () => boolean) => {
+    while (playbackBusyRef.current || autoCallingEnabledRef.current) {
+      await new Promise((r) => window.setTimeout(r, 250));
+      if (!alive()) return false;
+    }
+    return true;
+  }, []);
+
+  /** Fire concurrent fetches in bunches; pause while call-out audio / auto-call needs SPIFFS. */
+  const warmHttpCacheBunched = useCallback(
+    async (urls: string[], alive: () => boolean) => {
+      const batchSize = mobileRef.current ? PREFETCH_BATCH_MOBILE : PREFETCH_BATCH_DESKTOP;
+      const gap = mobileRef.current ? PREFETCH_BATCH_GAP_MOBILE_MS : PREFETCH_BATCH_GAP_DESKTOP_MS;
+      for (let i = 0; i < urls.length; i += batchSize) {
+        if (!alive()) return;
+        if (!(await waitWhilePrefetchBlocked(alive))) return;
+        const batch = urls.slice(i, i + batchSize);
+        await Promise.all(batch.map((url) => warmHttpCache(url)));
+        if (!alive()) return;
+        if (i + batchSize < urls.length) {
+          await new Promise((r) => window.setTimeout(r, gap));
+        }
+      }
+    },
+    [waitWhilePrefetchBlocked, warmHttpCache]
+  );
 
   /**
    * HTML Audio on the shared unlocked element — required for timer-driven auto-call
@@ -393,41 +438,51 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     [ensureSharedAudio, stopAudio]
   );
 
-  /** HTTP warm only — never runs during playback; paused entirely while auto-calling (SPIFFS contention). */
+  /** Number call-outs only — starts when caller speech is unlocked/on. */
   const prefetchNumberClipsInBackground = useCallback(() => {
-    if (numberPrefetchStartedRef.current) return;
-    numberPrefetchStartedRef.current = true;
-    const gap = mobileRef.current ? NUMBER_PREFETCH_GAP_MOBILE_MS : NUMBER_PREFETCH_GAP_DESKTOP_MS;
+    const gen = ++numberPrefetchGenRef.current;
+    const alive = () =>
+      gen === numberPrefetchGenRef.current &&
+      speechUnlockedRef.current &&
+      speechOnRef.current;
 
     void (async () => {
-      // Utility + joke clips first.
-      const priority = [
+      const urls = [
         callerClipUrl("on"),
-        callerClipUrl("jokes-on"),
         callerClipUrl("bingo"),
-        ...[...JOKE_NUMBERS].map((n) => jokeClipUrl(n)).filter((u): u is string => Boolean(u)),
+        ...Array.from({ length: 75 }, (_, i) => numberClipUrl(i + 1)),
       ];
-      for (const url of priority) {
-        if (!speechUnlockedRef.current || !speechOnRef.current) return;
-        while (playbackBusyRef.current || autoCallingEnabledRef.current) {
-          await new Promise((r) => window.setTimeout(r, 250));
-          if (!speechUnlockedRef.current || !speechOnRef.current) return;
-        }
-        warmHttpCache(url);
-        await new Promise((r) => window.setTimeout(r, gap));
-      }
-
-      for (let n = 1; n <= 75; n++) {
-        if (!speechUnlockedRef.current || !speechOnRef.current) return;
-        while (playbackBusyRef.current || autoCallingEnabledRef.current) {
-          await new Promise((r) => window.setTimeout(r, 250));
-          if (!speechUnlockedRef.current || !speechOnRef.current) return;
-        }
-        warmHttpCache(numberClipUrl(n));
-        await new Promise((r) => window.setTimeout(r, gap));
-      }
+      await warmHttpCacheBunched(urls, alive);
     })();
-  }, [warmHttpCache]);
+  }, [warmHttpCacheBunched]);
+
+  /** Joke clips only — starts when jokes are turned on. */
+  const prefetchJokeClipsInBackground = useCallback(() => {
+    const gen = ++jokePrefetchGenRef.current;
+    const alive = () =>
+      gen === jokePrefetchGenRef.current &&
+      speechUnlockedRef.current &&
+      speechOnRef.current &&
+      jokesOnRef.current;
+
+    void (async () => {
+      const urls = [
+        callerClipUrl("jokes-on"),
+        ...[...JOKE_NUMBERS]
+          .map((n) => jokeClipUrl(n))
+          .filter((u): u is string => Boolean(u)),
+      ];
+      await warmHttpCacheBunched(urls, alive);
+    })();
+  }, [warmHttpCacheBunched]);
+
+  const cancelNumberPrefetch = useCallback(() => {
+    numberPrefetchGenRef.current += 1;
+  }, []);
+
+  const cancelJokePrefetch = useCallback(() => {
+    jokePrefetchGenRef.current += 1;
+  }, []);
 
   const announceNumber = useCallback(
     (n: number) => {
@@ -435,7 +490,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       const rate = readCallerSpeechRate();
       const generation = ++playGenerationRef.current;
       const clipUrl = numberClipUrl(n);
-      const jokeUrl = jokeClipUrl(n);
+      const jokeUrl = jokesOnRef.current ? jokeClipUrl(n) : null;
       // Avoid competing SPIFFS fetches right before play on phones.
       if (!mobileRef.current) {
         warmHttpCache(clipUrl);
@@ -487,8 +542,10 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       if (n < 1 || n > 75) return;
       if (!speechOnRef.current || !speechUnlockedRef.current) return;
       warmHttpCache(numberClipUrl(n));
-      const jokeUrl = jokeClipUrl(n);
-      if (jokeUrl) warmHttpCache(jokeUrl);
+      if (jokesOnRef.current) {
+        const jokeUrl = jokeClipUrl(n);
+        if (jokeUrl) warmHttpCache(jokeUrl);
+      }
     },
     [warmHttpCache]
   );
@@ -497,7 +554,12 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     (n: number) => {
       if (n < 1 || n > 75) return;
       if (!speechOnRef.current || !speechUnlockedRef.current) return;
+      // `/draw` broadcasts `number_called` over WS before the HTTP response returns.
+      // The called-numbers effect may already be announcing — claim the number so we
+      // do not start a second play (and a second hold=true) for the same Draw press.
+      if (spokenNumbersRef.current.has(n) || manualAnnounceRef.current.has(n)) return;
       manualAnnounceRef.current.add(n);
+      spokenNumbersRef.current.add(n);
       announceNumber(n);
     },
     [announceNumber]
@@ -514,6 +576,8 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       setSpeechOnState(on);
       localStorage.setItem(STORAGE_KEY, on ? "true" : "false");
       if (!on) {
+        cancelNumberPrefetch();
+        cancelJokePrefetch();
         setJokesOn(false);
         playGenerationRef.current += 1;
         playbackBusyRef.current = false;
@@ -522,7 +586,14 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
         void releaseAutoCallingHold(true);
       }
     },
-    [notifyBoardWaitForAudio, releaseAutoCallingHold, setJokesOn, stopAudio]
+    [
+      cancelJokePrefetch,
+      cancelNumberPrefetch,
+      notifyBoardWaitForAudio,
+      releaseAutoCallingHold,
+      setJokesOn,
+      stopAudio,
+    ]
   );
 
   const setSpeechRate = useCallback((rate: number) => {
@@ -564,9 +635,11 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     speechUnlockedRef.current = false;
     prevUnlockedRef.current = false;
     setSpeechUnlocked(false);
+    cancelNumberPrefetch();
+    cancelJokePrefetch();
     notifyBoardWaitForAudio(false);
     void releaseAutoCallingHold(true);
-  }, [notifyBoardWaitForAudio, releaseAutoCallingHold]);
+  }, [cancelJokePrefetch, cancelNumberPrefetch, notifyBoardWaitForAudio, releaseAutoCallingHold]);
 
   useEffect(() => {
     markUnlockLostRef.current = markUnlockLost;
@@ -589,19 +662,29 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     if (!speechOnRef.current || !speechUnlockedRef.current) return;
 
     if (jokesOnRef.current) {
+      cancelJokePrefetch();
       setJokesOn(false);
       return;
     }
 
     setJokesOn(true);
     playUtilityClipSync(callerClipUrl("jokes-on"), readCallerSpeechRate());
-  }, [playUtilityClipSync, setJokesOn, speechSupported]);
+    prefetchJokeClipsInBackground();
+  }, [
+    cancelJokePrefetch,
+    playUtilityClipSync,
+    prefetchJokeClipsInBackground,
+    setJokesOn,
+    speechSupported,
+  ]);
 
   // Reset baselines when leaving board mode (not while waiting for initial hydrate).
   useEffect(() => {
     if (active) return;
     baselineReadyRef.current = false;
     prevUnlockedRef.current = false;
+    cancelNumberPrefetch();
+    cancelJokePrefetch();
     playGenerationRef.current += 1;
     playbackBusyRef.current = false;
     stopAudio();
@@ -611,12 +694,12 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     void api.setAutoCallingWaitForAudio(false).catch(() => undefined);
     void api.setAutoCallingHold(false).catch(() => undefined);
     audioHoldActiveRef.current = false;
-  }, [active, stopAudio]);
+  }, [active, cancelJokePrefetch, cancelNumberPrefetch, stopAudio]);
 
-  // Warm short utility clips in the browser HTTP cache.
+  // Warm short speech utilities once board mode is live (jokes cache separately).
   useEffect(() => {
     if (!active || !speechSupported) return;
-    for (const name of ["on", "jokes-on", "bingo"]) {
+    for (const name of ["on", "bingo"] as const) {
       warmHttpCache(callerClipUrl(name));
     }
   }, [active, speechSupported, warmHttpCache]);
@@ -777,6 +860,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       }
     } else {
       for (const n of calledNow) spokenNumbersRef.current.add(n);
+      if (newest != null) manualAnnounceRef.current.delete(newest);
     }
 
     const winnerJustEnabled = winnerDeclared && !prevWinnerDeclaredRef.current;

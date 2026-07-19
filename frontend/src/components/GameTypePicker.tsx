@@ -155,7 +155,7 @@ export function GameTypePicker({
             <Shuffle className="h-4 w-4" />
           </Button>
         </div>
-        <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", listHeightClass)} role="listbox">
+        <div className={cn("overflow-y-auto overscroll-contain rounded-lg border", listHeightClass)} role="listbox" aria-label="Housey game types">
           <div className="divide-y">
             {houseyFiltered.map((id) => {
               const selectedRow = value === id;
@@ -187,6 +187,9 @@ export function GameTypePicker({
             })}
           </div>
         </div>
+        <p className="shrink-0 pt-0.5 text-[11px] text-muted-foreground tabular-nums">
+          {houseyFiltered.length} of {HOUSEY_GAME_TYPES.length} types
+        </p>
       </div>
     );
   }
@@ -298,7 +301,7 @@ export function GameTypePicker({
           </div>
         )}
       </div>
-      <p className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+      <p className="shrink-0 pt-0.5 text-[11px] text-muted-foreground tabular-nums">
         {bingoFiltered.length} of {ALL_GAME_TYPES.length} types
       </p>
     </div>

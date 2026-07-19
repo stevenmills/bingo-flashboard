@@ -29,7 +29,7 @@ export function NewGameDialog({
 }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[min(calc(100dvh-1.5rem),40rem)] max-w-lg flex-col gap-3 overflow-hidden sm:h-[min(calc(100dvh-2rem),42rem)] sm:max-w-2xl">
+      <DialogContent className="flex h-[min(calc(100dvh-1.5rem),42rem)] max-w-lg flex-col gap-3 overflow-hidden sm:h-[min(calc(100dvh-2rem),50rem)] sm:max-w-3xl lg:max-w-4xl lg:h-[min(calc(100dvh-3rem),54rem)]">
         <DialogHeader className="shrink-0">
           <DialogTitle>New Game</DialogTitle>
           <DialogDescription>

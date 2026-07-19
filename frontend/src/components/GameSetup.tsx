@@ -224,7 +224,7 @@ export function GameSetup({
       )}
 
       {!gameEstablished && (
-        <div className={cn(fillHeight && "mt-4 shrink-0")}>
+        <div className={cn(fillHeight && "mt-5 shrink-0")}>
           <Label className="mb-2 block text-muted-foreground">Calling style</Label>
           <RadioGroup value={displayCallingStyle} onValueChange={handleCallingStyle} className="grid grid-cols-2 gap-2">
             <Label
