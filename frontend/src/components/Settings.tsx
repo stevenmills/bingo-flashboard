@@ -5,7 +5,6 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
 import { CALLER_EXAMPLE_CLIP, CALLER_VOICES, callerClipUrl, type CallerVoiceId } from "@/lib/caller-voices";
@@ -25,7 +24,6 @@ import {
   type LetterFullMode,
   type CurrentNumberEffect,
   type LedLetterColors,
-  type GameStyle,
 } from "@/types";
 import {
   BINGO_UI_THEME_LABELS,
@@ -37,9 +35,16 @@ import {
 } from "@/lib/bingo-ui-colors";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { GAME_STYLES, GAME_STYLE_LABELS } from "@/lib/game-style";
 import { Check, Copy, FileStack, Lightbulb, Lock, MonitorPlay, Palette, Play, Power, RefreshCw, Square, Volume2, Webhook, Wifi, X } from "lucide-react";
 import { buildCardClaimUrl, generateSignedPrintableCards } from "@/lib/bingo-card-codec";
+import {
+  CARD_FILL_DEFAULT,
+  CARD_FILL_MAX,
+  CARD_FILL_MIN,
+  normalizeCardFillRange,
+  readCardFillRange,
+  writeCardFillRange,
+} from "@/lib/card";
 
 const STATIC_VALUE = "static";
 const CUSTOM_LETTERS_VALUE = "custom_letters";
@@ -164,8 +169,6 @@ interface Props {
   onCallerVoiceChange?: (voice: CallerVoiceId) => void;
   onClose?: () => void;
   onRefresh: (options?: RefreshOptions) => void;
-  /** Board game style — used as the default for printable card packs. */
-  gameStyle?: GameStyle;
 }
 
 export function Settings({
@@ -206,7 +209,6 @@ export function Settings({
   onCallerVoiceChange,
   onClose,
   onRefresh,
-  gameStyle = "bingo",
 }: Props) {
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
   const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
@@ -246,7 +248,8 @@ export function Settings({
   >([]);
   const [wifiScanBusy, setWifiScanBusy] = useState(false);
   const [cardCountDraft, setCardCountDraft] = useState("4");
-  const [cardPackStyle, setCardPackStyle] = useState<GameStyle>(gameStyle);
+  const [cardFillMinDraft, setCardFillMinDraft] = useState(String(CARD_FILL_DEFAULT));
+  const [cardFillMaxDraft, setCardFillMaxDraft] = useState(String(CARD_FILL_DEFAULT));
   const [cardsBusy, setCardsBusy] = useState(false);
   const [cardsMessage, setCardsMessage] = useState<string | null>(null);
   const [cardShareLinks, setCardShareLinks] = useState<Array<{ label: string; url: string }> | null>(null);
@@ -314,6 +317,10 @@ export function Settings({
       return;
     }
     if (wasSettingsOpenRef.current) return;
+
+    const fill = readCardFillRange();
+    setCardFillMinDraft(String(fill.min));
+    setCardFillMaxDraft(String(fill.max));
 
     const s = serverStateRef.current;
     setLocalBrightnessPercent(rawToPercent(s.brightness));
@@ -708,6 +715,36 @@ export function Settings({
     return count;
   };
 
+  const parseAndPersistCardFill = () => {
+    const minRaw = Number.parseInt(cardFillMinDraft, 10);
+    const maxRaw = Number.parseInt(cardFillMaxDraft, 10);
+    const range = writeCardFillRange(
+      Number.isFinite(minRaw) ? minRaw : CARD_FILL_DEFAULT,
+      Number.isFinite(maxRaw) ? maxRaw : CARD_FILL_DEFAULT
+    );
+    setCardFillMinDraft(String(range.min));
+    setCardFillMaxDraft(String(range.max));
+    return range;
+  };
+
+  const onCardFillMinChange = (raw: string) => {
+    setCardFillMinDraft(raw);
+    const minRaw = Number.parseInt(raw, 10);
+    const maxRaw = Number.parseInt(cardFillMaxDraft, 10);
+    if (!Number.isFinite(minRaw)) return;
+    const range = normalizeCardFillRange(minRaw, Number.isFinite(maxRaw) ? maxRaw : CARD_FILL_DEFAULT);
+    if (range.max !== maxRaw) setCardFillMaxDraft(String(range.max));
+  };
+
+  const onCardFillMaxChange = (raw: string) => {
+    setCardFillMaxDraft(raw);
+    const maxRaw = Number.parseInt(raw, 10);
+    const minRaw = Number.parseInt(cardFillMinDraft, 10);
+    if (!Number.isFinite(maxRaw)) return;
+    const range = normalizeCardFillRange(Number.isFinite(minRaw) ? minRaw : CARD_FILL_DEFAULT, maxRaw);
+    if (range.min !== minRaw) setCardFillMinDraft(String(range.min));
+  };
+
   const copyCardText = async (text: string, key: string) => {
     const ok = await copyTextToClipboard(text);
     if (!ok) {
@@ -723,18 +760,18 @@ export function Settings({
 
   const handleGenerateBingoCards = async () => {
     const count = parseCardCount();
+    const fill = parseAndPersistCardFill();
     setCardsBusy(true);
     setCardsMessage(null);
     try {
       const { deviceId } = await api.getDeviceId();
-      const cards = await generateSignedPrintableCards(count, deviceId, cardPackStyle);
+      const cards = await generateSignedPrintableCards(count, deviceId, fill);
       const { buildBingoCardsPdf, downloadBlob } = await import("@/lib/bingo-cards-pdf");
       const blob = await buildBingoCardsPdf(cards, "http://bingo.local");
       const sheets = Math.ceil(cards.length / 4);
-      const prefix = cardPackStyle === "housey" ? "housey-cards" : "bingo-cards";
-      downloadBlob(blob, `${prefix}-${cards.length}.pdf`);
+      downloadBlob(blob, `bingo-cards-${cards.length}.pdf`);
       setCardsMessage(
-        `Downloaded ${cards.length} unique authenticated ${cardPackStyle.toUpperCase()} card${cards.length === 1 ? "" : "s"} across ${sheets} sheet${sheets === 1 ? "" : "s"} (4 per page).`
+        `Downloaded ${cards.length} unique authenticated card${cards.length === 1 ? "" : "s"} across ${sheets} sheet${sheets === 1 ? "" : "s"} (4 per page).`
       );
     } catch (e: unknown) {
       if (isBoardAuthHttpError(e)) {
@@ -750,19 +787,20 @@ export function Settings({
 
   const handleGenerateCardLinks = async () => {
     const count = parseCardCount();
+    const fill = parseAndPersistCardFill();
     setCardsBusy(true);
     setCardsMessage(null);
     try {
       const { deviceId } = await api.getDeviceId();
-      const cards = await generateSignedPrintableCards(count, deviceId, cardPackStyle);
+      const cards = await generateSignedPrintableCards(count, deviceId, fill);
       setCardShareLinks(
         cards.map((card, i) => ({
           label: `Card ${i + 1}`,
-          url: buildCardClaimUrl(card.numbers, "http://bingo.local", card.sig, cardPackStyle),
+          url: buildCardClaimUrl(card.numbers, "http://bingo.local", card.sig),
         }))
       );
       setCardsMessage(
-        `Ready: ${count} unique authenticated ${cardPackStyle.toUpperCase()} link${count === 1 ? "" : "s"}. Copy one or copy all to text people.`
+        `Ready: ${count} unique authenticated link${count === 1 ? "" : "s"}. Copy one or copy all to text people.`
       );
     } catch (e: unknown) {
       if (isBoardAuthHttpError(e)) {
@@ -775,10 +813,6 @@ export function Settings({
       setCardsBusy(false);
     }
   };
-
-  useEffect(() => {
-    setCardPackStyle(gameStyle);
-  }, [gameStyle]);
 
   useEffect(() => {
     if (settingsTab === "webhooks") loadWebhooks();
@@ -1684,41 +1718,6 @@ export function Settings({
             >
               <SettingsGroup>
                 <div>
-                  <Label className="mb-2 block">Card style</Label>
-                  <RadioGroup
-                    value={cardPackStyle}
-                    onValueChange={(value) => setCardPackStyle(value as GameStyle)}
-                    className="grid grid-cols-2 gap-2"
-                  >
-                    {GAME_STYLES.map((style) => (
-                      <Label
-                        key={style}
-                        htmlFor={`card-pack-${style}`}
-                        className={cn(
-                          "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                          cardPackStyle === style ? "" : "border-border"
-                        )}
-                        style={
-                          cardPackStyle === style
-                            ? {
-                                borderColor: letterColors.N,
-                                backgroundColor: rgbaFromHex(letterColors.N, 0.12),
-                              }
-                            : undefined
-                        }
-                      >
-                        <RadioGroupItem
-                          value={style}
-                          id={`card-pack-${style}`}
-                          className="focus-visible:ring-0 focus-visible:ring-offset-0"
-                          style={{ borderColor: letterColors.N, color: letterColors.N }}
-                        />
-                        {GAME_STYLE_LABELS[style]}
-                      </Label>
-                    ))}
-                  </RadioGroup>
-                </div>
-                <div>
                   <Label className="mb-2 block">How many cards?</Label>
                   <Input
                     type="number"
@@ -1737,19 +1736,41 @@ export function Settings({
                     })()}
                   </p>
                 </div>
+                <div>
+                  <Label className="mb-2 block">Preselected spaces (min / max)</Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="number"
+                      min={CARD_FILL_MIN}
+                      max={CARD_FILL_MAX}
+                      value={cardFillMinDraft}
+                      onChange={(e) => onCardFillMinChange(e.target.value)}
+                      onBlur={() => parseAndPersistCardFill()}
+                      className="max-w-[5.5rem]"
+                      aria-label="Minimum preselected spaces"
+                    />
+                    <span className="text-sm text-muted-foreground">to</span>
+                    <Input
+                      type="number"
+                      min={CARD_FILL_MIN}
+                      max={CARD_FILL_MAX}
+                      value={cardFillMaxDraft}
+                      onChange={(e) => onCardFillMaxChange(e.target.value)}
+                      onBlur={() => parseAndPersistCardFill()}
+                      className="max-w-[5.5rem]"
+                      aria-label="Maximum preselected spaces"
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Each card gets a random count of filled cells from {CARD_FILL_MIN}–{CARD_FILL_MAX}
+                    (includes FREE). Min cannot exceed max. Default {CARD_FILL_DEFAULT}/{CARD_FILL_DEFAULT} is a
+                    full card. Empty cells print as a small dauber circle.
+                  </p>
+                </div>
                 <div className="rounded-lg border border-border/70 bg-background/60 p-3 text-xs text-muted-foreground space-y-1.5">
                   <p>
-                    Generating{" "}
-                    <span className="font-medium text-foreground">{cardPackStyle.toUpperCase()}</span> packs
-                    {cardPackStyle !== gameStyle ? (
-                      <>
-                        {" "}
-                        (board is currently{" "}
-                        <span className="font-medium text-foreground">{gameStyle.toUpperCase()}</span>)
-                      </>
-                    ) : null}
-                    . BINGO: center FREE cell is a QR. HOUSEY: sparse 10–12 numbers with the QR in an open cell.
-                    Scan with a phone camera to open the card (no board PIN).
+                    Each card’s center FREE cell is a QR. Scan with a phone camera to open the card
+                    (no board PIN).
                   </p>
                   <p>Print on letter paper. Leave the QR unobstructed when marking or cutting cards.</p>
                 </div>

@@ -15,6 +15,7 @@
 static const int SECTION_WIDTH[3] = {5, 1, 15};
 
 // boardSectionOrder[i] = section id at visual position i (left to right). Hardcoded at boot.
+// sectionStartCol[sec] = leftmost visual column for that section id (not by position).
 extern uint8_t boardSectionOrder[3];
 extern int sectionStartCol[3];
 

@@ -167,6 +167,11 @@ export class MiniPdf {
     this.content += `${x.toFixed(2)} ${by.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re ${style}\n`;
   }
 
+  /** Stroke a line from (x1,y1) to (x2,y2) in top-left coordinates. */
+  line(x1: number, y1: number, x2: number, y2: number) {
+    this.content += `${x1.toFixed(2)} ${this.ty(y1).toFixed(2)} m ${x2.toFixed(2)} ${this.ty(y2).toFixed(2)} l S\n`;
+  }
+
   roundedRect(x: number, y: number, w: number, h: number, r: number, style: "S" | "f" | "B" = "S") {
     const rad = Math.min(r, w / 2, h / 2);
     const x0 = x;
@@ -192,6 +197,27 @@ export class MiniPdf {
       `${x0.toFixed(2)} ${(yBot + rad - k).toFixed(2)} ${(x0 + rad - k).toFixed(2)} ${yBot.toFixed(2)} ${(
         x0 + rad
       ).toFixed(2)} ${yBot.toFixed(2)} c\n` +
+      `${style}\n`;
+  }
+
+  /** Stroke or fill a circle (center cx,cy; radius r). */
+  circle(cx: number, cy: number, r: number, style: "S" | "f" | "B" = "S") {
+    const k = r * 0.5523;
+    const y = this.ty(cy);
+    this.content +=
+      `${(cx + r).toFixed(2)} ${y.toFixed(2)} m\n` +
+      `${(cx + r).toFixed(2)} ${(y + k).toFixed(2)} ${(cx + k).toFixed(2)} ${(y + r).toFixed(2)} ${cx.toFixed(2)} ${(
+        y + r
+      ).toFixed(2)} c\n` +
+      `${(cx - k).toFixed(2)} ${(y + r).toFixed(2)} ${(cx - r).toFixed(2)} ${(y + k).toFixed(2)} ${(cx - r).toFixed(
+        2
+      )} ${y.toFixed(2)} c\n` +
+      `${(cx - r).toFixed(2)} ${(y - k).toFixed(2)} ${(cx - k).toFixed(2)} ${(y - r).toFixed(2)} ${cx.toFixed(2)} ${(
+        y - r
+      ).toFixed(2)} c\n` +
+      `${(cx + k).toFixed(2)} ${(y - r).toFixed(2)} ${(cx + r).toFixed(2)} ${(y - k).toFixed(2)} ${(cx + r).toFixed(
+        2
+      )} ${y.toFixed(2)} c\n` +
       `${style}\n`;
   }
 

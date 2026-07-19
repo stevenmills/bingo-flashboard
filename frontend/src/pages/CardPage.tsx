@@ -8,11 +8,10 @@ import type { LetterColors } from "@/lib/bingo-ui-colors";
 import {
   CARD_STATE_STORAGE_VERSION,
   generateBingoCard,
-  generateHouseyCard,
+  readCardFillRange,
   gameTypeUsesFreeSpace,
   gridHasWinningPattern,
-  gridHasHouseyWinningPattern,
-  houseyWinningFlashCells,
+  battleshipSunkFlashCells,
   buildAutoSyncedGrid,
   gridToStoredCardState,
   isCellClickableInManual,
@@ -23,7 +22,6 @@ import {
   type StoredCardState,
 } from "@/lib/card";
 import { flatNumbersToGrid, takeQrCardClaim, QR_BOARD_VERIFY_KEY } from "@/lib/bingo-card-codec";
-import { isHouseyGameType, type GameStyle } from "@/lib/game-style";
 import { cn } from "@/lib/utils";
 import { api } from "@/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -52,25 +50,25 @@ interface WsMessageEnvelope {
   data?: unknown;
 }
 
-function generateCardForStyle(gameStyle: GameStyle): CardGrid {
-  return gameStyle === "housey" ? generateHouseyCard() : generateBingoCard();
+function cardFromFillPrefs(): CardGrid {
+  const { min, max } = readCardFillRange();
+  return generateBingoCard({ minFilled: min, maxFilled: max });
 }
 
-function loadStoredCardState(gameStyle: GameStyle = "bingo"): { card: CardGrid; autoSync: boolean; gameStyle: GameStyle } {
+function loadStoredCardState(): { card: CardGrid; autoSync: boolean } {
   try {
     const raw = localStorage.getItem(CARD_STATE_STORAGE_KEY);
-    if (!raw) return { card: generateCardForStyle(gameStyle), autoSync: true, gameStyle };
+    if (!raw) return { card: cardFromFillPrefs(), autoSync: true };
     const parsed = JSON.parse(raw) as StoredCardState;
     if ((parsed.version ?? 1) !== CARD_STATE_STORAGE_VERSION) {
-      return { card: generateCardForStyle(gameStyle), autoSync: true, gameStyle };
+      return { card: cardFromFillPrefs(), autoSync: true };
     }
     const restored = storedCardStateToGrid(parsed);
-    if (!restored) return { card: generateCardForStyle(gameStyle), autoSync: true, gameStyle };
-    const storedStyle: GameStyle = parsed.gameStyle === "housey" ? "housey" : "bingo";
+    if (!restored) return { card: cardFromFillPrefs(), autoSync: true };
     // Default on when key was missing from older saved state.
-    return { card: restored, autoSync: parsed.autoSync !== false, gameStyle: storedStyle };
+    return { card: restored, autoSync: parsed.autoSync !== false };
   } catch {
-    return { card: generateCardForStyle(gameStyle), autoSync: true, gameStyle };
+    return { card: cardFromFillPrefs(), autoSync: true };
   }
 }
 
@@ -101,30 +99,20 @@ function isBlankCell(cell: CardCell): boolean {
   return Boolean(cell.isBlank) || (cell.value === null && !cell.isFree);
 }
 
-const CARD_STYLE_MISMATCH_MESSAGE =
-  "Card style does not match current game style! Try again next round!";
-
-function isCardStyleMismatchError(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  const msg = e.message.toLowerCase();
-  return msg.includes("style mismatch") || msg.includes("card style mismatch");
-}
-
-function loadInitialCardState(boardGameStyle: GameStyle = "bingo"): {
+function loadInitialCardState(): {
   card: CardGrid;
   autoSync: boolean;
-  gameStyle: GameStyle;
   printedClaim: boolean;
   claimSig: string | null;
 } {
   // Board-host QR verify keeps the payload for App — don't hydrate card mode from it.
   if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(QR_BOARD_VERIFY_KEY) === "1") {
-    const stored = loadStoredCardState(boardGameStyle);
+    const stored = loadStoredCardState();
     return { ...stored, printedClaim: false, claimSig: null };
   }
   const claim = takeQrCardClaim();
   if (claim) {
-    const grid = flatNumbersToGrid(claim.numbers, claim.gameStyle);
+    const grid = flatNumbersToGrid(claim.numbers);
     if (grid) {
       localStorage.removeItem("bingo-card-id");
       localStorage.removeItem(CARD_UNJOINED_SELECTIONS_STORAGE_KEY);
@@ -136,19 +124,18 @@ function loadInitialCardState(boardGameStyle: GameStyle = "bingo"): {
       );
       localStorage.setItem(
         CARD_STATE_STORAGE_KEY,
-        JSON.stringify(gridToStoredCardState(cleared, false, claim.gameStyle))
+        JSON.stringify(gridToStoredCardState(cleared, false))
       );
       return {
         card: cleared,
         autoSync: false,
-        gameStyle: claim.gameStyle,
         printedClaim: true,
         claimSig: claim.sig,
       };
     }
   }
 
-  const stored = loadStoredCardState(boardGameStyle);
+  const stored = loadStoredCardState();
   const hasJoinedBoard = Boolean(localStorage.getItem("bingo-card-id"));
   if (hasJoinedBoard) return { ...stored, printedClaim: false, claimSig: null };
   const selections = loadUnjoinedSelections();
@@ -162,7 +149,6 @@ function loadInitialCardState(boardGameStyle: GameStyle = "bingo"): {
     return {
       card: cleared,
       autoSync: stored.autoSync,
-      gameStyle: stored.gameStyle,
       printedClaim: false,
       claimSig: null,
     };
@@ -170,29 +156,25 @@ function loadInitialCardState(boardGameStyle: GameStyle = "bingo"): {
   return {
     card: applySelectionsToCard(stored.card, selections),
     autoSync: stored.autoSync,
-    gameStyle: stored.gameStyle,
     printedClaim: false,
     claimSig: null,
   };
 }
 
 export function CardPage({ state, letterColors, connected, stateHydrated = false }: Props) {
-  const boardGameStyle: GameStyle = state.gameStyle ?? "bingo";
   const initialStoredState = useMemo(
-    () => loadInitialCardState(boardGameStyle),
-    // Intentionally once on mount — board style at first paint seeds local generation.
+    () => loadInitialCardState(),
+    // Intentionally once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
   const [card, setCard] = useState<CardGrid>(initialStoredState.card);
   const [autoSync, setAutoSync] = useState<boolean>(initialStoredState.autoSync);
-  const [cardGameStyle, setCardGameStyle] = useState<GameStyle>(initialStoredState.gameStyle);
   const [cardId, setCardId] = useState<string | null>(localStorage.getItem("bingo-card-id"));
   const [printedClaimPending, setPrintedClaimPending] = useState(initialStoredState.printedClaim);
   const claimSigRef = useRef<string | null>(initialStoredState.claimSig);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinErrorOpen, setJoinErrorOpen] = useState(false);
-  const styleMismatchNotifiedRef = useRef(false);
   const [winnerFlashCells, setWinnerFlashCells] = useState<Set<number>>(new Set());
   const [winnerFlashPhase, setWinnerFlashPhase] = useState(false);
   const [cardWinnerActive, setCardWinnerActive] = useState(false);
@@ -209,47 +191,17 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
   const pendingSyncMarksRef = useRef<boolean[] | null>(null);
   const calledSet = useMemo(() => new Set(state.called), [state.called]);
   const freeSpaceActive = useMemo(
-    () =>
-      boardGameStyle === "bingo" &&
-      isGameType(state.gameType) &&
-      gameTypeUsesFreeSpace(state.gameType),
-    [boardGameStyle, state.gameType]
+    () => isGameType(state.gameType) && gameTypeUsesFreeSpace(state.gameType),
+    [state.gameType]
   );
-  const styleMismatch = stateHydrated && cardGameStyle !== boardGameStyle;
-  const canConnectToBoard = connected && stateHydrated && !styleMismatch;
-  const joinedToBoard = Boolean(cardId) && !styleMismatch;
+  const canConnectToBoard = connected && stateHydrated;
+  const joinedToBoard = Boolean(cardId);
   const rerollDisabled = state.called.length > 0;
-  const gameStyle = boardGameStyle;
 
   useEffect(() => {
     // Claim flow may have cleared bingo-card-id before React subscribed to session events.
     notifyCardSessionChanged();
   }, []);
-
-  // Style mismatch: stop claim/join loading and never talk to the board for this card.
-  useEffect(() => {
-    if (!styleMismatch) {
-      styleMismatchNotifiedRef.current = false;
-      return;
-    }
-    setPrintedClaimPending(false);
-    claimSigRef.current = null;
-    setCardId((prev) => {
-      if (!prev) return null;
-      localStorage.removeItem("bingo-card-id");
-      notifyCardSessionChanged();
-      pendingMarksRef.current.clear();
-      void api.leaveCard(prev).catch(() => {
-        // Best effort — card may never have joined this board.
-      });
-      return null;
-    });
-    if (!styleMismatchNotifiedRef.current) {
-      styleMismatchNotifiedRef.current = true;
-      setJoinError(CARD_STYLE_MISMATCH_MESSAGE);
-      setJoinErrorOpen(true);
-    }
-  }, [styleMismatch]);
 
   const clearJoinedCardSession = useCallback(() => {
     setCardId(null);
@@ -258,10 +210,9 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
     pendingMarksRef.current.clear();
   }, []);
   const captureWinningFlashCells = useCallback((grid: CardGrid) => {
-    if (gameStyle === "housey" && isHouseyGameType(state.gameType)) {
-      const flashIdx = houseyWinningFlashCells(
+    if (state.gameType === "battleship") {
+      const flashIdx = battleshipSunkFlashCells(
         grid,
-        state.gameType,
         calledSet,
         state.current > 0 ? state.current : undefined
       );
@@ -317,7 +268,7 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
       return cell.value !== null && calledSet.has(cell.value);
     });
     setWinnerFlashCells(new Set<number>(filtered));
-  }, [gameStyle, state.gameType, state.current, calledSet]);
+  }, [state.gameType, state.current, calledSet]);
 
   const cardNumbers = useMemo(
     () =>
@@ -418,26 +369,13 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
 
   const resolveCardWinner = useCallback(
     (grid: CardGrid, serverWinner: boolean) => {
-      if (gameStyle === "housey") {
-        if (!isHouseyGameType(state.gameType)) return serverWinner;
-        // Battleship: survivors win — local "complete" is sunk, not a win.
-        if (state.gameType === "battleship") return serverWinner;
-        if (!autoSync) return serverWinner;
-        return (
-          serverWinner ||
-          gridHasHouseyWinningPattern(
-            grid,
-            state.gameType,
-            calledSet,
-            state.current > 0 ? state.current : undefined
-          )
-        );
-      }
+      // Battleship: survivors win — local "complete" is sunk, not a win.
+      if (state.gameType === "battleship") return serverWinner;
       if (!autoSync) return serverWinner;
       if (!isGameType(state.gameType)) return serverWinner;
       return serverWinner || gridHasWinningPattern(grid, state.gameType, calledSet);
     },
-    [autoSync, gameStyle, state.gameType, state.current, calledSet]
+    [autoSync, state.gameType, calledSet]
   );
 
   const pushAutoSyncToServer = useCallback(
@@ -467,9 +405,9 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
   );
 
   useEffect(() => {
-    const stored = gridToStoredCardState(card, autoSync, cardGameStyle);
+    const stored = gridToStoredCardState(card, autoSync);
     localStorage.setItem(CARD_STATE_STORAGE_KEY, JSON.stringify(stored));
-  }, [card, autoSync, cardGameStyle]);
+  }, [card, autoSync]);
 
   useEffect(() => {
     window.dispatchEvent(
@@ -565,20 +503,14 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
 
   const handleJoin = useCallback(async () => {
     if (!stateHydrated) return;
-    if (styleMismatch || cardGameStyle !== boardGameStyle) {
-      setJoinError(CARD_STYLE_MISMATCH_MESSAGE);
-      setJoinErrorOpen(true);
-      return;
-    }
     try {
       let joined;
       try {
-        joined = await api.joinCard(cardNumbers, cardId ?? undefined, cardGameStyle);
+        joined = await api.joinCard(cardNumbers, cardId ?? undefined);
       } catch (firstError: unknown) {
-        // Never swallow style mismatch (or other real API errors) into a generic failure.
-        if (isCardStyleMismatchError(firstError) || !cardId) throw firstError;
+        if (!cardId) throw firstError;
         clearJoinedCardSession();
-        joined = await api.joinCard(cardNumbers, undefined, cardGameStyle);
+        joined = await api.joinCard(cardNumbers, undefined);
       }
       setCardId(joined.cardId);
       localStorage.setItem("bingo-card-id", joined.cardId);
@@ -589,11 +521,6 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
     } catch (e: unknown) {
       if (!connected) {
         setJoinError("Board is unreachable. For local multi-window testing, run: npm run dev:shared-mock");
-        setJoinErrorOpen(true);
-        return;
-      }
-      if (isCardStyleMismatchError(e)) {
-        setJoinError(CARD_STYLE_MISMATCH_MESSAGE);
         setJoinErrorOpen(true);
         return;
       }
@@ -618,9 +545,6 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
   }, [
     cardNumbers,
     cardId,
-    cardGameStyle,
-    boardGameStyle,
-    styleMismatch,
     stateHydrated,
     connected,
     applyWinnerState,
@@ -672,7 +596,6 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
       try {
         const claimed = await api.claimPrintedCard(cardNumbers, claimSigRef.current, {
           autoSync: false,
-          gameStyle: cardGameStyle,
         });
         if (cancelled) return;
         setCardId(claimed.cardId);
@@ -705,11 +628,7 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
       } catch (e: unknown) {
         if (cancelled) return;
         setPrintedClaimPending(false);
-        setJoinError(
-          isCardStyleMismatchError(e)
-            ? CARD_STYLE_MISMATCH_MESSAGE
-            : "Unable to verify printed card. Try again."
-        );
+        setJoinError("Unable to verify printed card. Try again.");
         setJoinErrorOpen(true);
       }
     };
@@ -721,7 +640,6 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
     printedClaimPending,
     canConnectToBoard,
     cardNumbers,
-    cardGameStyle,
     applyWinnerState,
     resolveCardWinner,
   ]);
@@ -777,9 +695,7 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
 
     // Battleship: keep prior server winner until sync responds (local complete ≠ win).
     const winnerHint =
-      gameStyle === "housey" && state.gameType === "battleship"
-        ? latestCardWinnerRef.current
-        : false;
+      state.gameType === "battleship" ? latestCardWinnerRef.current : false;
     applyWinnerState(resolveCardWinner(grid, winnerHint), grid);
 
     if (cardId && connected && (changed || justEnabled)) {
@@ -791,7 +707,6 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
     joinedToBoard,
     cardId,
     connected,
-    gameStyle,
     state.gameType,
     applyWinnerState,
     resolveCardWinner,
@@ -820,15 +735,14 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
   }, [joinedToBoard, state.called.length]);
 
   const handleReroll = async () => {
-    const next = generateCardForStyle(gameStyle);
-    setCardGameStyle(gameStyle);
+    const next = cardFromFillPrefs();
     flashedPatternKeysRef.current.clear();
     activeFlashPatternKeyRef.current = "";
     setCard(next);
     pendingMarksRef.current.clear();
     if (joinedToBoard && connected && cardId) {
       const numbers = next.flat().map((cell) => (cell.isFree || cell.isBlank ? null : cell.value));
-      await api.joinCard(numbers, cardId, gameStyle);
+      await api.joinCard(numbers, cardId);
     }
   };
 
@@ -972,7 +886,16 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
                             }}
                             onClick={() => void handleCellClick(rowIdx, colIdx)}
                           >
-                            {blank ? "" : cell.isFree ? "FREE" : cell.value}
+                            {blank ? (
+                              <span
+                                className="inline-block h-3 w-3 rounded-full border-2 border-muted-foreground/50"
+                                aria-hidden
+                              />
+                            ) : cell.isFree ? (
+                              "FREE"
+                            ) : (
+                              cell.value
+                            )}
                           </td>
                         );
                       })()
@@ -1010,9 +933,7 @@ export function CardPage({ state, letterColors, connected, stateHydrated = false
       <Dialog open={joinErrorOpen} onOpenChange={setJoinErrorOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {joinError === CARD_STYLE_MISMATCH_MESSAGE ? "Wrong Card Style" : "Unable to Join Board"}
-            </DialogTitle>
+            <DialogTitle>Unable to Join Board</DialogTitle>
             <DialogDescription>{joinError ?? "Unable to join card session."}</DialogDescription>
           </DialogHeader>
           <DialogFooter>

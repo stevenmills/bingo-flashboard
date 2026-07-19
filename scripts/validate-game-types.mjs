@@ -31,7 +31,10 @@ const catalog = JSON.parse(
 const types = catalog.types;
 const byId = Object.fromEntries(types.map((t) => [t.id, t]));
 
-if (types.length !== 47) fail(`expected 47 types, got ${types.length}`);
+if (types.length !== 48) fail(`expected 48 types, got ${types.length}`);
+if (!byId.battleship || !byId.battleship.elimination) {
+  fail(`battleship should exist as an elimination type`);
+}
 
 const railroad = byId.railroad;
 if (!railroad || railroad.winPatterns.length !== 20) {

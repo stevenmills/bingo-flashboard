@@ -108,6 +108,20 @@ if (removedMp3 > 0) {
   console.log(`[prune-spiffs] removed ${removedMp3} per-clip mp3(s); using pack.bin`);
 }
 
+// macOS Finder metadata must not go into the SPIFFS image.
+function stripDsStore(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (name === ".DS_Store") {
+      fs.unlinkSync(full);
+      console.log(`[prune-spiffs] removed ${path.relative(dataDir, full)}`);
+      continue;
+    }
+    if (fs.statSync(full).isDirectory()) stripDsStore(full);
+  }
+}
+stripDsStore(dataDir);
+
 function dirBytes(dir) {
   let total = 0;
   for (const name of fs.readdirSync(dir)) {
@@ -119,12 +133,19 @@ function dirBytes(dir) {
   return total;
 }
 
-const SPIFFS_BYTES = 0x600000; // partitions/bingo.csv
+const SPIFFS_BYTES = 0xa00000; // partitions/bingo.csv
 const total = dirBytes(dataDir);
+const usableApprox = SPIFFS_BYTES * 0.75; // SPIFFS metadata eats a large slice
 console.log(
-  `[prune-spiffs] data/ total ${(total / 1024 / 1024).toFixed(2)} MiB (SPIFFS ~${(
+  `[prune-spiffs] data/ total ${(total / 1024 / 1024).toFixed(2)} MiB (SPIFFS partition ${(
     SPIFFS_BYTES /
     1024 /
     1024
-  ).toFixed(2)} MiB)`
+  ).toFixed(2)} MiB, ~${(usableApprox / 1024 / 1024).toFixed(1)} MiB usable)`
 );
+if (total > usableApprox) {
+  console.warn(
+    `[prune-spiffs] WARNING: payload may exceed SPIFFS usable space — run npm run build so packs replace loose mp3s, or shrink data/`
+  );
+  process.exitCode = 1;
+}

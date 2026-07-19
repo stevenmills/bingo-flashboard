@@ -39,7 +39,6 @@ export function NewGameDialog({
 
         <div className="flex min-h-0 flex-1 flex-col">
           <GameSetup
-            gameStyle={state.gameStyle ?? "bingo"}
             gameType={state.gameType}
             callingStyle={state.callingStyle}
             gameEstablished={false}

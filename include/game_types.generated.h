@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#define GAME_TYPE_COUNT 47
+#define GAME_TYPE_COUNT 48
 #define GAME_TYPE_MAX_WIN_ALTS 32
 #define GAME_TYPE_MAX_DISPLAY_ALTS 66
 #define GAME_TYPE_ID_MAX 23
@@ -15,6 +15,7 @@ struct GameTypeDef {
   uint8_t requiredPatterns;
   uint8_t coveredThreshold;
   uint8_t minCalls;
+  uint8_t elimination;
   const uint32_t* winMasks;
   const uint32_t* displayMasks;
 };
@@ -113,55 +114,58 @@ static const uint32_t GT_WIN_45[] = { 0x3ffu, 0x1ff8000u };
 static const uint32_t GT_DISP_45[] = { 0x3ffu, 0x1ff8000u };
 static const uint32_t GT_WIN_46[] = { 0x18e38e3u, 0x33bb98u };
 static const uint32_t GT_DISP_46[] = { 0x18e38e3u, 0x33bb98u };
+static const uint32_t GT_WIN_47[] = { 0x0u };
+static const uint32_t GT_DISP_47[] = { 0x0u };
 
 static const GameTypeDef GAME_TYPE_TABLE[GAME_TYPE_COUNT] = {
-  { "traditional", 12, 12, 1, 0, 4, GT_WIN_0, GT_DISP_0 },
-  { "double_bingo", 12, 66, 2, 0, 8, GT_WIN_1, GT_DISP_1 },
-  { "four_corners", 1, 1, 1, 0, 4, GT_WIN_2, GT_DISP_2 },
-  { "postage_stamp", 4, 4, 1, 0, 4, GT_WIN_3, GT_DISP_3 },
-  { "cover_all", 1, 1, 1, 0, 24, GT_WIN_4, GT_DISP_4 },
-  { "blackout_lite", 0, 1, 1, 20, 19, GT_WIN_5, GT_DISP_5 },
-  { "x", 1, 1, 1, 0, 8, GT_WIN_6, GT_DISP_6 },
-  { "y", 1, 1, 1, 0, 6, GT_WIN_7, GT_DISP_7 },
-  { "lucky_7", 4, 4, 1, 0, 8, GT_WIN_8, GT_DISP_8 },
-  { "letter_o", 1, 1, 1, 0, 16, GT_WIN_9, GT_DISP_9 },
-  { "letter_h", 1, 1, 1, 0, 12, GT_WIN_10, GT_DISP_10 },
-  { "plus_sign", 1, 1, 1, 0, 8, GT_WIN_11, GT_DISP_11 },
-  { "asterisk", 2, 1, 2, 0, 16, GT_WIN_12, GT_DISP_12 },
-  { "frame_outside", 1, 1, 1, 0, 16, GT_WIN_13, GT_DISP_13 },
-  { "frame_inside", 1, 1, 1, 0, 8, GT_WIN_14, GT_DISP_14 },
-  { "diamond", 1, 1, 1, 0, 8, GT_WIN_15, GT_DISP_15 },
-  { "bullseye", 1, 1, 1, 0, 8, GT_WIN_16, GT_DISP_16 },
-  { "hourglass", 2, 2, 1, 0, 16, GT_WIN_17, GT_DISP_17 },
-  { "pyramid", 4, 4, 1, 0, 13, GT_WIN_18, GT_DISP_18 },
-  { "bow_tie", 2, 2, 1, 0, 16, GT_WIN_19, GT_DISP_19 },
-  { "infinity", 1, 1, 1, 0, 12, GT_WIN_20, GT_DISP_20 },
-  { "lightning", 8, 8, 1, 0, 12, GT_WIN_21, GT_DISP_21 },
-  { "ladder", 3, 3, 1, 0, 11, GT_WIN_22, GT_DISP_22 },
-  { "tic_tac_toe", 1, 1, 1, 0, 16, GT_WIN_23, GT_DISP_23 },
-  { "every_other_1", 1, 1, 1, 0, 12, GT_WIN_24, GT_DISP_24 },
-  { "every_other_2", 1, 1, 1, 0, 12, GT_WIN_25, GT_DISP_25 },
-  { "big_stamp", 4, 4, 1, 0, 8, GT_WIN_26, GT_DISP_26 },
-  { "brick", 8, 8, 1, 0, 6, GT_WIN_27, GT_DISP_27 },
-  { "l_block", 8, 8, 1, 0, 4, GT_WIN_28, GT_DISP_28 },
-  { "arrow", 4, 4, 1, 0, 10, GT_WIN_29, GT_DISP_29 },
-  { "field_goal", 1, 1, 1, 0, 10, GT_WIN_30, GT_DISP_30 },
-  { "anchor", 1, 1, 1, 0, 10, GT_WIN_31, GT_DISP_31 },
-  { "heart", 1, 1, 1, 0, 15, GT_WIN_32, GT_DISP_32 },
-  { "smiley", 1, 1, 1, 0, 7, GT_WIN_33, GT_DISP_33 },
-  { "rocket", 1, 1, 1, 0, 10, GT_WIN_34, GT_DISP_34 },
-  { "ufo", 1, 1, 1, 0, 12, GT_WIN_35, GT_DISP_35 },
-  { "top_hat", 1, 1, 1, 0, 18, GT_WIN_36, GT_DISP_36 },
-  { "pac_man", 1, 1, 1, 0, 18, GT_WIN_37, GT_DISP_37 },
-  { "clover", 1, 1, 1, 0, 14, GT_WIN_38, GT_DISP_38 },
-  { "bingo_glyph", 5, 5, 1, 0, 12, GT_WIN_39, GT_DISP_39 },
-  { "snake", 4, 4, 1, 0, 16, GT_WIN_40, GT_DISP_40 },
-  { "railroad", 20, 20, 1, 0, 8, GT_WIN_41, GT_DISP_41 },
-  { "vip_cross", 1, 1, 1, 0, 12, GT_WIN_42, GT_DISP_42 },
-  { "four_horsemen", 1, 1, 1, 0, 4, GT_WIN_43, GT_DISP_43 },
-  { "split_the_room", 2, 2, 1, 0, 10, GT_WIN_44, GT_DISP_44 },
-  { "top_vs_bottom", 2, 2, 1, 0, 10, GT_WIN_45, GT_DISP_45 },
-  { "diagonal_band", 2, 2, 1, 0, 12, GT_WIN_46, GT_DISP_46 },
+  { "traditional", 12, 12, 1, 0, 4, 0, GT_WIN_0, GT_DISP_0 },
+  { "double_bingo", 12, 66, 2, 0, 8, 0, GT_WIN_1, GT_DISP_1 },
+  { "four_corners", 1, 1, 1, 0, 4, 0, GT_WIN_2, GT_DISP_2 },
+  { "postage_stamp", 4, 4, 1, 0, 4, 0, GT_WIN_3, GT_DISP_3 },
+  { "cover_all", 1, 1, 1, 0, 24, 0, GT_WIN_4, GT_DISP_4 },
+  { "blackout_lite", 0, 1, 1, 20, 19, 0, GT_WIN_5, GT_DISP_5 },
+  { "x", 1, 1, 1, 0, 8, 0, GT_WIN_6, GT_DISP_6 },
+  { "y", 1, 1, 1, 0, 6, 0, GT_WIN_7, GT_DISP_7 },
+  { "lucky_7", 4, 4, 1, 0, 8, 0, GT_WIN_8, GT_DISP_8 },
+  { "letter_o", 1, 1, 1, 0, 16, 0, GT_WIN_9, GT_DISP_9 },
+  { "letter_h", 1, 1, 1, 0, 12, 0, GT_WIN_10, GT_DISP_10 },
+  { "plus_sign", 1, 1, 1, 0, 8, 0, GT_WIN_11, GT_DISP_11 },
+  { "asterisk", 2, 1, 2, 0, 16, 0, GT_WIN_12, GT_DISP_12 },
+  { "frame_outside", 1, 1, 1, 0, 16, 0, GT_WIN_13, GT_DISP_13 },
+  { "frame_inside", 1, 1, 1, 0, 8, 0, GT_WIN_14, GT_DISP_14 },
+  { "diamond", 1, 1, 1, 0, 8, 0, GT_WIN_15, GT_DISP_15 },
+  { "bullseye", 1, 1, 1, 0, 8, 0, GT_WIN_16, GT_DISP_16 },
+  { "hourglass", 2, 2, 1, 0, 16, 0, GT_WIN_17, GT_DISP_17 },
+  { "pyramid", 4, 4, 1, 0, 13, 0, GT_WIN_18, GT_DISP_18 },
+  { "bow_tie", 2, 2, 1, 0, 16, 0, GT_WIN_19, GT_DISP_19 },
+  { "infinity", 1, 1, 1, 0, 12, 0, GT_WIN_20, GT_DISP_20 },
+  { "lightning", 8, 8, 1, 0, 12, 0, GT_WIN_21, GT_DISP_21 },
+  { "ladder", 3, 3, 1, 0, 11, 0, GT_WIN_22, GT_DISP_22 },
+  { "tic_tac_toe", 1, 1, 1, 0, 16, 0, GT_WIN_23, GT_DISP_23 },
+  { "every_other_1", 1, 1, 1, 0, 12, 0, GT_WIN_24, GT_DISP_24 },
+  { "every_other_2", 1, 1, 1, 0, 12, 0, GT_WIN_25, GT_DISP_25 },
+  { "big_stamp", 4, 4, 1, 0, 8, 0, GT_WIN_26, GT_DISP_26 },
+  { "brick", 8, 8, 1, 0, 6, 0, GT_WIN_27, GT_DISP_27 },
+  { "l_block", 8, 8, 1, 0, 4, 0, GT_WIN_28, GT_DISP_28 },
+  { "arrow", 4, 4, 1, 0, 10, 0, GT_WIN_29, GT_DISP_29 },
+  { "field_goal", 1, 1, 1, 0, 10, 0, GT_WIN_30, GT_DISP_30 },
+  { "anchor", 1, 1, 1, 0, 10, 0, GT_WIN_31, GT_DISP_31 },
+  { "heart", 1, 1, 1, 0, 15, 0, GT_WIN_32, GT_DISP_32 },
+  { "smiley", 1, 1, 1, 0, 7, 0, GT_WIN_33, GT_DISP_33 },
+  { "rocket", 1, 1, 1, 0, 10, 0, GT_WIN_34, GT_DISP_34 },
+  { "ufo", 1, 1, 1, 0, 12, 0, GT_WIN_35, GT_DISP_35 },
+  { "top_hat", 1, 1, 1, 0, 18, 0, GT_WIN_36, GT_DISP_36 },
+  { "pac_man", 1, 1, 1, 0, 18, 0, GT_WIN_37, GT_DISP_37 },
+  { "clover", 1, 1, 1, 0, 14, 0, GT_WIN_38, GT_DISP_38 },
+  { "bingo_glyph", 5, 5, 1, 0, 12, 0, GT_WIN_39, GT_DISP_39 },
+  { "snake", 4, 4, 1, 0, 16, 0, GT_WIN_40, GT_DISP_40 },
+  { "railroad", 20, 20, 1, 0, 8, 0, GT_WIN_41, GT_DISP_41 },
+  { "vip_cross", 1, 1, 1, 0, 12, 0, GT_WIN_42, GT_DISP_42 },
+  { "four_horsemen", 1, 1, 1, 0, 4, 0, GT_WIN_43, GT_DISP_43 },
+  { "split_the_room", 2, 2, 1, 0, 10, 0, GT_WIN_44, GT_DISP_44 },
+  { "top_vs_bottom", 2, 2, 1, 0, 10, 0, GT_WIN_45, GT_DISP_45 },
+  { "diagonal_band", 2, 2, 1, 0, 12, 0, GT_WIN_46, GT_DISP_46 },
+  { "battleship", 0, 0, 1, 0, 10, 1, GT_WIN_47, GT_DISP_47 },
 };
 
 inline const GameTypeDef* gameTypeDefAt(int idx) {

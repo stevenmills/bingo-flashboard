@@ -23,6 +23,10 @@
     {
       "id": "combos",
       "label": "Combos & Rules"
+    },
+    {
+      "id": "experimental",
+      "label": "Experimental"
     }
   ],
   "types": [
@@ -207,7 +211,8 @@
       "coveredThreshold": 0,
       "minCalls": 4,
       "oddsHits": 5,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "double_bingo",
@@ -1052,7 +1057,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 8,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "four_corners",
@@ -1079,7 +1085,8 @@
       "coveredThreshold": 0,
       "minCalls": 4,
       "oddsHits": 4,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "postage_stamp",
@@ -1142,7 +1149,8 @@
       "coveredThreshold": 0,
       "minCalls": 4,
       "oddsHits": 4,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "cover_all",
@@ -1211,7 +1219,8 @@
       "coveredThreshold": 0,
       "minCalls": 24,
       "oddsHits": 25,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "blackout_lite",
@@ -1252,7 +1261,8 @@
       "coveredThreshold": 20,
       "minCalls": 19,
       "oddsHits": 20,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "x",
@@ -1289,7 +1299,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 9,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "y",
@@ -1322,7 +1333,8 @@
       "coveredThreshold": 0,
       "minCalls": 6,
       "oddsHits": 7,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "lucky_7",
@@ -1425,7 +1437,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 9,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "letter_o",
@@ -1476,7 +1489,8 @@
       "coveredThreshold": 0,
       "minCalls": 16,
       "oddsHits": 16,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "letter_h",
@@ -1521,7 +1535,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 13,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "plus_sign",
@@ -1558,7 +1573,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 9,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "asterisk",
@@ -1614,7 +1630,8 @@
       "coveredThreshold": 0,
       "minCalls": 16,
       "oddsHits": 17,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "frame_outside",
@@ -1665,7 +1682,8 @@
       "coveredThreshold": 0,
       "minCalls": 16,
       "oddsHits": 16,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "frame_inside",
@@ -1700,7 +1718,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 8,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "diamond",
@@ -1737,7 +1756,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 9,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "bullseye",
@@ -1774,7 +1794,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 9,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "hourglass",
@@ -1865,7 +1886,8 @@
       "coveredThreshold": 0,
       "minCalls": 16,
       "oddsHits": 17,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "pyramid",
@@ -2008,7 +2030,8 @@
       "coveredThreshold": 0,
       "minCalls": 13,
       "oddsHits": 14,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "bow_tie",
@@ -2099,7 +2122,8 @@
       "coveredThreshold": 0,
       "minCalls": 16,
       "oddsHits": 17,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "infinity",
@@ -2144,7 +2168,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 13,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "lightning",
@@ -2399,7 +2424,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 13,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "ladder",
@@ -2498,7 +2524,8 @@
       "coveredThreshold": 0,
       "minCalls": 11,
       "oddsHits": 12,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "tic_tac_toe",
@@ -2549,7 +2576,8 @@
       "coveredThreshold": 0,
       "minCalls": 16,
       "oddsHits": 16,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "every_other_1",
@@ -2594,7 +2622,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 13,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "every_other_2",
@@ -2637,7 +2666,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 12,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "big_stamp",
@@ -2740,7 +2770,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 9,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "brick",
@@ -2883,7 +2914,8 @@
       "coveredThreshold": 0,
       "minCalls": 6,
       "oddsHits": 6,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "l_block",
@@ -3010,7 +3042,8 @@
       "coveredThreshold": 0,
       "minCalls": 4,
       "oddsHits": 5,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "arrow",
@@ -3129,7 +3162,8 @@
       "coveredThreshold": 0,
       "minCalls": 10,
       "oddsHits": 11,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "field_goal",
@@ -3170,7 +3204,8 @@
       "coveredThreshold": 0,
       "minCalls": 10,
       "oddsHits": 11,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "anchor",
@@ -3211,7 +3246,8 @@
       "coveredThreshold": 0,
       "minCalls": 10,
       "oddsHits": 11,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "heart",
@@ -3262,7 +3298,8 @@
       "coveredThreshold": 0,
       "minCalls": 15,
       "oddsHits": 16,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "smiley",
@@ -3297,7 +3334,8 @@
       "coveredThreshold": 0,
       "minCalls": 7,
       "oddsHits": 8,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "rocket",
@@ -3338,7 +3376,8 @@
       "coveredThreshold": 0,
       "minCalls": 10,
       "oddsHits": 11,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "ufo",
@@ -3383,7 +3422,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 13,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "top_hat",
@@ -3440,7 +3480,8 @@
       "coveredThreshold": 0,
       "minCalls": 18,
       "oddsHits": 19,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "pac_man",
@@ -3497,7 +3538,8 @@
       "coveredThreshold": 0,
       "minCalls": 18,
       "oddsHits": 19,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "clover",
@@ -3546,7 +3588,8 @@
       "coveredThreshold": 0,
       "minCalls": 14,
       "oddsHits": 15,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "bingo_glyph",
@@ -3715,7 +3758,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 12,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "snake",
@@ -3882,7 +3926,8 @@
       "coveredThreshold": 0,
       "minCalls": 16,
       "oddsHits": 17,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "railroad",
@@ -4377,7 +4422,8 @@
       "coveredThreshold": 0,
       "minCalls": 8,
       "oddsHits": 10,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "vip_cross",
@@ -4422,7 +4468,8 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 13,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
     },
     {
       "id": "four_horsemen",
@@ -4449,7 +4496,8 @@
       "coveredThreshold": 0,
       "minCalls": 4,
       "oddsHits": 4,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "split_the_room",
@@ -4512,7 +4560,8 @@
       "coveredThreshold": 0,
       "minCalls": 10,
       "oddsHits": 10,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "top_vs_bottom",
@@ -4575,7 +4624,8 @@
       "coveredThreshold": 0,
       "minCalls": 10,
       "oddsHits": 10,
-      "usesFreeSpace": false
+      "usesFreeSpace": false,
+      "elimination": false
     },
     {
       "id": "diagonal_band",
@@ -4650,7 +4700,22 @@
       "coveredThreshold": 0,
       "minCalls": 12,
       "oddsHits": 13,
-      "usesFreeSpace": true
+      "usesFreeSpace": true,
+      "elimination": false
+    },
+    {
+      "id": "battleship",
+      "label": "Battleship",
+      "category": "experimental",
+      "description": "Last card still afloat wins. A card sinks when all of its numbers are called.",
+      "winPatterns": [],
+      "displayPatterns": [],
+      "requiredPatterns": 1,
+      "coveredThreshold": 0,
+      "minCalls": 10,
+      "oddsHits": 0,
+      "usesFreeSpace": true,
+      "elimination": true
     }
   ]
 }

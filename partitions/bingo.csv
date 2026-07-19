@@ -1,8 +1,10 @@
-# Bingo Flashboard — single app + SPIFFS sized to UI + multi-voice packs (~4 MiB used).
-# Keep SPIFFS modest: uploadfs flashes the WHOLE partition image every time.
-# N16R8 16 MB flash: ~3 MB app + ~6 MB SPIFFS (headroom for UI growth).
+# Bingo Flashboard — single app + SPIFFS for UI + four voice pack.bin files.
+# SPIFFS usable space is well below the partition size (metadata overhead) —
+# keep a healthy margin (payload ~4.5 MiB → use ≥8–10 MiB partition).
+# N16R8 16 MB flash: ~3 MB app + ~10 MB SPIFFS.
+# After changing this map: erase flash once, then upload firmware + fs.
 # Name,   Type, SubType, Offset,  Size, Flags
 nvs,      data, nvs,     0x9000,  0x5000,
 otadata,  data, ota,     0xe000,  0x2000,
 app0,     app,  ota_0,   0x10000, 0x300000,
-spiffs,   data, spiffs,  0x310000,0x600000,
+spiffs,   data, spiffs,  0x310000,0xA00000,

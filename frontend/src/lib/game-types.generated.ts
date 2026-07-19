@@ -24,6 +24,10 @@ export const GAME_TYPE_CATEGORIES = [
   {
     "id": "combos",
     "label": "Combos & Rules"
+  },
+  {
+    "id": "experimental",
+    "label": "Experimental"
   }
 ] as const;
 export type GameTypeCategoryId = (typeof GAME_TYPE_CATEGORIES)[number]["id"];
@@ -76,6 +80,7 @@ export type GameType =
   | "split_the_room"
   | "top_vs_bottom"
   | "diagonal_band"
+  | "battleship"
 ;
 
 export interface GameTypeDef {
@@ -93,6 +98,8 @@ export interface GameTypeDef {
   minCalls: number;
   oddsHits: number;
   usesFreeSpace: boolean;
+  /** Last-survivor elimination (e.g. Battleship); no pattern masks. */
+  elimination: boolean;
 }
 
 export const GAME_TYPE_DEFS: GameTypeDef[] = [
@@ -108,6 +115,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 4,
     oddsHits: 5,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "double_bingo",
@@ -121,6 +129,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 8,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "four_corners",
@@ -134,6 +143,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 4,
     oddsHits: 4,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "postage_stamp",
@@ -147,6 +157,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 4,
     oddsHits: 4,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "cover_all",
@@ -160,6 +171,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 24,
     oddsHits: 25,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "blackout_lite",
@@ -173,6 +185,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 19,
     oddsHits: 20,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "x",
@@ -186,6 +199,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 9,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "y",
@@ -199,6 +213,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 6,
     oddsHits: 7,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "lucky_7",
@@ -212,6 +227,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 9,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "letter_o",
@@ -225,6 +241,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 16,
     oddsHits: 16,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "letter_h",
@@ -238,6 +255,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "plus_sign",
@@ -251,6 +269,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 9,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "asterisk",
@@ -264,6 +283,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 16,
     oddsHits: 17,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "frame_outside",
@@ -277,6 +297,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 16,
     oddsHits: 16,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "frame_inside",
@@ -290,6 +311,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 8,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "diamond",
@@ -303,6 +325,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 9,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "bullseye",
@@ -316,6 +339,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 9,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "hourglass",
@@ -329,6 +353,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 16,
     oddsHits: 17,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "pyramid",
@@ -342,6 +367,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 13,
     oddsHits: 14,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "bow_tie",
@@ -355,6 +381,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 16,
     oddsHits: 17,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "infinity",
@@ -368,6 +395,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "lightning",
@@ -381,6 +409,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "ladder",
@@ -394,6 +423,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 11,
     oddsHits: 12,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "tic_tac_toe",
@@ -407,6 +437,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 16,
     oddsHits: 16,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "every_other_1",
@@ -420,6 +451,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "every_other_2",
@@ -433,6 +465,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 12,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "big_stamp",
@@ -446,6 +479,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 9,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "brick",
@@ -459,6 +493,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 6,
     oddsHits: 6,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "l_block",
@@ -472,6 +507,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 4,
     oddsHits: 5,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "arrow",
@@ -485,6 +521,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 10,
     oddsHits: 11,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "field_goal",
@@ -498,6 +535,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 10,
     oddsHits: 11,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "anchor",
@@ -511,6 +549,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 10,
     oddsHits: 11,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "heart",
@@ -524,6 +563,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 15,
     oddsHits: 16,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "smiley",
@@ -537,6 +577,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 7,
     oddsHits: 8,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "rocket",
@@ -550,6 +591,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 10,
     oddsHits: 11,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "ufo",
@@ -563,6 +605,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "top_hat",
@@ -576,6 +619,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 18,
     oddsHits: 19,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "pac_man",
@@ -589,6 +633,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 18,
     oddsHits: 19,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "clover",
@@ -602,6 +647,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 14,
     oddsHits: 15,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "bingo_glyph",
@@ -615,6 +661,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 12,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "snake",
@@ -628,6 +675,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 16,
     oddsHits: 17,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "railroad",
@@ -641,6 +689,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 8,
     oddsHits: 10,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "vip_cross",
@@ -654,6 +703,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+    elimination: false,
   },
   {
     id: "four_horsemen",
@@ -667,6 +717,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 4,
     oddsHits: 4,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "split_the_room",
@@ -680,6 +731,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 10,
     oddsHits: 10,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "top_vs_bottom",
@@ -693,6 +745,7 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 10,
     oddsHits: 10,
     usesFreeSpace: false,
+    elimination: false,
   },
   {
     id: "diagonal_band",
@@ -706,6 +759,21 @@ export const GAME_TYPE_DEFS: GameTypeDef[] = [
     minCalls: 12,
     oddsHits: 13,
     usesFreeSpace: true,
+    elimination: false,
+  },
+  {
+    id: "battleship",
+    label: "Battleship",
+    category: "experimental",
+    description: "Last card still afloat wins. A card sinks when all of its numbers are called.",
+    winPatterns: [],
+    displayPatterns: [],
+    requiredPatterns: 1,
+    coveredThreshold: 0,
+    minCalls: 10,
+    oddsHits: 0,
+    usesFreeSpace: true,
+    elimination: true,
   },
 ];
 
