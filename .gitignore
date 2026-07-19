@@ -2,6 +2,9 @@ node_modules/
 .pio/
 frontend/node_modules/
 AGENTS.md
+.env
+.env.local
+.env.*.local
 
 # Vite → SPIFFS UI output (make frontend-build / make deploy). Keep MP3s + static assets.
 data/index.html

@@ -4,7 +4,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="${ROOT}/frontend/public"
+PACK_ID="${CALLER_VOICE_PACK:-Female1}"
+case "$PACK_ID" in
+  Female1) PACK_SLUG=F1 ;;
+  Female2) PACK_SLUG=F2 ;;
+  Male1) PACK_SLUG=M1 ;;
+  Male2) PACK_SLUG=M2 ;;
+  *) echo "Unknown CALLER_VOICE_PACK=$PACK_ID (Female1|Female2|Male1|Male2)" >&2; exit 1 ;;
+esac
+OUT_DIR="${ROOT}/frontend/public/cv/${PACK_SLUG}"
 VOICE="${CALLER_VOICE:-Daniel}"
 RATE="${CALLER_SAY_RATE:-160}"
 # Keep clips tiny for SPIFFS (many small files have filesystem overhead).
@@ -127,15 +135,15 @@ render_clip() {
 }
 
 mkdir -p "$OUT_DIR"
-# Remove previous caller clips.
-rm -f "$OUT_DIR"/caller-*.mp3
+# Remove previous clips in this pack only.
+rm -f "$OUT_DIR"/*.mp3
 
-echo "Generating caller clips with voice=${VOICE} rate=${RATE} bitrate=${BITRATE}"
+echo "Generating caller clips pack=${PACK_ID} slug=${PACK_SLUG} voice=${VOICE} rate=${RATE} bitrate=${BITRATE}"
 echo "Output: ${OUT_DIR}"
 
-render_clip "Caller on" "${OUT_DIR}/caller-on.mp3"
-render_clip "Jokes on" "${OUT_DIR}/caller-jokes-on.mp3"
-render_clip "Bingo!" "${OUT_DIR}/caller-bingo.mp3"
+render_clip "Caller on" "${OUT_DIR}/on.mp3"
+render_clip "Jokes on" "${OUT_DIR}/jokes-on.mp3"
+render_clip "Bingo!" "${OUT_DIR}/bingo.mp3"
 
 for n in $(seq 1 75); do
   letter="$(letter_for_number "$n")"
@@ -143,20 +151,20 @@ for n in $(seq 1 75); do
   spoken_number="$(number_word "$n")"
   # Slight pause between letter and number via punctuation.
   text="${spoken_letter}, ${spoken_number}"
-  out="${OUT_DIR}/caller-${letter}-${n}.mp3"
+  out="${OUT_DIR}/${letter}-${n}.mp3"
   render_clip "$text" "$out"
-  printf "  %s\n" "caller-${letter}-${n}.mp3"
+  printf "  %s\n" "${letter}-${n}.mp3"
 done
 
 # Supplemental joke clips (played after the number call-out when jokes are enabled).
 echo "Generating joke clips..."
-render_clip "Before what?" "${OUT_DIR}/caller-joke-B-4.mp3"
-printf "  %s\n" "caller-joke-B-4.mp3"
-render_clip "six seven six seven six seven" "${OUT_DIR}/caller-joke-O-67.mp3"
-printf "  %s\n" "caller-joke-O-67.mp3"
+render_clip "Before what?" "${OUT_DIR}/joke-B-4.mp3"
+printf "  %s\n" "joke-B-4.mp3"
+render_clip "six seven six seven six seven!!" "${OUT_DIR}/joke-O-67.mp3"
+printf "  %s\n" "joke-O-67.mp3"
 
-total_bytes="$(du -sk "$OUT_DIR"/caller-*.mp3 | awk '{s+=$1} END {print s*1024}')"
-count="$(ls -1 "$OUT_DIR"/caller-*.mp3 | wc -l | tr -d ' ')"
+total_bytes="$(du -sk "$OUT_DIR"/*.mp3 | awk '{s+=$1} END {print s*1024}')"
+count="$(ls -1 "$OUT_DIR"/*.mp3 | wc -l | tr -d ' ')"
 echo ""
 echo "Done: ${count} clips, $(python3 -c "print(f'{${total_bytes}/1024:.0f} KB')") total"
-echo "Example: ${OUT_DIR}/caller-B-15.mp3"
+echo "Example: ${OUT_DIR}/B-15.mp3"

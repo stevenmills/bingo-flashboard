@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/api";
+import {
+  callerClipUrl,
+  callerVoiceCachePrefix,
+  callerVoicePackUrl,
+  type CallerVoiceId,
+  readCallerVoice,
+  writeCallerVoice,
+} from "@/lib/caller-voices";
 import { numberToLetter } from "@/types";
 
 const STORAGE_KEY = "bingo-caller-speech";
@@ -9,20 +17,20 @@ export const DEFAULT_CALLER_SPEECH_RATE = 0.85;
 export const MIN_CALLER_SPEECH_RATE = 0.6;
 export const MAX_CALLER_SPEECH_RATE = 1.2;
 
-/** Numbers with a supplemental joke clip at /caller-joke-{Letter}-{n}.mp3 */
+/** Numbers with a supplemental joke clip at joke-{Letter}-{n}.mp3 */
 const JOKE_NUMBERS = new Set<number>([4, 67]);
 
 /** Pause after the number call-out before playing a joke clip. */
 const JOKE_AFTER_NUMBER_PAUSE_MS = 1000;
 
 /**
- * Concurrent HTTP-cache warm batch size + gap between batches.
- * Bunching downloads SPIFFS clips faster while still yielding so play fetches can win.
+ * ESP32 HTTP is single-flight. Prefer one pack.bin download over dozens of SPIFFS hits.
+ * Individual warm remains a fallback when pack.bin is missing.
  */
-const PREFETCH_BATCH_DESKTOP = 6;
-const PREFETCH_BATCH_MOBILE = 3;
-const PREFETCH_BATCH_GAP_DESKTOP_MS = 40;
-const PREFETCH_BATCH_GAP_MOBILE_MS = 100;
+const PREFETCH_BATCH_DESKTOP = 2;
+const PREFETCH_BATCH_MOBILE = 1;
+const PREFETCH_BATCH_GAP_DESKTOP_MS = 30;
+const PREFETCH_BATCH_GAP_MOBILE_MS = 50;
 
 /** Keep iOS/Android media session alive so timer-driven auto-call clips can play. */
 const AUDIO_KEEPALIVE_MS = 12000;
@@ -59,19 +67,47 @@ export function writeCallerSpeechRate(rate: number): number {
   return clamped;
 }
 
-function callerClipUrl(name: string): string {
-  return `/caller-${name}.mp3`;
-}
-
-function numberClipUrl(n: number): string {
+function numberClipUrl(voiceId: CallerVoiceId, n: number): string {
   const letter = numberToLetter(n);
-  return callerClipUrl(`${letter}-${n}`);
+  return callerClipUrl(voiceId, `${letter}-${n}`);
 }
 
-function jokeClipUrl(n: number): string | null {
+function jokeClipUrl(voiceId: CallerVoiceId, n: number): string | null {
   if (!JOKE_NUMBERS.has(n)) return null;
   const letter = numberToLetter(n);
-  return `/caller-joke-${letter}-${n}.mp3`;
+  return callerClipUrl(voiceId, `joke-${letter}-${n}`);
+}
+
+/** SPIFFS often serves MP3s as application/octet-stream — Safari won't play those blobs. */
+function asCallerAudioBlob(blob: Blob): Blob {
+  if (blob.type === "audio/mpeg" || blob.type === "audio/mp3") return blob;
+  return new Blob([blob], { type: "audio/mpeg" });
+}
+
+const PACK_MAGIC = "BNGPCK01";
+
+/** Parse scripts/build-caller-voice-packs.mjs output into basename → Blob. */
+function parseCallerVoicePack(buffer: ArrayBuffer): Map<string, Blob> {
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  const magic = String.fromCharCode(...bytes.subarray(0, 8));
+  if (magic !== PACK_MAGIC) throw new Error("invalid voice pack magic");
+  const count = view.getUint16(8, true);
+  let offset = 10;
+  const out = new Map<string, Blob>();
+  for (let i = 0; i < count; i++) {
+    if (offset >= bytes.length) throw new Error("voice pack truncated");
+    const nameLen = view.getUint8(offset);
+    offset += 1;
+    const name = String.fromCharCode(...bytes.subarray(offset, offset + nameLen));
+    offset += nameLen;
+    const size = view.getUint32(offset, true);
+    offset += 4;
+    const slice = bytes.subarray(offset, offset + size);
+    offset += size;
+    out.set(name, new Blob([slice], { type: "audio/mpeg" }));
+  }
+  return out;
 }
 
 /** Prefer HTML Audio on phones — Web Audio suspends/fails after async SPIFFS fetch. */
@@ -103,6 +139,7 @@ interface UseCallerSpeechState {
   speechUnlocked: boolean;
   speechSupported: boolean;
   speechRate: number;
+  callerVoice: CallerVoiceId;
   /** Read whether call-out audio is currently holding the auto-call timer (ref-based). */
   isAudioHoldActive: () => boolean;
   /** Start loading a number clip (e.g. on pointer-down before tap completes). */
@@ -110,6 +147,7 @@ interface UseCallerSpeechState {
   /** Play call-out immediately on manual tap — do not wait for server round-trip. */
   announceNumberNow: (n: number) => void;
   setSpeechRate: (rate: number) => void;
+  setCallerVoice: (voice: CallerVoiceId) => void;
   /** Call from a click/tap handler only. */
   toggleSpeech: () => void;
   toggleJokes: () => void;
@@ -123,6 +161,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   const [jokesOn, setJokesOnState] = useState(false);
   const [speechUnlocked, setSpeechUnlocked] = useState(false);
   const [speechRate, setSpeechRateState] = useState<number>(() => readCallerSpeechRate());
+  const [callerVoice, setCallerVoiceState] = useState<CallerVoiceId>(() => readCallerVoice());
   const [speechSupported] = useState<boolean>(
     () =>
       typeof window !== "undefined" &&
@@ -131,6 +170,8 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
         (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext != null)
   );
 
+  const callerVoiceRef = useRef(callerVoice);
+  callerVoiceRef.current = callerVoice;
   const baselineReadyRef = useRef(false);
   const spokenNumbersRef = useRef<Set<number>>(new Set());
   const prevWinnerDeclaredRef = useRef(false);
@@ -153,6 +194,13 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   /** Bingo clip deferred until the in-flight number(+joke) finishes. */
   const pendingBingoRef = useRef(false);
   const httpCacheWarmedRef = useRef<Set<string>>(new Set());
+  /** Prefetched clip bodies — discarded when the user switches away from a voice. */
+  const clipBlobCacheRef = useRef<Map<string, Blob>>(new Map());
+  /** Object URL for the clip currently assigned to the shared audio element. */
+  const activeObjectUrlRef = useRef<string | null>(null);
+  /** Voice ids whose pack.bin has been loaded into clipBlobCacheRef. */
+  const voicePackLoadedRef = useRef<Set<CallerVoiceId>>(new Set());
+  const voicePackInflightRef = useRef<Map<CallerVoiceId, Promise<boolean>>>(new Map());
   /** Bumps cancel in-flight number / joke prefetch queues. */
   const numberPrefetchGenRef = useRef(0);
   const jokePrefetchGenRef = useRef(0);
@@ -222,15 +270,6 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     notifyBoardAutoCallingHold(false);
   }, [notifyBoardAutoCallingHold]);
 
-  const beginAutoCallingHold = useCallback(() => {
-    if (!activeRef.current) return;
-    if (!speechOnRef.current || !speechUnlockedRef.current) return;
-    // Mark call-out in progress (even when auto-calling is off) so winner mode waits.
-    if (audioHoldActiveRef.current) return;
-    audioHoldActiveRef.current = true;
-    notifyBoardAutoCallingHold(true);
-  }, [notifyBoardAutoCallingHold]);
-
   const isAudioHoldActive = useCallback(() => audioHoldActiveRef.current, []);
 
   const ensureSharedAudio = useCallback((): HTMLAudioElement | null => {
@@ -248,9 +287,18 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   }, []);
 
   /** Soft stop — pause + clear handlers, but do not destroy the unlocked media element. */
+  const revokeActiveObjectUrl = useCallback(() => {
+    if (!activeObjectUrlRef.current) return;
+    URL.revokeObjectURL(activeObjectUrlRef.current);
+    activeObjectUrlRef.current = null;
+  }, []);
+
   const stopAudio = useCallback(() => {
     const html = activeHtmlAudioRef.current ?? sharedAudioRef.current;
-    if (!html) return;
+    if (!html) {
+      revokeActiveObjectUrl();
+      return;
+    }
     try {
       html.onended = null;
       html.onerror = null;
@@ -261,6 +309,66 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       // Ignore.
     }
     activeHtmlAudioRef.current = null;
+    revokeActiveObjectUrl();
+  }, [revokeActiveObjectUrl]);
+
+  /** Play from the in-memory blob cache when warm; falls back to the SPIFFS URL. */
+  const assignClipSrc = useCallback(
+    (audio: HTMLAudioElement, url: string) => {
+      revokeActiveObjectUrl();
+      const blob = clipBlobCacheRef.current.get(url);
+      if (blob) {
+        const objectUrl = URL.createObjectURL(blob);
+        activeObjectUrlRef.current = objectUrl;
+        audio.src = objectUrl;
+      } else {
+        audio.src = url;
+      }
+    },
+    [revokeActiveObjectUrl]
+  );
+
+  const discardCachedVoiceClips = useCallback((voiceId: CallerVoiceId) => {
+    const prefix = callerVoiceCachePrefix(voiceId);
+    for (const url of [...clipBlobCacheRef.current.keys()]) {
+      if (url.startsWith(prefix)) clipBlobCacheRef.current.delete(url);
+    }
+    for (const url of [...httpCacheWarmedRef.current]) {
+      if (url.startsWith(prefix)) httpCacheWarmedRef.current.delete(url);
+    }
+    voicePackLoadedRef.current.delete(voiceId);
+    voicePackInflightRef.current.delete(voiceId);
+  }, []);
+
+  /** One HTTP GET for the whole voice — fills the in-memory blob map. */
+  const ensureVoicePackLoaded = useCallback(async (voiceId: CallerVoiceId): Promise<boolean> => {
+    if (voicePackLoadedRef.current.has(voiceId)) return true;
+    const existing = voicePackInflightRef.current.get(voiceId);
+    if (existing) return existing;
+
+    const work = (async () => {
+      try {
+        const packUrl = callerVoicePackUrl(voiceId);
+        const res = await fetch(packUrl, { credentials: "same-origin" });
+        if (!res.ok) return false;
+        const entries = parseCallerVoicePack(await res.arrayBuffer());
+        for (const [name, blob] of entries) {
+          const clipName = name.endsWith(".mp3") ? name.slice(0, -4) : name;
+          const clipUrl = callerClipUrl(voiceId, clipName);
+          clipBlobCacheRef.current.set(clipUrl, blob);
+          httpCacheWarmedRef.current.add(clipUrl);
+        }
+        voicePackLoadedRef.current.add(voiceId);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        voicePackInflightRef.current.delete(voiceId);
+      }
+    })();
+
+    voicePackInflightRef.current.set(voiceId, work);
+    return work;
   }, []);
 
   const ensureAudioContext = useCallback(async (): Promise<AudioContextType | null> => {
@@ -283,15 +391,22 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     return ctx;
   }, []);
 
-  /** Warm HTTP cache only (no Web Audio decode). Cheap and works for HTML Audio later. */
+  /** Prefetch clip into an in-memory blob map (HTTP cache alone cannot be purged on voice swap). */
   const warmHttpCache = useCallback((url: string): Promise<void> => {
-    if (httpCacheWarmedRef.current.has(url)) return Promise.resolve();
+    if (clipBlobCacheRef.current.has(url) || httpCacheWarmedRef.current.has(url)) {
+      return Promise.resolve();
+    }
     httpCacheWarmedRef.current.add(url);
-    return fetch(url, { cache: "force-cache", credentials: "same-origin" })
-      .then((res) => {
-        if (res.ok) return res.arrayBuffer().then(() => undefined);
-        // Allow a later retry if the first warm failed.
-        httpCacheWarmedRef.current.delete(url);
+    return fetch(url, { credentials: "same-origin" })
+      .then(async (res) => {
+        if (!res.ok) {
+          httpCacheWarmedRef.current.delete(url);
+          return;
+        }
+        const blob = asCallerAudioBlob(await res.blob());
+        // Voice may have been discarded while this fetch was in flight.
+        if (!httpCacheWarmedRef.current.has(url)) return;
+        clipBlobCacheRef.current.set(url, blob);
       })
       .catch(() => {
         httpCacheWarmedRef.current.delete(url);
@@ -299,7 +414,9 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   }, []);
 
   const waitWhilePrefetchBlocked = useCallback(async (alive: () => boolean) => {
-    while (playbackBusyRef.current || autoCallingEnabledRef.current) {
+    // Only pause while a clip is actively loading/playing so SPIFFS stays free for that fetch.
+    // Do not block the whole batch queue for the entire auto-calling session.
+    while (playbackBusyRef.current) {
       await new Promise((r) => window.setTimeout(r, 250));
       if (!alive()) return false;
     }
@@ -330,7 +447,17 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
    * clips on mobile (fresh `new Audio()` after idle often fails without a gesture).
    */
   const playHtmlClip = useCallback(
-    (url: string, rate: number, generation: number): Promise<void> => {
+    async (url: string, rate: number, generation: number): Promise<void> => {
+      // If a batch/prefetch fetch is already in flight for this clip, wait briefly so we
+      // play from the in-memory blob instead of a cold SPIFFS hit.
+      if (!clipBlobCacheRef.current.has(url) && httpCacheWarmedRef.current.has(url)) {
+        const deadline = Date.now() + 250;
+        while (!clipBlobCacheRef.current.has(url) && Date.now() < deadline) {
+          if (generation !== playGenerationRef.current) return;
+          await new Promise((r) => window.setTimeout(r, 20));
+        }
+      }
+
       return new Promise((resolve) => {
         if (generation !== playGenerationRef.current) {
           resolve();
@@ -385,20 +512,22 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
               // iOS revoked unlock — ask the user to tap caller again.
               if (name === "NotAllowedError") {
                 markUnlockLostRef.current();
+                finish();
               }
-              finish();
+              // Other play() races (not buffered yet) — loadeddata / retry / timeout handle it.
             }
           );
         };
 
         audio.onloadeddata = () => tryPlay();
-        audio.src = url;
-        audio.load();
-        // Fallback if loadeddata is late/missed.
-        window.setTimeout(tryPlay, 350);
+        assignClipSrc(audio, url);
+        // Start immediately — don't wait on loadeddata (Safari often delays it for media).
+        tryPlay();
+        // Retry once if the first play() raced ahead of buffering.
+        window.setTimeout(tryPlay, 80);
       });
     },
-    [ensureAudioContext, ensureSharedAudio, stopAudio]
+    [assignClipSrc, ensureAudioContext, ensureSharedAudio, stopAudio]
   );
 
   /** Sync start for unlock / jokes-on / bingo — must not await before play(). */
@@ -425,7 +554,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
         if (activeHtmlAudioRef.current === audio) activeHtmlAudioRef.current = null;
         if (generation === playGenerationRef.current) playbackBusyRef.current = false;
       };
-      audio.src = url;
+      assignClipSrc(audio, url);
       void audio.play().catch((err: unknown) => {
         const name =
           err && typeof err === "object" && "name" in err
@@ -435,10 +564,10 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
         if (generation === playGenerationRef.current) playbackBusyRef.current = false;
       });
     },
-    [ensureSharedAudio, stopAudio]
+    [assignClipSrc, ensureSharedAudio, stopAudio]
   );
 
-  /** Number call-outs only — starts when caller speech is unlocked/on. */
+  /** Number call-outs — one pack.bin fetch when available; else per-clip SPIFFS fallback. */
   const prefetchNumberClipsInBackground = useCallback(() => {
     const gen = ++numberPrefetchGenRef.current;
     const alive = () =>
@@ -447,16 +576,20 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       speechOnRef.current;
 
     void (async () => {
+      const voice = callerVoiceRef.current;
+      if (!alive()) return;
+      if (await ensureVoicePackLoaded(voice)) return;
+      if (!alive()) return;
       const urls = [
-        callerClipUrl("on"),
-        callerClipUrl("bingo"),
-        ...Array.from({ length: 75 }, (_, i) => numberClipUrl(i + 1)),
+        callerClipUrl(voice, "on"),
+        callerClipUrl(voice, "bingo"),
+        ...Array.from({ length: 75 }, (_, i) => numberClipUrl(voice, i + 1)),
       ];
       await warmHttpCacheBunched(urls, alive);
     })();
-  }, [warmHttpCacheBunched]);
+  }, [ensureVoicePackLoaded, warmHttpCacheBunched]);
 
-  /** Joke clips only — starts when jokes are turned on. */
+  /** Joke clips — pack already includes jokes; only warm individually if pack missing. */
   const prefetchJokeClipsInBackground = useCallback(() => {
     const gen = ++jokePrefetchGenRef.current;
     const alive = () =>
@@ -466,15 +599,19 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       jokesOnRef.current;
 
     void (async () => {
+      const voice = callerVoiceRef.current;
+      if (!alive()) return;
+      if (await ensureVoicePackLoaded(voice)) return;
+      if (!alive()) return;
       const urls = [
-        callerClipUrl("jokes-on"),
+        callerClipUrl(voice, "jokes-on"),
         ...[...JOKE_NUMBERS]
-          .map((n) => jokeClipUrl(n))
+          .map((n) => jokeClipUrl(voice, n))
           .filter((u): u is string => Boolean(u)),
       ];
       await warmHttpCacheBunched(urls, alive);
     })();
-  }, [warmHttpCacheBunched]);
+  }, [ensureVoicePackLoaded, warmHttpCacheBunched]);
 
   const cancelNumberPrefetch = useCallback(() => {
     numberPrefetchGenRef.current += 1;
@@ -488,18 +625,32 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     (n: number) => {
       if (n < 1 || n > 75) return;
       const rate = readCallerSpeechRate();
+      const voice = callerVoiceRef.current;
       const generation = ++playGenerationRef.current;
-      const clipUrl = numberClipUrl(n);
-      const jokeUrl = jokesOnRef.current ? jokeClipUrl(n) : null;
-      // Avoid competing SPIFFS fetches right before play on phones.
-      if (!mobileRef.current) {
-        warmHttpCache(clipUrl);
-        if (jokeUrl) warmHttpCache(jokeUrl);
-      }
+      const clipUrl = numberClipUrl(voice, n);
+      const jokeUrl = jokesOnRef.current ? jokeClipUrl(voice, n) : null;
 
       void (async () => {
-        beginAutoCallingHold();
+        // Pack (or per-clip) must be ready — SPIFFS may only ship pack.bin.
+        if (!clipBlobCacheRef.current.has(clipUrl)) {
+          const packed = await ensureVoicePackLoaded(voice);
+          if (!packed) {
+            await warmHttpCache(clipUrl);
+            if (jokeUrl) await warmHttpCache(jokeUrl);
+          }
+        }
         playbackBusyRef.current = true;
+        // Mark local hold immediately so winner UI waits, but delay the ESP32 POST so it
+        // does not queue behind / contend with an in-flight `/draw` on the single HTTP task.
+        audioHoldActiveRef.current = true;
+        const holdDelayId = window.setTimeout(() => {
+          if (generation !== playGenerationRef.current) return;
+          // Clip may have already finished (and released hold) before this fires.
+          if (!audioHoldActiveRef.current) return;
+          if (!activeRef.current) return;
+          if (!speechOnRef.current || !speechUnlockedRef.current) return;
+          notifyBoardAutoCallingHold(true);
+        }, 120);
         try {
           await ensureAudioContext();
           await playHtmlClip(clipUrl, rate, generation);
@@ -514,6 +665,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
             }
           }
         } finally {
+          window.clearTimeout(holdDelayId);
           if (generation === playGenerationRef.current) {
             playbackBusyRef.current = false;
             const playBingo = pendingBingoRef.current;
@@ -521,15 +673,19 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
             // Release hold first so firmware activates deferred winner mode, then bingo audio.
             releaseAutoCallingHold(true);
             if (playBingo) {
-              playUtilityClipSync(callerClipUrl("bingo"), readCallerSpeechRate());
+              playUtilityClipSync(
+                callerClipUrl(callerVoiceRef.current, "bingo"),
+                readCallerSpeechRate()
+              );
             }
           }
         }
       })();
     },
     [
-      beginAutoCallingHold,
       ensureAudioContext,
+      ensureVoicePackLoaded,
+      notifyBoardAutoCallingHold,
       playHtmlClip,
       playUtilityClipSync,
       releaseAutoCallingHold,
@@ -541,13 +697,17 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     (n: number) => {
       if (n < 1 || n > 75) return;
       if (!speechOnRef.current || !speechUnlockedRef.current) return;
-      warmHttpCache(numberClipUrl(n));
-      if (jokesOnRef.current) {
-        const jokeUrl = jokeClipUrl(n);
-        if (jokeUrl) warmHttpCache(jokeUrl);
-      }
+      const voice = callerVoiceRef.current;
+      void ensureVoicePackLoaded(voice).then((ok) => {
+        if (ok) return;
+        warmHttpCache(numberClipUrl(voice, n));
+        if (jokesOnRef.current) {
+          const jokeUrl = jokeClipUrl(voice, n);
+          if (jokeUrl) warmHttpCache(jokeUrl);
+        }
+      });
     },
-    [warmHttpCache]
+    [ensureVoicePackLoaded, warmHttpCache]
   );
 
   const announceNumberNow = useCallback(
@@ -600,6 +760,30 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     setSpeechRateState(writeCallerSpeechRate(rate));
   }, []);
 
+  const setCallerVoice = useCallback(
+    (voice: CallerVoiceId) => {
+      const previous = callerVoiceRef.current;
+      if (voice === previous) return;
+      discardCachedVoiceClips(previous);
+      writeCallerVoice(voice);
+      callerVoiceRef.current = voice;
+      setCallerVoiceState(voice);
+      cancelNumberPrefetch();
+      cancelJokePrefetch();
+      if (speechUnlockedRef.current && speechOnRef.current) {
+        prefetchNumberClipsInBackground();
+        if (jokesOnRef.current) prefetchJokeClipsInBackground();
+      }
+    },
+    [
+      cancelJokePrefetch,
+      cancelNumberPrefetch,
+      discardCachedVoiceClips,
+      prefetchJokeClipsInBackground,
+      prefetchNumberClipsInBackground,
+    ]
+  );
+
   /**
    * Must run inside a user-gesture handler (click/tap).
    * Unlocks HTML Audio (and AudioContext) so later timer-driven call-outs can play.
@@ -613,7 +797,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
 
     // Create the shared element inside the gesture before any async work.
     ensureSharedAudio();
-    const url = callerClipUrl("on");
+    const url = callerClipUrl(callerVoiceRef.current, "on");
     const rate = readCallerSpeechRate();
     playUtilityClipSync(url, rate);
 
@@ -668,7 +852,10 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     }
 
     setJokesOn(true);
-    playUtilityClipSync(callerClipUrl("jokes-on"), readCallerSpeechRate());
+    playUtilityClipSync(
+      callerClipUrl(callerVoiceRef.current, "jokes-on"),
+      readCallerSpeechRate()
+    );
     prefetchJokeClipsInBackground();
   }, [
     cancelJokePrefetch,
@@ -700,9 +887,9 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   useEffect(() => {
     if (!active || !speechSupported) return;
     for (const name of ["on", "bingo"] as const) {
-      warmHttpCache(callerClipUrl(name));
+      warmHttpCache(callerClipUrl(callerVoice, name));
     }
-  }, [active, speechSupported, warmHttpCache]);
+  }, [active, callerVoice, speechSupported, warmHttpCache]);
 
   // Keep audio unlock alive after backgrounding (common mobile failure).
   useEffect(() => {
@@ -870,7 +1057,10 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       if (playbackBusyRef.current || audioHoldActiveRef.current) {
         pendingBingoRef.current = true;
       } else {
-        playUtilityClipSync(callerClipUrl("bingo"), readCallerSpeechRate());
+        playUtilityClipSync(
+          callerClipUrl(callerVoiceRef.current, "bingo"),
+          readCallerSpeechRate()
+        );
       }
     }
   }, [
@@ -905,10 +1095,12 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     speechUnlocked,
     speechSupported,
     speechRate,
+    callerVoice,
     isAudioHoldActive,
     prefetchNumberClip,
     announceNumberNow,
     setSpeechRate,
+    setCallerVoice,
     toggleSpeech,
     toggleJokes,
     setSpeechOn,

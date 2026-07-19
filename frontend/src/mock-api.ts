@@ -1027,6 +1027,24 @@ export const mockApi = {
     return { restartRequired: true };
   },
 
+  scanWifiNetworks: async () => {
+    await delay(80);
+    assertBoardAuth();
+    return {
+      status: "done" as const,
+      networks: [
+        { ssid: "ExampleHome", rssi: -48, secure: true },
+        { ssid: "ExampleCafe", rssi: -67, secure: true },
+        { ssid: "OpenGuest", rssi: -72, secure: false },
+        ...(state.wifiSsid
+          ? [{ ssid: state.wifiSsid, rssi: -55, secure: true }]
+          : []),
+      ].filter(
+        (n, i, arr) => arr.findIndex((x) => x.ssid === n.ssid) === i
+      ),
+    };
+  },
+
   unlockBoard: async (pin: string): Promise<BoardAuthSession> => {
     await delay(10);
     const now = nowMs();
@@ -1077,6 +1095,13 @@ export const mockApi = {
     if (!next || next.length < 4) throw new Error("next pin invalid");
     boardPin = next;
     return {};
+  },
+
+  restartBoard: async () => {
+    await delay(10);
+    assertBoardAuth();
+    console.info("[mock] board restart requested");
+    return { ok: true };
   },
 
   joinCard: async (

@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
+import { CALLER_EXAMPLE_CLIP, CALLER_VOICES, callerClipUrl, type CallerVoiceId } from "@/lib/caller-voices";
 import type { RefreshOptions } from "@/hooks/useGameState";
 import {
   THEME_NAMES,
@@ -37,7 +38,7 @@ import {
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { GAME_STYLES, GAME_STYLE_LABELS } from "@/lib/game-style";
-import { Check, Copy, FileStack, Lamp, Lock, MonitorPlay, Palette, Volume2, Webhook, Wifi, X } from "lucide-react";
+import { Check, Copy, FileStack, Lightbulb, Lock, MonitorPlay, Palette, Play, Power, RefreshCw, Square, Volume2, Webhook, Wifi, X } from "lucide-react";
 import { buildCardClaimUrl, generateSignedPrintableCards } from "@/lib/bingo-card-codec";
 
 const STATIC_VALUE = "static";
@@ -159,6 +160,8 @@ interface Props {
   onUiCustomColorChange: (letter: (typeof LETTERS)[number], color: string) => void;
   callerSpeechRate?: number;
   onCallerSpeechRateChange?: (rate: number) => void;
+  callerVoice?: CallerVoiceId;
+  onCallerVoiceChange?: (voice: CallerVoiceId) => void;
   onClose?: () => void;
   onRefresh: (options?: RefreshOptions) => void;
   /** Board game style — used as the default for printable card packs. */
@@ -199,6 +202,8 @@ export function Settings({
   onUiCustomColorChange,
   callerSpeechRate = 0.85,
   onCallerSpeechRateChange,
+  callerVoice = "Female1",
+  onCallerVoiceChange,
   onClose,
   onRefresh,
   gameStyle = "bingo",
@@ -206,6 +211,9 @@ export function Settings({
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
   const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
   const [localCallerSpeechRate, setLocalCallerSpeechRate] = useState(callerSpeechRate);
+  const [localCallerVoice, setLocalCallerVoice] = useState<CallerVoiceId>(callerVoice);
+  const [callerExamplePlaying, setCallerExamplePlaying] = useState(false);
+  const callerExampleAudioRef = useRef<HTMLAudioElement | null>(null);
   const [localTheme, setLocalTheme] = useState(theme);
   const [localColorMode, setLocalColorMode] = useState<ColorMode>(colorMode);
   const [localColor, setLocalColor] = useState(staticColor);
@@ -233,6 +241,10 @@ export function Settings({
   const [localWifiSsid, setLocalWifiSsid] = useState(wifiSsid);
   const [localWifiPassword, setLocalWifiPassword] = useState("");
   const [wifiMessage, setWifiMessage] = useState<string | null>(null);
+  const [wifiNetworks, setWifiNetworks] = useState<
+    Array<{ ssid: string; rssi: number; secure: boolean }>
+  >([]);
+  const [wifiScanBusy, setWifiScanBusy] = useState(false);
   const [cardCountDraft, setCardCountDraft] = useState("4");
   const [cardPackStyle, setCardPackStyle] = useState<GameStyle>(gameStyle);
   const [cardsBusy, setCardsBusy] = useState(false);
@@ -242,6 +254,8 @@ export function Settings({
   const [currentBoardPin, setCurrentBoardPin] = useState("");
   const [nextBoardPin, setNextBoardPin] = useState("");
   const [pinMessage, setPinMessage] = useState<string | null>(null);
+  const [restartMessage, setRestartMessage] = useState<string | null>(null);
+  const [restartBusy, setRestartBusy] = useState(false);
   const [editingHexField, setEditingHexField] = useState<string | null>(null);
   const [localUiCustomColors, setLocalUiCustomColors] = useState(uiCustomColors);
   const [settingsTab, setSettingsTab] = useState<SettingsTabId>(
@@ -326,8 +340,68 @@ export function Settings({
     setWebhooksMessage(null);
     setLocalUiCustomColors(uiCustomColors);
     setLocalCallerSpeechRate(callerSpeechRate);
+    setLocalCallerVoice(callerVoice);
     wasSettingsOpenRef.current = true;
-  }, [settingsOpen, uiCustomColors, callerSpeechRate]);
+  }, [settingsOpen, uiCustomColors, callerSpeechRate, callerVoice]);
+
+  const stopCallerExample = () => {
+    const audio = callerExampleAudioRef.current;
+    if (audio) {
+      try {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      } catch {
+        // Ignore.
+      }
+    }
+    setCallerExamplePlaying(false);
+  };
+
+  const playCallerExample = () => {
+    stopCallerExample();
+    if (typeof Audio === "undefined") return;
+    const audio = callerExampleAudioRef.current ?? new Audio();
+    callerExampleAudioRef.current = audio;
+    audio.preload = "auto";
+    audio.setAttribute("playsinline", "true");
+    audio.setAttribute("webkit-playsinline", "true");
+    try {
+      audio.playbackRate = localCallerSpeechRate;
+      audio.volume = 1;
+    } catch {
+      // Ignore unsupported rate.
+    }
+    audio.src = callerClipUrl(localCallerVoice, CALLER_EXAMPLE_CLIP);
+    setCallerExamplePlaying(true);
+    audio.onended = () => setCallerExamplePlaying(false);
+    audio.onerror = () => setCallerExamplePlaying(false);
+    void audio.play().catch(() => setCallerExamplePlaying(false));
+  };
+
+  useEffect(() => {
+    if (!settingsOpen) stopCallerExample();
+  }, [settingsOpen]);
+
+  useEffect(() => {
+    stopCallerExample();
+  }, [localCallerVoice]);
+
+  useEffect(() => {
+    const audio = callerExampleAudioRef.current;
+    if (!audio || !callerExamplePlaying) return;
+    try {
+      audio.playbackRate = localCallerSpeechRate;
+    } catch {
+      // Ignore.
+    }
+  }, [callerExamplePlaying, localCallerSpeechRate]);
+
+  useEffect(() => {
+    return () => stopCallerExample();
+  }, []);
 
   // The select value: "0"–"7" for palettes, "static" for solid color
   const selectValue = localColorMode === "solid"
@@ -611,11 +685,11 @@ export function Settings({
 
   const boardTabs = useMemo(() => {
     const tabs: Array<{ id: SettingsTabId; label: string; icon: ReactNode }> = [
-      { id: "leds", label: "Lights", icon: <Lamp className="h-3.5 w-3.5" /> },
+      { id: "leds", label: "LEDs", icon: <Lightbulb className="h-3.5 w-3.5" /> },
       { id: "screensaver", label: "Screensaver", icon: <MonitorPlay className="h-3.5 w-3.5" /> },
       { id: "ui", label: "UI Colors", icon: <Palette className="h-3.5 w-3.5" /> },
     ];
-    if (onCallerSpeechRateChange) {
+    if (onCallerSpeechRateChange || onCallerVoiceChange) {
       tabs.push({ id: "caller", label: "Caller", icon: <Volume2 className="h-3.5 w-3.5" /> });
     }
     tabs.push(
@@ -625,7 +699,7 @@ export function Settings({
       { id: "access", label: "Access", icon: <Lock className="h-3.5 w-3.5" /> }
     );
     return tabs;
-  }, [onCallerSpeechRateChange]);
+  }, [onCallerSpeechRateChange, onCallerVoiceChange]);
 
   const parseCardCount = () => {
     const parsed = Number.parseInt(cardCountDraft, 10);
@@ -716,11 +790,11 @@ export function Settings({
       return;
     }
     setSettingsTab((prev) => {
-      if (prev === "caller" && !onCallerSpeechRateChange) return "leds";
+      if (prev === "caller" && !onCallerSpeechRateChange && !onCallerVoiceChange) return "leds";
       if (boardTabs.some((tab) => tab.id === prev)) return prev;
       return "leds";
     });
-  }, [settingsMode, onCallerSpeechRateChange, boardTabs]);
+  }, [settingsMode, onCallerSpeechRateChange, onCallerVoiceChange, boardTabs]);
 
   const handleLetterFullMode = (mode: LetterFullMode) => {
     if (mode === localLetterFullMode) return;
@@ -822,10 +896,34 @@ export function Settings({
     }
   };
 
+  const handleBoardRestart = () => {
+    if (!boardAuthGranted || restartBusy) return;
+    const ok = window.confirm(
+      "Restart the bingo board now? The page will disconnect briefly while it reboots."
+    );
+    if (!ok) return;
+    setRestartMessage(null);
+    setRestartBusy(true);
+    void api
+      .restartBoard()
+      .then(() => {
+        setRestartMessage("Restarting… reconnect when the board comes back.");
+      })
+      .catch(() => {
+        setRestartBusy(false);
+        setRestartMessage("Unable to restart the board.");
+      });
+  };
+
   const handleWifiSave = () => {
     setWifiMessage(null);
+    const ssid = localWifiSsid.trim();
+    if (ssid.length > 0 && !wifiConfigured && localWifiPassword.length === 0) {
+      setWifiMessage("Enter the WiFi password to save a new network.");
+      return;
+    }
     void api
-      .setWifiCredentials(localWifiSsid, localWifiPassword.length > 0 ? localWifiPassword : undefined)
+      .setWifiCredentials(ssid, localWifiPassword.length > 0 ? localWifiPassword : undefined)
       .then((result) => {
         setLocalWifiPassword("");
         setWifiMessage(
@@ -834,10 +932,52 @@ export function Settings({
             : "WiFi saved."
         );
       })
-      .catch(() => {
-        setWifiMessage("Unable to save WiFi settings.");
+      .catch((error: unknown) => {
+        const msg = error instanceof Error ? error.message : String(error ?? "");
+        if (msg.includes("500") || /nvs/i.test(msg)) {
+          setWifiMessage("Unable to save WiFi to flash (NVS). Try again after a power-cycle.");
+        } else {
+          setWifiMessage("Unable to save WiFi settings.");
+        }
       });
   };
+
+  const handleWifiScan = () => {
+    if (!boardAuthGranted || wifiScanBusy) return;
+    setWifiScanBusy(true);
+    setWifiMessage(null);
+    void api
+      .scanWifiNetworks()
+      .then((result) => {
+        const networks = result.networks ?? [];
+        setWifiNetworks(networks);
+        if (networks.length === 0) {
+          setWifiMessage("No networks found. Move closer to the router and scan again.");
+        } else {
+          setWifiMessage(`Found ${networks.length} network${networks.length === 1 ? "" : "s"}.`);
+        }
+        if (!localWifiSsid && networks[0]) {
+          setLocalWifiSsid(networks[0].ssid);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isBoardAuthHttpError(error)) {
+          window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+        }
+        setWifiMessage("Unable to scan for WiFi networks.");
+      })
+      .finally(() => setWifiScanBusy(false));
+  };
+
+  useEffect(() => {
+    if (!settingsOpen || settingsMode !== "board") return;
+    if (settingsTab !== "wifi") return;
+    if (!boardAuthGranted) return;
+    if (wifiNetworks.length > 0 || wifiScanBusy) return;
+    handleWifiScan();
+    // Auto-scan once when opening the WiFi tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen, settingsMode, settingsTab, boardAuthGranted]);
 
   const handleWifiClear = () => {
     setWifiMessage(null);
@@ -905,7 +1045,7 @@ export function Settings({
           <div className="min-w-0 flex-1 pt-3 md:pt-0">
           <TabsContent value="leds" className="mt-0 outline-none">
             <SettingsPanel
-              title="Board lights"
+              title="Board LEDs"
               description="Brightness, themes, and how LEDs look during a game."
             >
               <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
@@ -1447,33 +1587,91 @@ export function Settings({
             </SettingsPanel>
           </TabsContent>
 
-          {onCallerSpeechRateChange && (
+          {(onCallerSpeechRateChange || onCallerVoiceChange) && (
             <TabsContent value="caller" className="mt-0 outline-none">
               <SettingsPanel
                 title="Number caller"
                 description="Playback settings for pre-recorded call-outs."
               >
                 <SettingsGroup>
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <Label>Speech rate</Label>
-                      <span className="text-sm text-muted-foreground tabular-nums">
-                        {localCallerSpeechRate.toFixed(2)}×
-                      </span>
+                  {onCallerVoiceChange && (
+                    <div>
+                      <Label className="mb-2 block">Voice</Label>
+                      <div className="flex items-stretch gap-2">
+                        <Select
+                          value={localCallerVoice}
+                          onValueChange={(value) => {
+                            const next = value as CallerVoiceId;
+                            setLocalCallerVoice(next);
+                            onCallerVoiceChange(next);
+                          }}
+                        >
+                          <SelectTrigger
+                            className="min-w-0 flex-1 focus:ring-0 focus:ring-offset-0"
+                            style={{ borderColor: letterColors.N }}
+                            onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                            onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CALLER_VOICES.map((voice) => (
+                              <SelectItem key={voice.id} value={voice.id}>
+                                {voice.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="shrink-0 gap-1.5 px-3"
+                          style={{ borderColor: letterColors.N }}
+                          aria-label={
+                            callerExamplePlaying ? "Stop voice example" : "Play voice example"
+                          }
+                          aria-pressed={callerExamplePlaying}
+                          onClick={() => {
+                            if (callerExamplePlaying) stopCallerExample();
+                            else playCallerExample();
+                          }}
+                        >
+                          {callerExamplePlaying ? (
+                            <Square className="h-3.5 w-3.5 fill-current" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5 fill-current" />
+                          )}
+                          Example
+                        </Button>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+                        Chooses which pre-recorded voice pack plays for number call-outs. Use
+                        Example to hear a short host intro in the selected voice.
+                      </p>
                     </div>
-                    <Slider
-                      value={[localCallerSpeechRate]}
-                      min={0.6}
-                      max={1.2}
-                      step={0.05}
-                      onValueChange={(value) => setLocalCallerSpeechRate(value[0])}
-                      onValueCommit={(value) => onCallerSpeechRateChange(value[0])}
-                    />
-                    <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                      Lower is slower. Tap the header speaker icon once on phone to enable sound
-                      (required for Bluetooth).
-                    </p>
-                  </div>
+                  )}
+                  {onCallerSpeechRateChange && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <Label>Speech rate</Label>
+                        <span className="text-sm text-muted-foreground tabular-nums">
+                          {localCallerSpeechRate.toFixed(2)}×
+                        </span>
+                      </div>
+                      <Slider
+                        value={[localCallerSpeechRate]}
+                        min={0.6}
+                        max={1.2}
+                        step={0.05}
+                        onValueChange={(value) => setLocalCallerSpeechRate(value[0])}
+                        onValueCommit={(value) => onCallerSpeechRateChange(value[0])}
+                      />
+                      <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+                        Lower is slower. Tap the header speaker icon once on phone to enable sound
+                        (required for Bluetooth).
+                      </p>
+                    </div>
+                  )}
                 </SettingsGroup>
               </SettingsPanel>
             </TabsContent>
@@ -1643,37 +1841,84 @@ export function Settings({
           <TabsContent value="wifi" className="mt-0 outline-none">
             <SettingsPanel
               title="WiFi"
-              description="On power-up the board joins this network when configured; otherwise it uses the BINGO access point. Open http://bingo.local in either mode."
+              description="Scan for nearby networks, save one to join on power-up, or leave unset to use the BINGO access point. Open http://bingo.local in either mode."
             >
               <SettingsGroup>
                 <div className="grid sm:grid-cols-2 gap-3">
-                  <Input
-                    value={localWifiSsid}
-                    onChange={(e) => setLocalWifiSsid(e.target.value)}
-                    placeholder="WiFi network name (SSID)"
-                    disabled={!boardAuthGranted}
-                    maxLength={32}
-                    style={{ borderColor: letterColors.N }}
-                    onFocus={(e) => focusWithLetterN(e, letterColors.N)}
-                    onBlur={(e) => blurWithLetterN(e, letterColors.N)}
-                  />
-                  <Input
-                    type="password"
-                    value={localWifiPassword}
-                    onChange={(e) => setLocalWifiPassword(e.target.value)}
-                    placeholder={wifiConfigured ? "New password (optional)" : "WiFi password"}
-                    disabled={!boardAuthGranted}
-                    maxLength={64}
-                    style={{ borderColor: letterColors.N }}
-                    onFocus={(e) => focusWithLetterN(e, letterColors.N)}
-                    onBlur={(e) => blurWithLetterN(e, letterColors.N)}
-                  />
+                  <div className="flex min-w-0 flex-col gap-2 sm:col-span-2">
+                    <Label className="block">Network</Label>
+                    <div className="flex items-stretch gap-2">
+                      <Select
+                        value={localWifiSsid || undefined}
+                        onValueChange={(value) => setLocalWifiSsid(value)}
+                        disabled={!boardAuthGranted || wifiScanBusy}
+                      >
+                        <SelectTrigger
+                          className="min-w-0 flex-1 focus:ring-0 focus:ring-offset-0"
+                          style={{ borderColor: letterColors.N }}
+                          onFocus={(e) => focusSelectWithLetterN(e, letterColors.N)}
+                          onBlur={(e) => blurSelectWithLetterN(e, letterColors.N)}
+                        >
+                          <SelectValue
+                            placeholder={
+                              wifiScanBusy
+                                ? "Scanning…"
+                                : wifiNetworks.length > 0 || localWifiSsid
+                                  ? "Select a network"
+                                  : "Scan for nearby networks"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {localWifiSsid &&
+                            !wifiNetworks.some((n) => n.ssid === localWifiSsid) && (
+                              <SelectItem value={localWifiSsid}>
+                                {localWifiSsid} (saved)
+                              </SelectItem>
+                            )}
+                          {wifiNetworks.map((network) => (
+                            <SelectItem key={network.ssid} value={network.ssid}>
+                              {network.ssid}
+                              {network.secure ? "" : " (open)"} · {network.rssi} dBm
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="shrink-0 gap-1.5 px-3"
+                        style={{ borderColor: letterColors.N }}
+                        disabled={!boardAuthGranted || wifiScanBusy}
+                        onClick={handleWifiScan}
+                      >
+                        <RefreshCw
+                          className={cn("h-3.5 w-3.5", wifiScanBusy && "animate-spin")}
+                        />
+                        {wifiScanBusy ? "Scanning…" : "Scan"}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="mb-2 block">Password</Label>
+                    <Input
+                      type="password"
+                      value={localWifiPassword}
+                      onChange={(e) => setLocalWifiPassword(e.target.value)}
+                      placeholder={wifiConfigured ? "New password (optional)" : "WiFi password"}
+                      disabled={!boardAuthGranted}
+                      maxLength={64}
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                      onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                    />
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     type="button"
                     onClick={() => void handleWifiSave()}
-                    disabled={!boardAuthGranted}
+                    disabled={!boardAuthGranted || !localWifiSsid.trim()}
                     className="text-white"
                     style={{ backgroundColor: letterColors.N }}
                   >
@@ -1807,6 +2052,26 @@ export function Settings({
                     Update Board PIN
                   </Button>
                   {pinMessage && <span className="text-xs text-muted-foreground">{pinMessage}</span>}
+                </div>
+              </SettingsGroup>
+              <SettingsGroup
+                title="Restart"
+                description="Soft-reboot the ESP32 (same as a power cycle for firmware and WiFi). The web UI will reconnect after the board comes back."
+              >
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={handleBoardRestart}
+                    disabled={!boardAuthGranted || restartBusy}
+                  >
+                    <Power className="h-3.5 w-3.5" />
+                    {restartBusy ? "Restarting…" : "Restart board"}
+                  </Button>
+                  {restartMessage && (
+                    <span className="text-xs text-muted-foreground">{restartMessage}</span>
+                  )}
                 </div>
               </SettingsGroup>
             </SettingsPanel>

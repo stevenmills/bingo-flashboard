@@ -84,13 +84,46 @@ if (removed > 0) {
   console.log("[prune-spiffs] no stale bundles");
 }
 
-const total = fs
-  .readdirSync(dataDir)
-  .map((n) => fs.statSync(path.join(dataDir, n)).size)
-  .reduce((a, b) => a + b, 0);
+// Prefer pack.bin on SPIFFS: drop per-clip MP3s when a pack exists (saves file-count overhead).
+let removedMp3 = 0;
+const cvDir = path.join(dataDir, "cv");
+if (fs.existsSync(cvDir)) {
+  for (const slug of fs.readdirSync(cvDir)) {
+    const slugDir = path.join(cvDir, slug);
+    if (!fs.statSync(slugDir).isDirectory()) continue;
+    const packPath = path.join(slugDir, "pack.bin");
+    if (!fs.existsSync(packPath)) continue;
+    for (const name of fs.readdirSync(slugDir)) {
+      if (!name.endsWith(".mp3")) continue;
+      // Keep tiny utilities for Settings / unlock before pack finishes downloading.
+      if (name === "example.mp3" || name === "on.mp3" || name === "bingo.mp3" || name === "jokes-on.mp3") {
+        continue;
+      }
+      fs.unlinkSync(path.join(slugDir, name));
+      removedMp3++;
+    }
+  }
+}
+if (removedMp3 > 0) {
+  console.log(`[prune-spiffs] removed ${removedMp3} per-clip mp3(s); using pack.bin`);
+}
+
+function dirBytes(dir) {
+  let total = 0;
+  for (const name of fs.readdirSync(dir)) {
+    const full = path.join(dir, name);
+    const st = fs.statSync(full);
+    if (st.isDirectory()) total += dirBytes(full);
+    else total += st.size;
+  }
+  return total;
+}
+
+const SPIFFS_BYTES = 0x600000; // partitions/bingo.csv
+const total = dirBytes(dataDir);
 console.log(
   `[prune-spiffs] data/ total ${(total / 1024 / 1024).toFixed(2)} MiB (SPIFFS ~${(
-    0x230000 /
+    SPIFFS_BYTES /
     1024 /
     1024
   ).toFixed(2)} MiB)`

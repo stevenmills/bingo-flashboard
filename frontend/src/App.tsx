@@ -145,6 +145,8 @@ export default function App() {
     speechSupported,
     speechRate,
     setSpeechRate,
+    callerVoice,
+    setCallerVoice,
     toggleSpeech,
     toggleJokes,
     isAudioHoldActive,
@@ -958,6 +960,8 @@ export default function App() {
                       onUiCustomColorChange={setUiCustomColor}
                       callerSpeechRate={speechRate}
                       onCallerSpeechRateChange={setSpeechRate}
+                      callerVoice={callerVoice}
+                      onCallerVoiceChange={setCallerVoice}
                       onRefresh={refresh}
                       gameStyle={state.gameStyle ?? "bingo"}
                     />

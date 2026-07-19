@@ -13,8 +13,8 @@ export default defineConfig({
   },
   build: {
     outDir: "../data",
-    // Do not wipe data/ — MP3 clips live here and in public/. Stale hashed bundles are
-    // removed by scripts/prune-spiffs-data.mjs before/after each build (SPIFFS ~2.2 MB).
+    // Do not wipe data/ — MP3 voice packs live here and in public/. Stale hashed bundles are
+    // removed by scripts/prune-spiffs-data.mjs before/after each build (SPIFFS ~6 MB).
     emptyOutDir: false,
     rollupOptions: {
       output: {
@@ -55,6 +55,7 @@ export default defineConfig({
       "/auth/board/lock": API_TARGET,
       "/auth/board/refresh": API_TARGET,
       "/board/pin": API_TARGET,
+      "/board/restart": API_TARGET,
       "/card/join": API_TARGET,
       "/card/claim": API_TARGET,
       "/card/mark": API_TARGET,
@@ -72,6 +73,7 @@ export default defineConfig({
       "/winner-effect": API_TARGET,
       "/webhooks": API_TARGET,
       "/wifi": API_TARGET,
+      "/wifi/scan": API_TARGET,
     },
   },
 });

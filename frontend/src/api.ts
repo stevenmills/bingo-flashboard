@@ -551,6 +551,8 @@ const realApi = {
   changeBoardPin: (currentPin: string, nextPin: string) =>
     postBoardJson("/board/pin", { currentPin, nextPin }),
 
+  restartBoard: () => postBoardJson("/board/restart"),
+
   setBrightness: (value: number) =>
     postForm("/brightness", { value: String(value) }),
 
@@ -612,8 +614,34 @@ const realApi = {
   setWebhooks: (settings: WebhookSettings) =>
     postBoardJson("/webhooks", settings),
 
-  setWifiCredentials: (ssid: string, password?: string) =>
-    postBoardJson("/wifi", { ssid, password }),
+  setWifiCredentials: (ssid: string, password?: string) => {
+    const body: { ssid: string; password?: string } = { ssid };
+    if (password !== undefined) body.password = password;
+    return postBoardJson("/wifi", body);
+  },
+
+  scanWifiNetworks: async (): Promise<{
+    status: "scanning" | "done";
+    networks: Array<{ ssid: string; rssi: number; secure: boolean }>;
+  }> => {
+    syncBoardTokenFromStorage();
+    if (isOnBoardHost() && !boardToken) throw new Error("401");
+    const { signal, cancel } = abortAfterMs(Math.max(fetchTimeoutMs(), 15000));
+    try {
+      const headers: Record<string, string> = {};
+      if (boardToken) headers["X-Board-Token"] = boardToken;
+      const res = await fetch(`${BASE}/wifi/scan`, { signal, headers });
+      cancel();
+      if (!res.ok) {
+        if (res.status === 401) throw new Error("401");
+        throw new Error(`${res.status}`);
+      }
+      return res.json();
+    } catch (err) {
+      cancel();
+      throw err;
+    }
+  },
 
   joinCard: (numbers: Array<number | null>, cardId?: string, gameStyle: GameStyle = "bingo") =>
     mutationNoAuth("join_card", { numbers, cardId, gameStyle }, () =>
@@ -793,6 +821,17 @@ export const api = {
   setWifiCredentials: async (ssid: string, password?: string) =>
     shouldUseMock() ? mockApi.setWifiCredentials(ssid, password) : realApi.setWifiCredentials(ssid, password),
 
+  scanWifiNetworks: async () => {
+    if (shouldUseMock()) return mockApi.scanWifiNetworks();
+    // Poll until the async ESP32 scan finishes (first call starts it).
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const result = await realApi.scanWifiNetworks();
+      if (result.status === "done") return result;
+      await new Promise((r) => window.setTimeout(r, 400));
+    }
+    throw new Error("WiFi scan timed out");
+  },
+
   unlockBoard: async (pin: string) => {
     if (shouldUseMock()) {
       const session = await mockApi.unlockBoard(pin);
@@ -827,6 +866,9 @@ export const api = {
   },
   changeBoardPin: async (currentPin: string, nextPin: string) =>
     shouldUseMock() ? mockApi.changeBoardPin(currentPin, nextPin) : realApi.changeBoardPin(currentPin, nextPin),
+
+  restartBoard: async () =>
+    shouldUseMock() ? mockApi.restartBoard() : realApi.restartBoard(),
   setBoardToken: (token: string | null) => {
     boardToken = token;
   },

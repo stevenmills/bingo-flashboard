@@ -132,6 +132,15 @@ int sectionStartCol[3] = {0, 1, 16};
 static char staSsidBuf[WIFI_SSID_MAX_LEN + 1] = "";
 static char staPasswordBuf[WIFI_PASSWORD_MAX_LEN + 1] = "";
 bool wifiStaConnected = false;
+static bool pendingBoardRestart = false;
+static unsigned long pendingBoardRestartAtMs = 0;
+
+/** Enable AP+STA when on the softAP so scanNetworks() can run without dropping clients. */
+static void ensureWifiScanRadio() {
+  if (wifiStaConnected) return;
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(AP_SSID, AP_PASSWORD);
+}
 
 // --- Outbound webhooks (STA only) ---
 static char webhookNumberUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
@@ -305,6 +314,7 @@ uint32_t wsSeq = 0;
 void updateAllLeds();
 void loadNvs();
 void saveNvsSettings();
+bool saveNvsWifiCredentials();
 void saveNvsGameTypeOnly();
 void saveNvsCallingStyleOnly();
 void saveNvsScreensaverEnabledOnly();
@@ -3025,6 +3035,36 @@ void saveNvsSettings() {
   nvs_close(nvs);
 }
 
+/** Persist STA credentials alone — avoids silent failure when a full settings write hits NVS pressure. */
+bool saveNvsWifiCredentials() {
+  nvs_handle handle;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+  if (err != ESP_OK) {
+    Serial.printf("WiFi NVS open failed: %s\n", esp_err_to_name(err));
+    return false;
+  }
+  err = nvs_set_str(handle, NVS_WIFI_SSID, staSsidBuf);
+  if (err != ESP_OK) {
+    Serial.printf("WiFi NVS set ssid failed: %s\n", esp_err_to_name(err));
+    nvs_close(handle);
+    return false;
+  }
+  err = nvs_set_str(handle, NVS_WIFI_PASSWORD, staPasswordBuf);
+  if (err != ESP_OK) {
+    Serial.printf("WiFi NVS set password failed: %s\n", esp_err_to_name(err));
+    nvs_close(handle);
+    return false;
+  }
+  err = nvs_commit(handle);
+  nvs_close(handle);
+  if (err != ESP_OK) {
+    Serial.printf("WiFi NVS commit failed: %s\n", esp_err_to_name(err));
+    return false;
+  }
+  Serial.printf("WiFi NVS saved ssid=\"%s\" configured=%d\n", staSsidBuf, staSsidBuf[0] != '\0');
+  return true;
+}
+
 void saveNvsGameTypeOnly() {
   if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
   nvs_set_str(nvs, NVS_GAME_STYLE, gameStyle);
@@ -3528,11 +3568,17 @@ void setup() {
   for (int i = 0; i < MAX_CARD_SESSIONS; i++) clearCardSession(cardSessions[i]);
   clearAllWsSubscriptions();
 
-  if (nvs_flash_init() == ESP_ERR_NVS_NO_FREE_PAGES) {
+  esp_err_t nvsErr = nvs_flash_init();
+  if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    Serial.printf("NVS init %s — erasing and reinit\n", esp_err_to_name(nvsErr));
     nvs_flash_erase();
-    nvs_flash_init();
+    nvsErr = nvs_flash_init();
+  }
+  if (nvsErr != ESP_OK) {
+    Serial.printf("NVS init failed: %s\n", esp_err_to_name(nvsErr));
   }
   loadNvs();
+  Serial.printf("WiFi NVS loaded ssid=\"%s\" configured=%d\n", staSsidBuf, staSsidBuf[0] != '\0');
   ensureDeviceIdLoaded();
   // Never leave the strip dead from a zeroed NVS brightness (looks like a wiring failure).
   if (brightness == 0) {
@@ -4334,6 +4380,15 @@ void setup() {
     req->send(200, "application/json", "{}");
   });
 
+  server.on("/board/restart", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    // Respond first; loop() reboots after a short delay so the client gets the 200.
+    pendingBoardRestart = true;
+    pendingBoardRestartAtMs = millis() + 400UL;
+    Serial.println("Board restart requested via API");
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
   server.on("/auth/board/refresh", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     // Keep the same token; only extend TTL (and re-persist for reboot survival).
@@ -4553,33 +4608,130 @@ void setup() {
     req->send(200, "application/json", "{}");
   }));
 
-  server.addHandler(new AsyncCallbackJsonWebHandler("/wifi", [](AsyncWebServerRequest* req, JsonVariant& json) {
+  // Async WiFi scan MUST be registered before `/wifi` — AsyncURIMatcher BackwardCompatible
+  // treats `/wifi` as a prefix of `/wifi/scan`, so the JSON handler would steal this GET.
+  server.on("/wifi/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
-    JsonObject obj = json.as<JsonObject>();
-    String ssid = obj["ssid"].as<const char*>() ? String(obj["ssid"].as<const char*>()) : String("");
-    ssid.trim();
-    if (ssid.length() == 0) {
-      staSsidBuf[0] = '\0';
-      staPasswordBuf[0] = '\0';
-    } else {
-      if (ssid.length() > WIFI_SSID_MAX_LEN) {
-        req->send(400, "application/json", "{\"error\":\"ssid too long\"}");
+    const int16_t status = WiFi.scanComplete();
+    if (status == WIFI_SCAN_RUNNING) {
+      req->send(200, "application/json", "{\"status\":\"scanning\",\"networks\":[]}");
+      return;
+    }
+    if (status >= 0) {
+      // Dedupe by SSID, keep strongest RSSI.
+      struct Net {
+        String ssid;
+        int32_t rssi;
+        bool secure;
+      };
+      Net best[32];
+      int bestCount = 0;
+      for (int i = 0; i < status; i++) {
+        String ssid = WiFi.SSID(i);
+        ssid.trim();
+        if (ssid.length() == 0 || ssid.length() > WIFI_SSID_MAX_LEN) continue;
+        const int32_t rssi = WiFi.RSSI(i);
+        const bool secure = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+        int found = -1;
+        for (int j = 0; j < bestCount; j++) {
+          if (best[j].ssid == ssid) {
+            found = j;
+            break;
+          }
+        }
+        if (found >= 0) {
+          if (rssi > best[found].rssi) {
+            best[found].rssi = rssi;
+            best[found].secure = secure;
+          }
+        } else if (bestCount < 32) {
+          best[bestCount].ssid = ssid;
+          best[bestCount].rssi = rssi;
+          best[bestCount].secure = secure;
+          bestCount++;
+        }
+      }
+      // Sort strongest first (simple insertion).
+      for (int i = 1; i < bestCount; i++) {
+        Net key = best[i];
+        int j = i - 1;
+        while (j >= 0 && best[j].rssi < key.rssi) {
+          best[j + 1] = best[j];
+          j--;
+        }
+        best[j + 1] = key;
+      }
+
+      DynamicJsonDocument doc(4096);
+      doc["status"] = "done";
+      JsonArray nets = doc.createNestedArray("networks");
+      for (int i = 0; i < bestCount; i++) {
+        JsonObject n = nets.createNestedObject();
+        n["ssid"] = best[i].ssid;
+        n["rssi"] = best[i].rssi;
+        n["secure"] = best[i].secure;
+      }
+      WiFi.scanDelete();
+      String out;
+      serializeJson(doc, out);
+      req->send(200, "application/json", out);
+      return;
+    }
+
+    // Not running / failed / never started — kick off an async scan.
+    ensureWifiScanRadio();
+    WiFi.scanDelete();
+    const int started = WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/false);
+    if (started == WIFI_SCAN_FAILED) {
+      req->send(500, "application/json", "{\"error\":\"scan failed\"}");
+      return;
+    }
+    req->send(200, "application/json", "{\"status\":\"scanning\",\"networks\":[]}");
+  });
+
+  {
+    auto* wifiHandler = new AsyncCallbackJsonWebHandler("/wifi", [](AsyncWebServerRequest* req, JsonVariant& json) {
+      if (!requireBoardAuth(req)) return;
+      if (json.isNull() || !json.is<JsonObject>()) {
+        req->send(400, "application/json", "{\"error\":\"invalid json\"}");
         return;
       }
-      ssid.toCharArray(staSsidBuf, sizeof(staSsidBuf));
-      if (obj.containsKey("password")) {
-        String password = obj["password"].as<const char*>() ? String(obj["password"].as<const char*>()) : String("");
-        if (password.length() > WIFI_PASSWORD_MAX_LEN) {
-          req->send(400, "application/json", "{\"error\":\"password too long\"}");
+      JsonObject obj = json.as<JsonObject>();
+      const char* ssidRaw = obj["ssid"] | "";
+      String ssid = String(ssidRaw);
+      ssid.trim();
+      if (ssid.length() == 0) {
+        staSsidBuf[0] = '\0';
+        staPasswordBuf[0] = '\0';
+      } else {
+        if (ssid.length() > WIFI_SSID_MAX_LEN) {
+          req->send(400, "application/json", "{\"error\":\"ssid too long\"}");
           return;
         }
-        password.toCharArray(staPasswordBuf, sizeof(staPasswordBuf));
+        ssid.toCharArray(staSsidBuf, sizeof(staSsidBuf));
+        // Only update password when the client sends the field (omit = keep existing).
+        if (!obj["password"].isNull()) {
+          const char* passwordRaw = obj["password"] | "";
+          String password = String(passwordRaw);
+          if (password.length() > WIFI_PASSWORD_MAX_LEN) {
+            req->send(400, "application/json", "{\"error\":\"password too long\"}");
+            return;
+          }
+          password.toCharArray(staPasswordBuf, sizeof(staPasswordBuf));
+        } else if (staPasswordBuf[0] == '\0') {
+          // First-time configure without a password — allow open networks only.
+        }
       }
-    }
-    saveNvsSettings();
-    broadcastStateWs("wifi_changed");
-    req->send(200, "application/json", "{\"restartRequired\":true}");
-  }));
+      if (!saveNvsWifiCredentials()) {
+        req->send(500, "application/json", "{\"error\":\"nvs save failed\"}");
+        return;
+      }
+      broadcastStateWs("wifi_changed");
+      req->send(200, "application/json", "{\"restartRequired\":true}");
+    });
+    wifiHandler->setMethod(HTTP_POST);
+    server.addHandler(wifiHandler);
+  }
 
   server.addHandler(new AsyncCallbackJsonWebHandler("/card/join", [](AsyncWebServerRequest* req, JsonVariant& json) {
     JsonObject obj = json.as<JsonObject>();
@@ -4918,6 +5070,12 @@ void updateButtonState(ButtonState& b, void (*onShortPress)(), void (*onLongPres
 }
 
 void loop() {
+  if (pendingBoardRestart && (long)(millis() - pendingBoardRestartAtMs) >= 0) {
+    pendingBoardRestart = false;
+    Serial.println("Restarting…");
+    delay(50);
+    ESP.restart();
+  }
   flushDeferredResetWork();
   updateButtonState(button1, handleButton1ShortPress, handleButton1LongPress);
   updateButtonState(button2, handleButton2ShortPress, handleButton2LongPress);

@@ -58,7 +58,7 @@ Any button exits LED test / screensaver.
 
 - **Firmware:** `src/main.cpp` — game engine, LEDs, auth, cards, WiFi, NVS
 - **Frontend:** `frontend/` — Vite + React + TypeScript + Tailwind + shadcn/ui
-- **SPIFFS:** custom partition (~2.2 MB) for UI + caller MP3s — `partitions/bingo.csv`
+- **SPIFFS:** custom partition (~6 MB) for UI + multi-voice caller MP3s — `partitions/bingo.csv` (sized to content so `uploadfs` is faster)
 - **Dev mock:** if the board is unreachable, the UI falls back to an in-memory mock API
 
 ---
@@ -102,15 +102,21 @@ HOUSEY winner mode auto-alerts when a pattern is complete (same as BINGO); the r
 
 ## 🔊 Caller audio
 
-Pre-recorded clips on SPIFFS / `frontend/public/`:
+Pre-recorded voice packs on SPIFFS / `frontend/public/cv/{F1,F2,M1,M2}/` (short paths — SPIFFS max ~31 chars):
 
 - Numbers **B-1 … O-75**
 - Utility: `on`, `jokes-on`, `bingo`
-- Optional jokes (e.g. B-4, O-67)
+- Optional jokes (e.g. `joke-B-4`, `joke-O-67`)
 
-**Board UI:** unlock with a tap → volume / jokes / speech rate · keepalive for iOS/Android · firmware **audio hold** so the next auto-draw waits for the clip (countdown still runs).
+**Board UI:** Settings → Caller → voice + speech rate · unlock with a tap → volume / jokes · keepalive for iOS/Android · firmware **audio hold** so the next auto-draw waits for the clip (countdown still runs).
 
-Regenerate locally (macOS `say` + ffmpeg):
+Regenerate with OpenAI TTS (requires `.env` `OPENAI_API_KEY` + ffmpeg):
+
+```bash
+CALLER_VOICE_PACKS=Male1,Male2,Female2 node scripts/generate-caller-audio-openai.mjs
+```
+
+Legacy macOS `say` generator (single pack):
 
 ```bash
 ./scripts/generate-caller-audio.sh
@@ -208,7 +214,7 @@ make monitor          # serial @ 115200
 make qa               # smoke tests → QA_BASE / QA_PIN
 ```
 
-SPIFFS size guidance: UI + clips should fit in **~2.2 MiB**. Build prints prune size via `scripts/prune-spiffs-data.mjs`.
+SPIFFS size guidance: UI + voice packs should fit in **~6 MiB**. `uploadfs` writes the **entire** SPIFFS partition image (empty space included), so keep the map tight. After changing `partitions/bingo.csv`, erase flash once before upload. Build prints prune size via `scripts/prune-spiffs-data.mjs`.
 
 ### Local UI (no hardware)
 
@@ -247,8 +253,9 @@ bingo-flashboard/
 ├── docs/                     # Hardware reference (optional diagrams)
 ├── data/                     # SPIFFS payload (built UI + MP3s)
 ├── frontend/                 # React app source
-│   └── public/caller-*.mp3   # Call-out audio (copied into data/)
+│   └── public/cv/{F1,F2,M1,M2}/  # Voice packs (short SPIFFS paths)
 ├── scripts/
+│   ├── generate-caller-audio-openai.mjs
 │   ├── generate-caller-audio.sh
 │   ├── prune-spiffs-data.mjs
 │   └── qa-board.py
