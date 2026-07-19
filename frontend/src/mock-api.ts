@@ -1046,7 +1046,12 @@ export const mockApi = {
     }
     boardUnlockFailCount = 0;
     boardUnlockLockoutUntilMs = 0;
-    boardAuth = { token: genToken(), expiryMs: now + BOARD_AUTH_TTL_MS };
+    // Keep a shared token so unlocking on a second device does not kick the first.
+    if (boardAuth && boardAuth.expiryMs > now) {
+      boardAuth = { token: boardAuth.token, expiryMs: now + BOARD_AUTH_TTL_MS };
+    } else {
+      boardAuth = { token: genToken(), expiryMs: now + BOARD_AUTH_TTL_MS };
+    }
     return { token: boardAuth.token, ttlMs: BOARD_AUTH_TTL_MS };
   },
 

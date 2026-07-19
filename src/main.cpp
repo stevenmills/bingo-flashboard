@@ -326,6 +326,7 @@ bool boardUnlockIsLockedOut();
 void registerBoardUnlockFailure();
 void clearBoardUnlockFailures();
 void issueBoardAuthToken();
+void ensureBoardAuthToken();
 void syncWinnerDeclared();
 void startCalledNumberBanner(int n);
 void clearCalledNumberBanner();
@@ -1402,6 +1403,16 @@ void issueBoardAuthToken() {
   boardAuthToken[32] = '\0';
   boardAuthExpiryMs = millis() + BOARD_AUTH_TTL_MS;
   persistBoardAuthToken();
+}
+
+/** Unlock may be called from multiple board UIs — keep one shared token so peers stay valid. */
+void ensureBoardAuthToken() {
+  if (isBoardAuthValid()) {
+    boardAuthExpiryMs = millis() + BOARD_AUTH_TTL_MS;
+    persistBoardAuthToken();
+    return;
+  }
+  issueBoardAuthToken();
 }
 
 bool requireBoardAuth(AsyncWebServerRequest* req) {
@@ -4306,7 +4317,7 @@ void setup() {
       return;
     }
     clearBoardUnlockFailures();
-    issueBoardAuthToken();
+    ensureBoardAuthToken();
     broadcastStateWs("board_auth_changed");
     StaticJsonDocument<160> doc;
     doc["token"] = boardAuthToken;

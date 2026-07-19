@@ -6,9 +6,10 @@ import { GameSetup } from "@/components/GameSetup";
 import { GameTypeIndicator } from "@/components/GameTypeIndicator";
 import { CallHistory } from "@/components/CallHistory";
 import { NewGameDialog } from "@/components/NewGameDialog";
+import { ResetDialog } from "@/components/ResetDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Play, Undo2 } from "lucide-react";
+import { Play, RotateCcw, Undo2 } from "lucide-react";
 import { api } from "@/api";
 import { isBoardAuthHttpError } from "@/lib/board-auth";
 import { optimisticResetState } from "@/lib/game-state-merge";
@@ -42,18 +43,14 @@ export function GamePage({
   uiLetterColors,
   stateHydrated,
 }: Props) {
-  // Local flag to transition to the active view before the first number
-  // is actually called (which sets gameEstablished on the backend).
   const [localStarted, setLocalStarted] = useState(false);
   const [newGameDismissed, setNewGameDismissed] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const prevEstablished = useRef(state.gameEstablished);
-  const [isDesktop, setIsDesktop] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return window.matchMedia("(min-width: 768px)").matches;
-  });
 
   const gameActive = state.gameEstablished || localStarted;
   const newGameOpen = stateHydrated && !gameActive && !newGameDismissed;
+  const showPreGameControls = stateHydrated && !gameActive && newGameDismissed;
 
   // Reset local flag only when the backend actually resets
   // (gameEstablished transitions from true → false)
@@ -64,15 +61,6 @@ export function GamePage({
     }
     prevEstablished.current = state.gameEstablished;
   }, [state.gameEstablished]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const media = window.matchMedia("(min-width: 768px)");
-    const sync = () => setIsDesktop(media.matches);
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, []);
 
   const handleStartGame = () => {
     onApplyOptimistic?.((prev) => optimisticResetState(prev));
@@ -94,6 +82,28 @@ export function GamePage({
     setNewGameDismissed(false);
   };
 
+  const handleReset = async () => {
+    try {
+      await api.reset();
+      setResetOpen(false);
+      handleResetComplete();
+      onRefresh({ force: true });
+    } catch (e: unknown) {
+      if (isBoardAuthHttpError(e)) {
+        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
+      }
+      onRefresh({ force: true });
+    }
+  };
+
+  const requestReset = () => {
+    if (state.called.length === 0) {
+      void handleReset();
+      return;
+    }
+    setResetOpen(true);
+  };
+
   const handleUndo = () => {
     onApplyOptimistic?.((prev) => {
       if (prev.called.length === 0) return prev;
@@ -108,9 +118,51 @@ export function GamePage({
     void api.undo().catch(() => onRefresh());
   };
 
+  const gameControls = (
+    <GameControls
+      callingStyle={state.callingStyle}
+      gameStyle={state.gameStyle ?? "bingo"}
+      gameType={state.gameType}
+      called={state.called}
+      remaining={state.remaining}
+      winnerDeclared={state.winnerDeclared}
+      winnerEventId={state.winnerEventId}
+      winnerCount={state.winnerCount}
+      survivorCount={state.survivorCount}
+      eliminatedCount={state.eliminatedCount}
+      onRefresh={onRefresh}
+      onApplyOptimistic={onApplyOptimistic}
+      onApplyServerState={onApplyServerState}
+      onResetComplete={handleResetComplete}
+      onWinnerDialogActiveChange={onWinnerDialogActiveChange}
+      onSuppressAutoRestore={onSuppressAutoRestore}
+      onAnnounceCallNumber={onAnnounceCallNumber}
+      letterColors={uiLetterColors}
+    />
+  );
+
+  const preGameControls = (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <Button
+        size="lg"
+        className="text-white"
+        style={{ backgroundColor: uiLetterColors.N }}
+        onClick={() => setNewGameDismissed(false)}
+      >
+        <Play className="mr-2 h-5 w-5" />
+        New game
+      </Button>
+      <Button size="lg" variant="outline" onClick={requestReset}>
+        <RotateCcw className="mr-2 h-5 w-5" />
+        Reset
+      </Button>
+    </div>
+  );
+
+  const controls = showPreGameControls ? preGameControls : gameControls;
+
   return (
     <>
-      {/* New game modal — shown when no active game */}
       <NewGameDialog
         open={newGameOpen}
         onOpenChange={(open) => {
@@ -123,11 +175,16 @@ export function GamePage({
         onApplyOptimistic={onApplyOptimistic}
         letterColors={uiLetterColors}
       />
+      <ResetDialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        onConfirm={handleReset}
+        letterColors={uiLetterColors}
+      />
 
-      {/* Game layout — always rendered */}
-      <div className="grid grid-cols-2 md:grid-cols-1 gap-4 md:gap-6">
-        {/* Mobile top row: current number (left), controls (right) */}
-        <div className="col-span-1 md:hidden">
+      <div className="flex flex-col gap-4">
+        {/* Mobile: current number + controls */}
+        <div className="grid grid-cols-2 gap-4 md:hidden">
           <CurrentNumber
             current={state.current}
             remaining={state.remaining}
@@ -135,119 +192,76 @@ export function GamePage({
             compact
             className="h-full"
           />
-        </div>
-        {!isDesktop && (
-        <div className="col-span-1">
           <Card className="h-full">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Controls</CardTitle>
             </CardHeader>
-            <CardContent className="pt-0">
-              {stateHydrated && !gameActive && newGameDismissed ? (
-                <Button
-                  size="lg"
-                  className="w-full text-white"
-                  style={{ backgroundColor: uiLetterColors.N }}
-                  onClick={() => setNewGameDismissed(false)}
-                >
-                  <Play className="mr-2 h-5 w-5" />
-                  New game
-                </Button>
-              ) : (
-                <GameControls
-                  callingStyle={state.callingStyle}
-                  gameStyle={state.gameStyle ?? "bingo"}
-                  gameType={state.gameType}
-                  called={state.called}
-                  remaining={state.remaining}
-                  winnerDeclared={state.winnerDeclared}
-                  winnerEventId={state.winnerEventId}
-                  winnerCount={state.winnerCount}
-                  survivorCount={state.survivorCount}
-                  eliminatedCount={state.eliminatedCount}
-                  onRefresh={onRefresh}
-                  onApplyOptimistic={onApplyOptimistic}
-                  onApplyServerState={onApplyServerState}
-                  onResetComplete={handleResetComplete}
-                  onWinnerDialogActiveChange={onWinnerDialogActiveChange}
-                  onSuppressAutoRestore={onSuppressAutoRestore}
-                  onAnnounceCallNumber={onAnnounceCallNumber}
-                  letterColors={uiLetterColors}
-                />
-              )}
-            </CardContent>
+            <CardContent className="pt-0">{controls}</CardContent>
           </Card>
         </div>
-        )}
 
-        {/* Desktop current number */}
-        <div className="hidden md:block md:order-1">
-          <CurrentNumber current={state.current} remaining={state.remaining} letterColors={uiLetterColors} />
+        {/* Desktop: current number banner (full width) */}
+        <div className="hidden w-full md:block">
+          <CurrentNumber
+            current={state.current}
+            remaining={state.remaining}
+            letterColors={uiLetterColors}
+          />
         </div>
 
-        {/* Full row board values */}
-        <div className="col-span-2 md:order-2 flex flex-col md:flex-row gap-4 items-stretch">
-          <Card className="w-full md:flex-1 md:min-w-0">
+        {/* Board + pattern preview */}
+        <div className="flex w-full flex-col gap-4 md:flex-row md:items-stretch">
+          <Card className="w-full md:min-w-0 md:flex-1">
             <CardHeader>
               <CardTitle>Board</CardTitle>
             </CardHeader>
             <CardContent>
-              <Flashboard called={state.called} current={state.current} letterColors={uiLetterColors} />
+              <Flashboard
+                called={state.called}
+                current={state.current}
+                letterColors={uiLetterColors}
+              />
             </CardContent>
           </Card>
-          <Card className="w-full portrait:block landscape:hidden md:block md:w-auto md:flex-shrink-0">
-            <CardContent className="pt-6 px-4 flex items-center justify-center md:justify-start">
-              <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} gameStyle={state.gameStyle ?? "bingo"} />
+          <Card className="hidden w-full shrink-0 md:block md:w-auto">
+            <CardContent className="flex items-center justify-center px-4 pt-6 md:justify-start">
+              <GameTypeIndicator
+                gameType={state.gameType}
+                patternIndex={state.patternIndex}
+                letterColors={uiLetterColors}
+                gameStyle={state.gameStyle ?? "bingo"}
+              />
+            </CardContent>
+          </Card>
+          {/* Portrait phones: pattern under the board */}
+          <Card className="hidden w-full max-md:portrait:block">
+            <CardContent className="flex items-center justify-center px-4 pt-6">
+              <GameTypeIndicator
+                gameType={state.gameType}
+                patternIndex={state.patternIndex}
+                letterColors={uiLetterColors}
+                gameStyle={state.gameStyle ?? "bingo"}
+              />
             </CardContent>
           </Card>
         </div>
 
-        {/* Desktop controls row */}
-        {isDesktop && (
-        <div className="md:order-3">
-          {stateHydrated && !gameActive && newGameDismissed ? (
-            <Button
-              size="lg"
-              className="text-white"
-              style={{ backgroundColor: uiLetterColors.N }}
-              onClick={() => setNewGameDismissed(false)}
-            >
-              <Play className="mr-2 h-5 w-5" />
-              New game
-            </Button>
-          ) : (
-            <GameControls
-              callingStyle={state.callingStyle}
-              gameStyle={state.gameStyle ?? "bingo"}
-              gameType={state.gameType}
-              called={state.called}
-              remaining={state.remaining}
-              winnerDeclared={state.winnerDeclared}
-              winnerEventId={state.winnerEventId}
-              winnerCount={state.winnerCount}
-              survivorCount={state.survivorCount}
-              eliminatedCount={state.eliminatedCount}
-              onRefresh={onRefresh}
-              onApplyOptimistic={onApplyOptimistic}
-              onApplyServerState={onApplyServerState}
-              onResetComplete={handleResetComplete}
-              onWinnerDialogActiveChange={onWinnerDialogActiveChange}
-              onSuppressAutoRestore={onSuppressAutoRestore}
-              onAnnounceCallNumber={onAnnounceCallNumber}
-              letterColors={uiLetterColors}
-            />
-          )}
-        </div>
-        )}
+        {/* Desktop controls */}
+        <div className="hidden w-full md:block">{controls}</div>
 
-        {/* Mobile landscape only: game type + history split 1/2 : 1/2 */}
-        <div className="hidden landscape:grid md:hidden col-span-2 grid-cols-2 gap-4">
-          <Card className="col-span-1">
-            <CardContent className="pt-6 px-4 flex items-center justify-center">
-              <GameTypeIndicator gameType={state.gameType} patternIndex={state.patternIndex} letterColors={uiLetterColors} gameStyle={state.gameStyle ?? "bingo"} />
+        {/* Mobile landscape: pattern + call history */}
+        <div className="hidden w-full grid-cols-2 gap-4 max-md:landscape:grid">
+          <Card>
+            <CardContent className="flex items-center justify-center px-4 pt-6">
+              <GameTypeIndicator
+                gameType={state.gameType}
+                patternIndex={state.patternIndex}
+                letterColors={uiLetterColors}
+                gameStyle={state.gameStyle ?? "bingo"}
+              />
             </CardContent>
           </Card>
-          <Card className="col-span-1">
+          <Card>
             <CardHeader className="pb-1">
               <CardTitle>Call history</CardTitle>
             </CardHeader>
@@ -257,8 +271,15 @@ export function GamePage({
           </Card>
         </div>
 
-        {/* Manual call panel (during active game) + Call history */}
-        <div className={cn("col-span-2 md:order-4", state.callingStyle === "manual" && gameActive ? "grid md:grid-cols-5 gap-4" : "")}>
+        {/* Manual call panel + call history */}
+        <div
+          className={cn(
+            "w-full",
+            state.callingStyle === "manual" && gameActive
+              ? "grid gap-4 md:grid-cols-5"
+              : undefined
+          )}
+        >
           {state.callingStyle === "manual" && gameActive && (
             <Card className="md:col-span-3">
               <CardHeader className="pb-1">
@@ -296,10 +317,13 @@ export function GamePage({
             </Card>
           )}
 
-          <Card className={cn(
-            state.callingStyle === "manual" && gameActive ? "md:col-span-2" : "",
-            "portrait:block landscape:hidden md:block"
-          )}>
+          <Card
+            className={cn(
+              state.callingStyle === "manual" && gameActive ? "md:col-span-2" : "",
+              // Show on desktop always; on phones only in portrait (landscape uses the split row above).
+              "hidden max-md:portrait:block md:block"
+            )}
+          >
             <CardHeader className="pb-1">
               <CardTitle>Call history</CardTitle>
             </CardHeader>

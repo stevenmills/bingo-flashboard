@@ -239,13 +239,13 @@ export function GameControls({
   const winnerDisabled = called.length < minCalls || winnerOpen || winnerDeclared || declareBusy;
   const gridClassName =
     callingStyle === "manual"
-      ? "grid gap-3 portrait:grid-cols-1 landscape:grid-cols-2 md:grid-cols-2"
-      : "grid gap-3 portrait:grid-cols-1 landscape:grid-cols-2 md:grid-cols-3";
-  const primaryButtonClassName = "portrait:col-span-1 landscape:col-span-1 md:col-span-1";
+      ? "grid gap-4 max-md:portrait:grid-cols-1 max-md:landscape:grid-cols-2 md:grid-cols-2"
+      : "grid gap-4 max-md:portrait:grid-cols-1 max-md:landscape:grid-cols-2 md:grid-cols-3";
+  const primaryButtonClassName = "max-md:portrait:col-span-1 max-md:landscape:col-span-1 md:col-span-1";
   const resetButtonClassName =
     callingStyle === "manual"
-      ? "portrait:col-span-1 landscape:col-span-2 md:col-span-1"
-      : "portrait:col-span-1 landscape:col-span-2 md:col-span-1";
+      ? "max-md:portrait:col-span-1 max-md:landscape:col-span-2 md:col-span-1"
+      : "max-md:portrait:col-span-1 max-md:landscape:col-span-2 md:col-span-1";
 
   return (
     <>

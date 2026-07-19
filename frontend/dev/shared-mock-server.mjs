@@ -490,7 +490,12 @@ const server = http.createServer(async (req, res) => {
     }
     boardUnlockFailCount = 0;
     boardUnlockLockoutUntilMs = 0;
-    boardAuth = { token: genToken(), expiresAt: Date.now() + BOARD_AUTH_TTL_MS };
+    // Keep a shared token so unlocking on a second device does not kick the first.
+    if (boardAuth && boardAuth.expiresAt > Date.now()) {
+      boardAuth = { token: boardAuth.token, expiresAt: Date.now() + BOARD_AUTH_TTL_MS };
+    } else {
+      boardAuth = { token: genToken(), expiresAt: Date.now() + BOARD_AUTH_TTL_MS };
+    }
     broadcastState("board_auth_changed");
     return json(res, 200, { token: boardAuth.token, ttlMs: BOARD_AUTH_TTL_MS });
   }
@@ -502,7 +507,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (method === "POST" && path === "/auth/board/refresh") {
     if (!requireBoardAuth(req, res)) return;
-    boardAuth = { token: genToken(), expiresAt: Date.now() + BOARD_AUTH_TTL_MS };
+    boardAuth = { token: boardAuth.token, expiresAt: Date.now() + BOARD_AUTH_TTL_MS };
     broadcastState("board_auth_changed");
     return json(res, 200, { token: boardAuth.token, ttlMs: BOARD_AUTH_TTL_MS });
   }
