@@ -119,12 +119,18 @@ function dirBytes(dir) {
   return total;
 }
 
-const SPIFFS_BYTES = 0x600000; // partitions/bingo.csv
+const SPIFFS_BYTES = 0xdf0000; // partitions/bingo.csv
+/** SPIFFS only reliably holds ~75% of the partition (Espressif docs). */
+const SPIFFS_USABLE = Math.floor(SPIFFS_BYTES * 0.75);
 const total = dirBytes(dataDir);
+const pctUsable = (100 * total) / SPIFFS_USABLE;
 console.log(
-  `[prune-spiffs] data/ total ${(total / 1024 / 1024).toFixed(2)} MiB (SPIFFS ~${(
-    SPIFFS_BYTES /
-    1024 /
-    1024
-  ).toFixed(2)} MiB)`
+  `[prune-spiffs] data/ total ${(total / 1024 / 1024).toFixed(2)} MiB ` +
+    `(SPIFFS partition ~${(SPIFFS_BYTES / 1024 / 1024).toFixed(2)} MiB, ` +
+    `usable ~${(SPIFFS_USABLE / 1024 / 1024).toFixed(2)} MiB, ${pctUsable.toFixed(0)}% filled)`
 );
+if (total > SPIFFS_USABLE * 0.92) {
+  console.warn(
+    `[prune-spiffs] WARNING: payload is near/over SPIFFS usable capacity — uploadfs may fail with File system is full.`
+  );
+}

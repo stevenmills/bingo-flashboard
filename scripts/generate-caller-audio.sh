@@ -156,11 +156,12 @@ for n in $(seq 1 75); do
   printf "  %s\n" "${letter}-${n}.mp3"
 done
 
-# Supplemental joke clips (played after the number call-out when jokes are enabled).
-echo "Generating joke clips..."
-render_clip "Before what?" "${OUT_DIR}/joke-B-4.mp3"
+# Supplemental joke clips — full 1–75 set is generated via OpenAI TTS:
+#   CALLER_ONLY_JOKES=1 node scripts/generate-caller-audio-openai.mjs
+echo "Generating joke clips (legacy subset; prefer OpenAI script for full set)..."
+render_clip "Before anyone yells 'BINGO,' let's make sure you've actually got it!" "${OUT_DIR}/joke-B-4.mp3"
 printf "  %s\n" "joke-B-4.mp3"
-render_clip "six seven six seven six seven!!" "${OUT_DIR}/joke-O-67.mp3"
+render_clip "Sixty-seven! Oddly satisfying, just like a perfectly centered daub." "${OUT_DIR}/joke-O-67.mp3"
 printf "  %s\n" "joke-O-67.mp3"
 
 total_bytes="$(du -sk "$OUT_DIR"/*.mp3 | awk '{s+=$1} END {print s*1024}')"

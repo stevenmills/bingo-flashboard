@@ -58,7 +58,7 @@ Any button exits LED test / screensaver.
 
 - **Firmware:** `src/main.cpp` — game engine, LEDs, auth, cards, WiFi, NVS
 - **Frontend:** `frontend/` — Vite + React + TypeScript + Tailwind + shadcn/ui
-- **SPIFFS:** custom partition (~6 MB) for UI + multi-voice caller MP3s — `partitions/bingo.csv` (sized to content so `uploadfs` is faster)
+- **SPIFFS:** custom partition (~14 MB) for UI + multi-voice caller packs — `partitions/bingo.csv` (SPIFFS usable ≈75% of partition; erase flash after map changes)
 - **Dev mock:** if the board is unreachable, the UI falls back to an in-memory mock API
 
 ---
@@ -106,7 +106,7 @@ Pre-recorded voice packs on SPIFFS / `frontend/public/cv/{F1,F2,M1,M2}/` (short 
 
 - Numbers **B-1 … O-75**
 - Utility: `on`, `jokes-on`, `bingo`
-- Optional jokes (e.g. `joke-B-4`, `joke-O-67`)
+- Optional jokes for every number (`joke-B-1` … `joke-O-75`)
 
 **Board UI:** Settings → Caller → voice + speech rate · unlock with a tap → volume / jokes · keepalive for iOS/Android · firmware **audio hold** so the next auto-draw waits for the clip (countdown still runs).
 
@@ -214,7 +214,7 @@ make monitor          # serial @ 115200
 make qa               # smoke tests → QA_BASE / QA_PIN
 ```
 
-SPIFFS size guidance: UI + voice packs should fit in **~6 MiB**. `uploadfs` writes the **entire** SPIFFS partition image (empty space included), so keep the map tight. After changing `partitions/bingo.csv`, erase flash once before upload. Build prints prune size via `scripts/prune-spiffs-data.mjs`.
+SPIFFS size guidance: UI + voice packs must fit in **~75% of the SPIFFS partition** (filesystem overhead). Current map: **~2 MiB app + ~14 MiB SPIFFS**. `uploadfs` writes the **entire** SPIFFS partition image. After changing `partitions/bingo.csv`, erase flash once before upload. Build prints prune size via `scripts/prune-spiffs-data.mjs`.
 
 ### Local UI (no hardware)
 

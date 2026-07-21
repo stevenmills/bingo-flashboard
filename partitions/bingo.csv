@@ -1,8 +1,8 @@
-# Bingo Flashboard — single app + SPIFFS sized to UI + multi-voice packs (~4 MiB used).
-# Keep SPIFFS modest: uploadfs flashes the WHOLE partition image every time.
-# N16R8 16 MB flash: ~3 MB app + ~6 MB SPIFFS (headroom for UI growth).
+# Bingo Flashboard — N16R8 16 MB flash.
+# Firmware is ~1.1 MiB; keep a 2 MiB app slot. Rest is SPIFFS.
+# SPIFFS reliably holds only ~75% of partition size (metadata/GC) — size payload accordingly.
 # Name,   Type, SubType, Offset,  Size, Flags
 nvs,      data, nvs,     0x9000,  0x5000,
 otadata,  data, ota,     0xe000,  0x2000,
-app0,     app,  ota_0,   0x10000, 0x300000,
-spiffs,   data, spiffs,  0x310000,0x600000,
+app0,     app,  ota_0,   0x10000, 0x200000,
+spiffs,   data, spiffs,  0x210000,0xDF0000,

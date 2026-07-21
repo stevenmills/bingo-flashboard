@@ -38,19 +38,19 @@ const VOICE_SLUGS = {
 
 const MODEL = process.env.CALLER_OPENAI_MODEL || 'gpt-4o-mini-tts';
 const SAMPLE_RATE = process.env.CALLER_SAMPLE_RATE || '16000';
-const BITRATE = process.env.CALLER_MP3_BITRATE || '32k';
+const BITRATE = process.env.CALLER_MP3_BITRATE || '24k';
 const CONCURRENCY = Number(process.env.CALLER_TTS_CONCURRENCY || 4);
 
 const INSTRUCTIONS = `Affect/personality:
 Warm, enthusiastic, friendly, welcoming, community-oriented, confident, cheerful, and engaging. Sounds like an experienced volunteer who genuinely enjoys hosting bingo and interacting with the crowd.
 Tone:
-Upbeat, bright, positive, and conversational with moderate energy. Projects clearly without shouting. Encouraging and playful while remaining professional and easy to follow.
+Upbeat, bright, positive, and conversational with lively energy. Projects clearly without shouting. Encouraging and playful while remaining professional and easy to follow.
 Pronunciation:
-Exceptionally clear diction with crisp consonants and deliberate enunciation. Speaks numbers and letters distinctly, avoiding any ambiguity (e.g., "B-12," "N-41"). Maintains a steady pace so players of all ages can easily understand every call.
+Clear diction with crisp consonants. Speak each call as the letter name, then the number words — for example: "Bee, twelve" or "En, forty-one". Never insert the word "and" between the letter and the number (do not say "Bee and three"). Never spell letter names as single alphabet letters followed by "N".
 Pause:
-Brief, intentional pauses between the bingo letter and number (e.g., "B... 12"), and a slightly longer pause before the next call to allow players time to mark their cards. Uses natural pauses for emphasis without sounding slow.
+A short beat between the letter name and the number — just enough to mark the card, not a long dramatic pause. Use a comma pause, not a drawn-out ellipsis.
 Emotion:
-Joyful, energetic, encouraging, and genuinely excited to be hosting. Expresses delight when calling numbers, builds anticipation naturally, and maintains a positive, welcoming atmosphere throughout the game. Sounds like someone who loves bingo and wants everyone to have a great time.`;
+Joyful, energetic, encouraging, and genuinely excited to be hosting. Expresses delight when calling numbers and maintains a positive, welcoming atmosphere.`;
 
 /** Winner yell — overrides the calmer host vibe for bingo.mp3 only. */
 const BINGO_WIN_INSTRUCTIONS = `Affect/personality:
@@ -63,6 +63,100 @@ Pause:
 No leading pause — burst straight into the word. Hold the drawn-out ending, then cut cleanly.
 Emotion:
 Ecstatic winner energy. Loud, clear, cheerful celebration — the happiest moment of the night.`;
+
+/** Supplemental jokes — punchlines only; the letter/number call already played. */
+const JOKE_INSTRUCTIONS = `Affect/personality:
+Warm bingo host delivering a quick one-liner — playful, witty, and good-natured.
+Tone:
+Conversational comedy at a snappy pace. Bright smile in the voice; clear enough for a noisy hall.
+Pronunciation:
+Clear diction so the punchline lands. Do NOT announce or repeat the bingo letter or number (no "B-12", "Eye sixteen", "N forty-five", etc.) — that call-out already played. Speak only the joke line as written.
+Pause:
+No leading pause. Tiny beat before the punch when punctuation suggests it. End cleanly with no trailing filler.
+Emotion:
+Amused and encouraging — keep it moving.`;
+
+/**
+ * Per-number joke lines → joke-{Letter}-{n}.mp3
+ * Do not lead with a number re-call (e.g. "Forty-five!"); the call-out clip already did that.
+ */
+const NUMBER_JOKES = [
+  [1, "Number one in my heart... don't tell the other seventy-four."],
+  [2, "Bee yourself... everybody else is already playing bingo."],
+  [3, "Bee careful... this little number has started winning streaks before!"],
+  [4, "Before anyone yells 'BINGO,' let's make sure you've actually got it!"],
+  [5, "Buzzing in with another beautiful B!"],
+  [6, "Sweet as honey... unless you were holding out for seven."],
+  [7, "Lucky number seven decided to wear a B today."],
+  [8, "Better mark it—I have a feeling this one's up to something."],
+  [9, "'Be mine?' Sorry, my heart already belongs to bingo."],
+  [10, "Ben there, daubed that!"],
+  [11, "Two little ones standing shoulder to shoulder... probably swapping lucky numbers."],
+  [12, "The only vitamin that comes with a chance to win cash!"],
+  [13, "Unlucky for some... but today could be your lucky day."],
+  [14, "Before-teen... don't question it, I'm a bingo caller, not an English teacher!"],
+  [15, "The penthouse suite of the B column!"],
+  [16, "Sweet sixteen... and still not old enough to drive your dauber."],
+  [17, "I've got a good feeling about this one... mostly because I say that every time."],
+  [18, "If this completed your line, try to act surprised."],
+  [19, "I'd tell you this one's lucky... but I don't want the other numbers getting jealous."],
+  [20, "Perfect vision—it can already see your jackpot."],
+  [21, "Finally old enough to buy... another bingo card!"],
+  [22, "Two little ducks! Quack, quack... now mark your card."],
+  [23, "Nobody expects this one... except the people who needed it."],
+  [24, "Two dozen? Sounds like somebody ordered extra luck."],
+  [25, "Quarter of a hundred... because saying 'twenty-five' was apparently too easy."],
+  [26, "Proof that every number deserves its moment in the spotlight."],
+  [27, "Lucky? Maybe. Fashionable? Absolutely."],
+  [28, "Twenty ate... because it was hungry for a winner!"],
+  [29, "So close to thirty it can almost hear everyone complaining about getting older."],
+  [30, "That's the top shelf of the I column—give it a warm welcome!"],
+  [31, "The overachiever that just couldn't stay in the twenties."],
+  [32, "Smile... your card might finally be cooperating."],
+  [33, "Double threes! They're seeing double so you don't have to."],
+  [34, "Not famous, just reliable."],
+  [35, "Age is just a number... and this one agrees."],
+  [36, "Three dozen! Fresh from the bingo bakery."],
+  [37, "Oddly specific, just like my lucky socks."],
+  [38, "Looking great... that's what it told me, anyway."],
+  [39, "Almost forty, but who's counting? Besides me."],
+  [40, "Forty is the new... forty."],
+  [41, "A prime number with a prime attitude."],
+  [42, "The answer to life, the universe... and hopefully your bingo card."],
+  [43, "Not everyone's favorite... but somebody out there just cheered."],
+  [44, "Double fours! Four-tified and ready to win."],
+  [45, "Right down the middle... just like my dance moves."],
+  [46, "This one showed up dressed to impress."],
+  [47, "Proof that good things come to those who daub."],
+  [48, "Looking great... it insisted I say that."],
+  [49, "Almost fifty, but who's rushing?"],
+  [50, "Half a hundred! That's what I call bingo math."],
+  [51, "If your card's getting exciting, I can feel the suspense from here."],
+  [52, "A full deck has nothing on a full bingo card."],
+  [53, "This number came to play."],
+  [54, "Don't worry, the lucky numbers travel in packs... probably."],
+  [55, "Double nickels! No speeding through your daubing now."],
+  [56, "Sweet enough to put a smile on somebody's face."],
+  [57, "Heinz may have the varieties, but we've got the better numbers."],
+  [58, "If this finished your row, try not to scare the neighbors."],
+  [59, "One step away from the top of the Gs."],
+  [60, "The penthouse suite of the G column... enjoy the view!"],
+  [61, "This number always arrives with confidence."],
+  [62, "Just cruising through the O column."],
+  [63, "It's not old—it's well seasoned."],
+  [64, "Still loading... please wait."],
+  [65, "Retirement? This number says it's just getting warmed up."],
+  [66, "Double sixes! Twice the six, twice the style."],
+  [67, "Oddly satisfying, just like a perfectly centered daub."],
+  [68, "So close to the number everybody pretends not to laugh at."],
+  [69, "I know... you're all very mature. Let's keep it moving."],
+  [70, "It's got seniority, and it knows it."],
+  [71, "Proof that the O column still has surprises left."],
+  [72, "Half a dozen dozens... that's a lot of dozen if you ask me."],
+  [73, "Lucky for somebody... statistically speaking."],
+  [74, "The suspense is getting thicker than grandma's gravy."],
+  [75, "The very top of the board! It saved the best seat in the house for itself."],
+];
 
 function loadApiKey() {
   const envPath = path.join(ROOT, '.env');
@@ -83,6 +177,12 @@ function letterForNumber(n) {
 
 function letterName(letter) {
   return { B: 'Bee', I: 'Eye', N: 'En', G: 'Gee', O: 'Oh' }[letter];
+}
+
+/** Possessive letter names for column prompts ("No more Gee's!"). */
+function letterNamePossessive(letter) {
+  // G must be "Gee's" — "Gees" is misread as a hard G / geese-like syllable.
+  return { B: "Bee's", I: "Eye's", N: "En's", G: "Gee's", O: "Oh's" }[letter];
 }
 
 function numberWord(n) {
@@ -197,15 +297,52 @@ function buildJobs() {
   ];
   for (let n = 1; n <= 75; n++) {
     const letter = letterForNumber(n);
+    // Comma (not ellipsis): TTS often turns "Bee... three" into "Bee and three" → sounds like "B.. N.. 3".
     jobs.push({
-      text: `${letterName(letter)}... ${numberWord(n)}`,
+      text: `${letterName(letter)}, ${numberWord(n)}`,
       file: `${letter}-${n}.mp3`,
     });
   }
-  jobs.push(
-    { text: 'Before what?', file: 'joke-B-4.mp3' },
-    { text: 'six seven six seven six seven', file: 'joke-O-67.mp3' }
-  );
+  for (const [n, text] of NUMBER_JOKES) {
+    const letter = letterForNumber(n);
+    jobs.push({
+      text,
+      file: `joke-${letter}-${n}.mp3`,
+      instructions: JOKE_INSTRUCTIONS,
+    });
+  }
+  for (const letter of ['B', 'I', 'N', 'G', 'O']) {
+    const possessive = letterNamePossessive(letter);
+    const spoken = letterName(letter);
+    jobs.push({
+      text: `No more ${possessive}!`,
+      file: `no-more-${letter}.mp3`,
+      instructions: `${INSTRUCTIONS}
+
+Pronunciation note for this clip:
+Say the bingo letter as "${spoken}" with a clear possessive "s" — exactly like "${spoken}'s", not a hard consonant cluster and not "geese".`,
+    });
+    jobs.push({
+      text: `All the ${possessive} have been called!`,
+      file: `all-called-${letter}.mp3`,
+      instructions: `${INSTRUCTIONS}
+
+Pronunciation note for this clip:
+Say the bingo letter as "${spoken}" with a clear possessive "s" — exactly like "${spoken}'s", not a hard consonant cluster and not "geese".`,
+    });
+  }
+
+  if (process.env.CALLER_ONLY_JOKES === '1') {
+    return jobs.filter((j) => j.file.startsWith('joke-'));
+  }
+  if (process.env.CALLER_ONLY_NUMBERS === '1') {
+    return jobs.filter((j) => /^[BINGO]-\d+\.mp3$/.test(j.file));
+  }
+  if (process.env.CALLER_ONLY_COLUMN_PROMPTS === '1') {
+    return jobs.filter(
+      (j) => j.file.startsWith('no-more-') || j.file.startsWith('all-called-')
+    );
+  }
 
   const onlyRaw = process.env.CALLER_ONLY_FILES || '';
   if (!onlyRaw.trim()) return jobs;

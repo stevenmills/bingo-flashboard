@@ -155,6 +155,7 @@ export default function App() {
   } = useCallerSpeech({
     active: callerSpeechActive,
     called: state.called,
+    gameType: state.gameType,
     winnerDeclared: state.winnerDeclared,
     hydrated,
     autoCallingEnabled: Boolean(state.autoCallingEnabled),

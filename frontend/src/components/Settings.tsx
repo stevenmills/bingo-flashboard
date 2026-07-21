@@ -369,16 +369,26 @@ export function Settings({
     audio.setAttribute("playsinline", "true");
     audio.setAttribute("webkit-playsinline", "true");
     try {
-      audio.playbackRate = localCallerSpeechRate;
       audio.volume = 1;
     } catch {
-      // Ignore unsupported rate.
+      // Ignore.
     }
+    const applyRate = () => {
+      try {
+        audio.defaultPlaybackRate = localCallerSpeechRate;
+        audio.playbackRate = localCallerSpeechRate;
+      } catch {
+        // Ignore unsupported rate.
+      }
+    };
     audio.src = callerClipUrl(localCallerVoice, CALLER_EXAMPLE_CLIP);
+    // WebKit resets playbackRate when src changes — apply after assign and on load.
+    applyRate();
     setCallerExamplePlaying(true);
+    audio.onloadeddata = () => applyRate();
     audio.onended = () => setCallerExamplePlaying(false);
     audio.onerror = () => setCallerExamplePlaying(false);
-    void audio.play().catch(() => setCallerExamplePlaying(false));
+    void audio.play().then(applyRate).catch(() => setCallerExamplePlaying(false));
   };
 
   useEffect(() => {
@@ -393,6 +403,7 @@ export function Settings({
     const audio = callerExampleAudioRef.current;
     if (!audio || !callerExamplePlaying) return;
     try {
+      audio.defaultPlaybackRate = localCallerSpeechRate;
       audio.playbackRate = localCallerSpeechRate;
     } catch {
       // Ignore.
@@ -1660,15 +1671,15 @@ export function Settings({
                       </div>
                       <Slider
                         value={[localCallerSpeechRate]}
-                        min={0.6}
-                        max={1.2}
+                        min={0.7}
+                        max={1.5}
                         step={0.05}
                         onValueChange={(value) => setLocalCallerSpeechRate(value[0])}
                         onValueCommit={(value) => onCallerSpeechRateChange(value[0])}
                       />
                       <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                        Lower is slower. Tap the header speaker icon once on phone to enable sound
-                        (required for Bluetooth).
+                        Higher is faster (up to 1.5×). Tap the header speaker icon once on phone to
+                        enable sound (required for Bluetooth).
                       </p>
                     </div>
                   )}
