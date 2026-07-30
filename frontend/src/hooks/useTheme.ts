@@ -6,6 +6,7 @@ type Theme = "light" | "dark";
 const LEGACY_THEME_KEY = "bingo-theme";
 const BOARD_THEME_KEY = "bingo-theme-board";
 const CARD_THEME_KEY = "bingo-theme-card";
+const HUD_THEME_KEY = "bingo-theme-hud";
 
 function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme === "dark");
@@ -14,6 +15,11 @@ function applyTheme(theme: Theme) {
 function readModeTheme(mode: AppMode | null | undefined): Theme {
   if (mode === "card") {
     const saved = localStorage.getItem(CARD_THEME_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+    return "dark";
+  }
+  if (mode === "hud") {
+    const saved = localStorage.getItem(HUD_THEME_KEY);
     if (saved === "light" || saved === "dark") return saved;
     return "dark";
   }
@@ -30,6 +36,7 @@ function readModeTheme(mode: AppMode | null | undefined): Theme {
 function persistModeTheme(mode: AppMode | null | undefined, theme: Theme) {
   localStorage.setItem(LEGACY_THEME_KEY, theme);
   if (mode === "card") localStorage.setItem(CARD_THEME_KEY, theme);
+  else if (mode === "hud") localStorage.setItem(HUD_THEME_KEY, theme);
   else if (mode === "board" || mode === "scan") localStorage.setItem(BOARD_THEME_KEY, theme);
 }
 

@@ -141,11 +141,12 @@ export function useGameState(pollMs = isOnBoardHost() ? 4000 : 1500) {
       const boardToken = localStorage.getItem("bingo-board-token");
       // Scan shares board subscription so verify stays live against game state.
       const isBoard = mode === "board" || mode === "scan";
+      const isHud = mode === "hud";
       const isJoinedCard = mode === "card" && Boolean(cardId);
       ws.send(
         JSON.stringify({
           type: "subscribe",
-          mode: isBoard ? "board" : isJoinedCard ? "card" : "none",
+          mode: isBoard ? "board" : isHud ? "hud" : isJoinedCard ? "card" : "none",
           cardId: isJoinedCard ? cardId : undefined,
           boardToken: isBoard && boardToken ? boardToken : undefined,
         })

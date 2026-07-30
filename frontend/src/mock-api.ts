@@ -185,22 +185,23 @@ function startAutoCallingLoop() {
       if (!autoCallingHold) {
         autoCallingNextAtMs = 0;
         state.autoCallingRemainingMs = 0;
-      } else if (autoCallingNextAtMs > 0) {
-        state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - Date.now());
+      } else {
+        state.autoCallingRemainingMs = 0;
       }
       return;
     }
     const now = Date.now();
     const intervalMs = Math.max(1000, (state.autoCallingSeconds ?? 10) * 1000);
     if (autoCallingHold) {
-      if (autoCallingHoldSinceMs > 0 && now - autoCallingHoldSinceMs > 8000) {
+      if (autoCallingHoldSinceMs > 0 && now - autoCallingHoldSinceMs > 45000) {
         autoCallingHold = false;
         state.autoCallingHold = false;
         autoCallingHoldSinceMs = 0;
+        autoCallingNextAtMs = now + intervalMs;
       } else {
-        // Countdown keeps running while audio plays.
-        if (autoCallingNextAtMs <= 0) autoCallingNextAtMs = now + intervalMs;
-        state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - now);
+        // Countdown starts only after number (+ jokes) finish.
+        autoCallingNextAtMs = 0;
+        state.autoCallingRemainingMs = 0;
         return;
       }
     }
@@ -218,12 +219,15 @@ function startAutoCallingLoop() {
         return;
       }
       recomputeWinners();
-      autoCallingNextAtMs = now + intervalMs;
       if (autoCallingWaitForAudio) {
         autoCallingHold = true;
         state.autoCallingHold = true;
         autoCallingHoldSinceMs = now;
+        autoCallingNextAtMs = 0;
+        state.autoCallingRemainingMs = 0;
+        return;
       }
+      autoCallingNextAtMs = now + intervalMs;
     }
     state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - now);
   }, 200);
@@ -699,13 +703,16 @@ export const mockApi = {
         return snapshot();
       }
       recomputeWinners();
-      autoCallingNextAtMs = Date.now() + intervalMs;
       if (autoCallingWaitForAudio) {
         autoCallingHold = true;
         state.autoCallingHold = true;
         autoCallingHoldSinceMs = Date.now();
+        autoCallingNextAtMs = 0;
+        state.autoCallingRemainingMs = 0;
+      } else {
+        autoCallingNextAtMs = Date.now() + intervalMs;
+        state.autoCallingRemainingMs = intervalMs;
       }
-      state.autoCallingRemainingMs = intervalMs;
     } else {
       autoCallingNextAtMs = Date.now() + intervalMs;
       state.autoCallingRemainingMs = intervalMs;
@@ -727,13 +734,30 @@ export const mockApi = {
   setAutoCallingHold: async (hold: boolean) => {
     await delay(5);
     assertBoardAuth();
+    const wasHeld = autoCallingHold;
     autoCallingHold = hold;
     state.autoCallingHold = hold;
     if (hold) {
       autoCallingHoldSinceMs = Date.now();
+      autoCallingNextAtMs = 0;
+      state.autoCallingRemainingMs = 0;
     } else {
-      // Do not reschedule — overdue deadlines draw on the next loop tick.
       autoCallingHoldSinceMs = 0;
+      // Start the next countdown only after call-out (+ jokes) finished.
+      if (
+        wasHeld &&
+        state.autoCallingEnabled &&
+        state.callingStyle === "automatic" &&
+        !state.winnerDeclared &&
+        state.remaining > 0
+      ) {
+        const intervalMs = Math.max(1000, (state.autoCallingSeconds ?? 10) * 1000);
+        autoCallingNextAtMs = Date.now() + intervalMs;
+        state.autoCallingRemainingMs = intervalMs;
+      } else if (!state.autoCallingEnabled) {
+        autoCallingNextAtMs = 0;
+        state.autoCallingRemainingMs = 0;
+      }
       if (pendingWinnerActivation) {
         // Restore real winner count before flush (hidden while pending).
         let winners = 0;
@@ -743,9 +767,6 @@ export const mockApi = {
         state.winnerCount = winners;
         flushPendingWinnerActivation();
       }
-    }
-    if (autoCallingNextAtMs > 0) {
-      state.autoCallingRemainingMs = Math.max(0, autoCallingNextAtMs - Date.now());
     }
     return {};
   },
@@ -758,6 +779,16 @@ export const mockApi = {
       autoCallingHold = false;
       state.autoCallingHold = false;
       autoCallingHoldSinceMs = 0;
+      if (
+        state.autoCallingEnabled &&
+        state.callingStyle === "automatic" &&
+        !state.winnerDeclared &&
+        state.remaining > 0
+      ) {
+        const intervalMs = Math.max(1000, (state.autoCallingSeconds ?? 10) * 1000);
+        autoCallingNextAtMs = Date.now() + intervalMs;
+        state.autoCallingRemainingMs = intervalMs;
+      }
     }
     return {};
   },

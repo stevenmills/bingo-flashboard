@@ -164,8 +164,13 @@ function isLikelyMobile(): boolean {
 type AudioContextType = AudioContext;
 
 interface UseCallerSpeechOptions {
-  /** Board mode + authenticated + connected. */
+  /** Live caller client (board or HUD) — announces called numbers. */
   active: boolean;
+  /**
+   * When true, this tab arms firmware auto-call audio hold / wait-audio.
+   * Board operator only — HUD spectators play locally without gating the draw.
+   */
+  syncBoardAudioHold?: boolean;
   /** Full call order — newest number is at the end. */
   called: number[];
   /** Current game type — Battleship uses the sink-board column prompt. */
@@ -199,7 +204,15 @@ interface UseCallerSpeechState {
 }
 
 export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeechState {
-  const { active, called, gameType, winnerDeclared, hydrated, autoCallingEnabled } = options;
+  const {
+    active,
+    syncBoardAudioHold = true,
+    called,
+    gameType,
+    winnerDeclared,
+    hydrated,
+    autoCallingEnabled,
+  } = options;
   const [speechOn, setSpeechOnState] = useState<boolean>(() => readInitialSpeechOn());
   // Always start off for the page session.
   const [jokesOn, setJokesOnState] = useState(false);
@@ -299,8 +312,9 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
 
   useEffect(() => {
     activeRef.current = active;
-    if (active) mayNotifyBoardAudioRef.current = true;
-  }, [active]);
+    // Only the board operator tab may arm/clear firmware wait-audio + hold.
+    if (active && syncBoardAudioHold) mayNotifyBoardAudioRef.current = true;
+  }, [active, syncBoardAudioHold]);
 
   const notifyBoardWaitForAudio = useCallback((enabled: boolean) => {
     // Card / inactive clients must never arm or clear board wait-audio.

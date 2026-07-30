@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { useGameState } from "@/hooks/useGameState";
 import { GamePage } from "@/pages/GamePage";
 import { CardPage } from "@/pages/CardPage";
+import { HudPage } from "@/pages/HudPage";
 import { OddsDrawer } from "@/components/OddsDrawer";
 import { ModeChooser } from "@/components/ModeChooser";
 import { Settings } from "@/components/Settings";
@@ -37,11 +38,23 @@ const ScanPage = lazy(() =>
 );
 
 const APP_MODE_STORAGE_KEY = "bingo-app-mode";
+
+/** TV bookmark: `?mode=hud` enters HUD without PIN (ignored when a card claim is present). */
+function bootstrapHudMode(appModeStorageKey: string): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("mode") !== "hud") return false;
+  if (params.get("claim") === "1" || params.get("c") || params.get("n")) return false;
+  sessionStorage.setItem(appModeStorageKey, "hud");
+  return true;
+}
+
+bootstrapHudMode(APP_MODE_STORAGE_KEY);
 // QR scan: unauthenticated → card mode; authenticated board session → Scan verify.
 const qrClaimRoute = bootstrapQrCardClaim(APP_MODE_STORAGE_KEY);
 
 function isAppMode(value: string | null): value is AppMode {
-  return value === "board" || value === "card" || value === "scan";
+  return value === "board" || value === "card" || value === "scan" || value === "hud";
 }
 
 function readInitialAppMode(): AppMode {
@@ -157,7 +170,9 @@ export default function App() {
     modeInitialized && appMode === "board" && boardAuthActive && state.callingStyle === "automatic";
 
   const callerSpeechActive =
-    modeInitialized && appMode === "board" && boardAuthActive && connected;
+    modeInitialized &&
+    connected &&
+    ((appMode === "board" && boardAuthActive) || appMode === "hud");
   const {
     speechOn,
     jokesOn,
@@ -174,6 +189,7 @@ export default function App() {
     announceNumberNow,
   } = useCallerSpeech({
     active: callerSpeechActive,
+    syncBoardAudioHold: appMode === "board" && boardAuthActive,
     called: state.called,
     gameType: state.gameType,
     winnerDeclared: state.winnerDeclared,
@@ -181,7 +197,9 @@ export default function App() {
     autoCallingEnabled: Boolean(state.autoCallingEnabled),
   });
   const showCallerSpeechControl =
-    modeInitialized && appMode === "board" && boardAuthActive && speechSupported;
+    modeInitialized &&
+    speechSupported &&
+    ((appMode === "board" && boardAuthActive) || appMode === "hud");
   const callerSpeechLive = speechOn && speechUnlocked;
   const callerSpeechLabel = !speechOn
     ? "Unmute number caller"
@@ -210,8 +228,8 @@ export default function App() {
     if (isAppMode(savedMode)) {
       setAppMode(savedMode);
       setModeInitialized(true);
-      // Card / player QR claims must never open the PIN unlock dialog.
-      if (savedMode === "card" || qrClaimRoute === "card") {
+      // Card / HUD / player QR claims must never open the PIN unlock dialog.
+      if (savedMode === "card" || savedMode === "hud" || qrClaimRoute === "card") {
         setUnlockOpen(false);
         setPendingMode(null);
         return;
@@ -225,7 +243,7 @@ export default function App() {
   }, [requestUnlock, setUnlockOpen, setPendingMode]);
 
   useEffect(() => {
-    if (appMode === "card") {
+    if (appMode === "card" || appMode === "hud") {
       setUnlockOpen(false);
       setPendingMode(null);
     }
@@ -238,7 +256,13 @@ export default function App() {
     if (appMode === "scan" && settingsOpen) {
       setSettingsOpen(false);
     }
-  }, [appMode, settingsOpen, boardAuthActive, needsBoardAuth]);
+    if (appMode === "hud" && settingsOpen) {
+      setSettingsOpen(false);
+    }
+    if (appMode === "hud" && oddsOpen) {
+      setOddsOpen(false);
+    }
+  }, [appMode, settingsOpen, oddsOpen, boardAuthActive, needsBoardAuth]);
 
   useEffect(() => {
     if (!modeInitialized || !needsBoardAuth) return;
@@ -538,8 +562,8 @@ export default function App() {
   };
 
   const requestModeChange = (mode: AppMode) => {
-    if (mode === "card") {
-      setMode("card");
+    if (mode === "card" || mode === "hud") {
+      setMode(mode);
       return;
     }
     if (boardAuthActive) {
@@ -601,7 +625,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={cn("min-h-screen bg-background", appMode === "hud" && modeInitialized && "h-dvh overflow-hidden")}>
       {/* Header */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 relative">
         <div className="max-w-7xl mx-auto px-4 flex h-14 items-center justify-between relative">
@@ -614,7 +638,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <div className="hidden md:flex items-center gap-1.5">
-              {modeInitialized && (appMode === "card" || (needsBoardAuth && boardAuthActive)) && (
+              {modeInitialized && (appMode === "card" || appMode === "hud" || (needsBoardAuth && boardAuthActive)) && (
                 <button
                   type="button"
                   className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
@@ -637,7 +661,7 @@ export default function App() {
                   <Settings2 className="h-4 w-4" />
                 </button>
               )}
-              {modeInitialized && appMode !== "scan" && (
+              {modeInitialized && appMode !== "scan" && appMode !== "hud" && (
                 <button
                   type="button"
                   className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
@@ -700,7 +724,7 @@ export default function App() {
                   <Maximize2 className="h-4 w-4" />
                 )}
               </button>
-              <ThemeToggle />
+              <ThemeToggle appMode={appMode} />
             </div>
             <div className="md:hidden relative" ref={mobileMenuRef}>
               <button
@@ -727,7 +751,7 @@ export default function App() {
               </button>
               {mobileMenuOpen && !settingsOpen && (
                 <div className="absolute right-0 top-10 z-50 w-52 rounded-md border bg-card text-card-foreground p-1 shadow-md">
-                  {modeInitialized && (appMode === "card" || (needsBoardAuth && boardAuthActive)) && (
+                  {modeInitialized && (appMode === "card" || appMode === "hud" || (needsBoardAuth && boardAuthActive)) && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
@@ -753,7 +777,7 @@ export default function App() {
                       {settingsOpen ? "Hide settings" : "Show settings"}
                     </button>
                   )}
-                  {modeInitialized && appMode !== "scan" && (appMode === "card" || (needsBoardAuth && boardAuthActive)) && (
+                  {modeInitialized && appMode !== "scan" && appMode !== "hud" && (appMode === "card" || (needsBoardAuth && boardAuthActive)) && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
@@ -899,14 +923,16 @@ export default function App() {
             </div>
           </div>
         </div>
-        {showAutoControls && autoRunning && (
+        {((showAutoControls && autoRunning) ||
+          (modeInitialized && appMode === "hud" && autoRunning)) && (
           <AutoCallingProgressBar
             running={autoRunning}
             intervalSeconds={autoSeconds}
             remainingMs={state.autoCallingRemainingMs ?? 0}
             serverHold={Boolean(state.autoCallingHold)}
             isAudioHold={isAudioHoldActive}
-            color={rgbaFromHex(uiLetterColors.N, 0.7)}
+            color={rgbaFromHex(uiLetterColors.N, appMode === "hud" ? 0.95 : 0.7)}
+            prominent={appMode === "hud"}
           />
         )}
       </header>
@@ -914,9 +940,13 @@ export default function App() {
       {/* Content */}
       <main
         className={cn(
-          "max-w-7xl mx-auto px-4",
-          appMode === "scan" ? "py-3" : "py-6",
-          modeInitialized && (appMode === "board" || appMode === "card" || appMode === "scan") && "pb-16"
+          appMode === "hud"
+            ? "max-w-none px-0 py-0 overflow-hidden"
+            : cn(
+                "max-w-7xl mx-auto px-4",
+                appMode === "scan" ? "py-3" : "py-6",
+                modeInitialized && (appMode === "board" || appMode === "card" || appMode === "scan") && "pb-16"
+              )
         )}
       >
         {boardSessionStale && (
@@ -975,6 +1005,8 @@ export default function App() {
                 ) : (
                   renderBoardLockedState()
                 )
+              ) : appMode === "hud" ? (
+                <HudPage state={state} letterColors={uiLetterColors} />
               ) : (
                 <CardPage
                   state={state}
@@ -987,7 +1019,7 @@ export default function App() {
             <div className={cn(!settingsOpen && "hidden")} aria-hidden={!settingsOpen}>
               {appMode === "board" && !boardAuthActive ? (
                 renderBoardLockedState()
-              ) : appMode === "scan" ? null : (
+              ) : appMode === "scan" || appMode === "hud" ? null : (
                 <Card>
                   <CardHeader className="md:hidden">
                     <CardTitle>Settings</CardTitle>
@@ -1052,7 +1084,7 @@ export default function App() {
       <Dialog
         open={unlockOpen}
         onOpenChange={(open) => {
-          if (appMode === "card" && modeInitialized) {
+          if ((appMode === "card" || appMode === "hud") && modeInitialized) {
             setUnlockOpen(false);
             return;
           }
@@ -1114,7 +1146,7 @@ export default function App() {
           <DialogHeader>
             <DialogTitle>Exit Current Mode?</DialogTitle>
             <DialogDescription>
-              This will close the current view and return to the Board / Card / Scan selection screen.
+              This will close the current view and return to the Board / Card / Scan / HUD selection screen.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

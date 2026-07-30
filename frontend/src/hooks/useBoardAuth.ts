@@ -41,9 +41,9 @@ export function useBoardAuth() {
       applySession(null);
       setUnlockOpen(false);
       if (opts?.promptUnlock) {
-        // Never PIN-prompt players in card mode (e.g. QR claim without board auth).
+        // Never PIN-prompt players in card/HUD mode (e.g. QR claim without board auth).
         const mode = sessionStorage.getItem("bingo-app-mode");
-        if (mode === "card") {
+        if (mode === "card" || mode === "hud") {
           setPendingMode(null);
           return;
         }
@@ -57,8 +57,9 @@ export function useBoardAuth() {
   );
 
   const requestUnlock = useCallback((mode: AppMode = "board") => {
-    // Card / player flows must never open the board PIN dialog.
-    if (mode === "card" || sessionStorage.getItem("bingo-app-mode") === "card") {
+    // Card / HUD / player flows must never open the board PIN dialog.
+    const stored = sessionStorage.getItem("bingo-app-mode");
+    if (mode === "card" || mode === "hud" || stored === "card" || stored === "hud") {
       setUnlockOpen(false);
       setPendingMode(null);
       return;

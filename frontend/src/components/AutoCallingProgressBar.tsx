@@ -7,6 +7,8 @@ interface AutoCallingProgressBarProps {
   serverHold: boolean;
   isAudioHold: () => boolean;
   color: string;
+  /** Thicker, higher-contrast bar for HUD / TV display. */
+  prominent?: boolean;
 }
 
 /** Re-sync local deadline only when server disagree by more than this (ms). */
@@ -14,7 +16,8 @@ const DRIFT_RESYNC_MS = 800;
 
 /**
  * Smooth auto-call countdown.
- * Firmware remainingMs is the authority; countdown keeps running during audio hold.
+ * Firmware remainingMs is the authority; the next interval starts only after
+ * call-out audio (+ jokes) finishes (remainingMs is 0 while held).
  * Local deadline avoids fighting the 250ms WS progress ticks.
  */
 export function AutoCallingProgressBar({
@@ -24,6 +27,7 @@ export function AutoCallingProgressBar({
   serverHold: _serverHold,
   isAudioHold: _isAudioHold,
   color,
+  prominent = false,
 }: AutoCallingProgressBarProps) {
   const [displayMs, setDisplayMs] = useState(0);
   /** performance.now() when the countdown should hit zero. */
@@ -92,12 +96,19 @@ export function AutoCallingProgressBar({
   const pct = Math.min(100, Math.max(0, (displayMs / intervalMs) * 100));
 
   return (
-    <div className="absolute left-0 right-0 top-0 h-0.5 bg-transparent pointer-events-none overflow-hidden">
+    <div
+      className={
+        prominent
+          ? "absolute left-0 right-0 top-0 h-2.5 bg-muted/60 pointer-events-none overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.35)]"
+          : "absolute left-0 right-0 top-0 h-0.5 bg-transparent pointer-events-none overflow-hidden"
+      }
+    >
       <div
-        className="h-full ml-auto"
+        className="h-full ml-auto transition-[width] duration-75 ease-linear"
         style={{
           backgroundColor: color,
           width: `${pct}%`,
+          boxShadow: prominent ? `0 0 12px ${color}` : undefined,
         }}
       />
     </div>

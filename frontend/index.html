@@ -11,12 +11,14 @@
   </head>
   <body>
     <script>
-      // Apply theme before paint to avoid flash. Card mode defaults to dark.
+      // Apply theme before paint to avoid flash. Card/HUD default to dark.
       (function () {
         var mode = sessionStorage.getItem('bingo-app-mode');
         var theme;
         if (mode === 'card') {
           theme = localStorage.getItem('bingo-theme-card') || 'dark';
+        } else if (mode === 'hud') {
+          theme = localStorage.getItem('bingo-theme-hud') || 'dark';
         } else if (mode === 'board' || mode === 'scan') {
           theme = localStorage.getItem('bingo-theme-board') || localStorage.getItem('bingo-theme') || 'light';
         } else {

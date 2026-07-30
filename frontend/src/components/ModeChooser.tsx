@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import type { AppMode } from "@/types";
-import { AppWindow, Camera, Sheet } from "lucide-react";
+import { AppWindow, Camera, Sheet, Tv } from "lucide-react";
 
 interface Props {
   onSelect: (mode: AppMode) => void;
@@ -9,7 +9,7 @@ interface Props {
 export function ModeChooser({ onSelect }: Props) {
   return (
     <div className="min-h-[60vh] flex items-center justify-center">
-      <div className="w-full max-w-4xl grid gap-4 sm:grid-cols-3">
+      <div className="w-full max-w-5xl grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Button
           type="button"
           variant="outline"
@@ -36,6 +36,15 @@ export function ModeChooser({ onSelect }: Props) {
         >
           <Camera className="h-10 w-10" />
           Scan
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-52 text-xl font-semibold flex-col gap-3"
+          onClick={() => onSelect("hud")}
+        >
+          <Tv className="h-10 w-10" />
+          HUD
         </Button>
       </div>
     </div>

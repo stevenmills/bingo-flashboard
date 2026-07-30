@@ -61,13 +61,19 @@ int winnerScrollOffsetCols = 0;
 bool winnerScrollShownThisRound = false;
 const unsigned long WINNER_BOARD_PHASE_MS = 2000;
 const uint16_t WINNER_SCROLL_SPEED_MS = 90;
+/** Card-session wins only: LED celebration then return to the called board. */
+const unsigned long CARD_WINNER_LED_MS = 5000;
+/** 0 = indefinite (board/manual declare). Nonzero = millis deadline for LED effect. */
+unsigned long winnerLedUntilMs = 0;
 bool autoCallingEnabled = false;
-bool autoCallingHold = false;          // Pause countdown while board UI plays call-out audio
+bool autoCallingHold = false;          // Pause until board UI finishes call-out (+ jokes)
 bool autoCallingWaitForAudio = false;  // Board UI has caller sound live
 static bool deferResetPersistence = false;
 uint16_t autoCallingSeconds = 10;
 unsigned long autoCallingNextDrawMs = 0;
 unsigned long autoCallingHoldSinceMs = 0;
+/** Safety if the board UI dies mid call-out (number + joke + prompts can exceed 8s). */
+const unsigned long AUTO_CALLING_HOLD_SAFETY_MS = 45000UL;
 
 // --- Game state ---
 bool called[76];  // 1..75; [0] unused
@@ -181,6 +187,7 @@ struct WsSubscription {
   uint32_t clientId;
   bool boardMode;
   bool boardAuthOk;
+  bool hudMode;
   char cardId[17];
 };
 WsSubscription wsSubscriptions[MAX_WS_SUBSCRIPTIONS];
@@ -299,6 +306,9 @@ void clearBoardUnlockFailures();
 void issueBoardAuthToken();
 void ensureBoardAuthToken();
 void syncWinnerDeclared();
+void armWinnerLedsForSource();
+void clearWinnerLedTimer();
+bool winnerLedsShouldShow();
 void startCalledNumberBanner(int n);
 void clearCalledNumberBanner();
 bool calledNumberBannerActive();
@@ -356,7 +366,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj);
 void clearWsSubscription(WsSubscription& sub);
 void clearAllWsSubscriptions();
 void removeWsSubscription(uint32_t clientId);
-void setWsSubscription(uint32_t clientId, bool boardMode, bool boardAuthOk, const char* cardId);
+void setWsSubscription(uint32_t clientId, bool boardMode, bool boardAuthOk, bool hudMode, const char* cardId);
 bool wsCanReceiveState(uint32_t clientId);
 bool wsCanReceiveCardState(uint32_t clientId, const char* cardId);
 uint32_t uniformRandomBelow(uint32_t maxExclusive);
@@ -1228,7 +1238,7 @@ void renderCalledNumberBannerFrame(int n) {
 }
 
 void renderGameBoardFrame() {
-  if (winnerDeclared) {
+  if (winnerLedsShouldShow()) {
     renderWinnerShimmerAll();
     return;
   }
@@ -1600,6 +1610,7 @@ void clearWsSubscription(WsSubscription& sub) {
   sub.clientId = 0;
   sub.boardMode = false;
   sub.boardAuthOk = false;
+  sub.hudMode = false;
   sub.cardId[0] = '\0';
 }
 
@@ -1623,6 +1634,7 @@ WsSubscription* ensureWsSubscription(uint32_t clientId) {
       wsSubscriptions[i].clientId = clientId;
       wsSubscriptions[i].boardMode = false;
       wsSubscriptions[i].boardAuthOk = false;
+      wsSubscriptions[i].hudMode = false;
       wsSubscriptions[i].cardId[0] = '\0';
       return &wsSubscriptions[i];
     }
@@ -1635,13 +1647,14 @@ void removeWsSubscription(uint32_t clientId) {
   if (sub) clearWsSubscription(*sub);
 }
 
-void setWsSubscription(uint32_t clientId, bool boardMode, bool boardAuthOk, const char* cardId) {
+void setWsSubscription(uint32_t clientId, bool boardMode, bool boardAuthOk, bool hudMode, const char* cardId) {
   WsSubscription* sub = ensureWsSubscription(clientId);
   if (!sub) return;
   sub->boardMode = boardMode;
   sub->boardAuthOk = boardAuthOk;
+  sub->hudMode = hudMode;
   sub->cardId[0] = '\0';
-  if (!boardMode && cardId && *cardId) {
+  if (!boardMode && !hudMode && cardId && *cardId) {
     CardSession* card = findCardSessionById(cardId);
     if (card) {
       strncpy(sub->cardId, card->cardId, sizeof(sub->cardId) - 1);
@@ -1805,6 +1818,7 @@ void resetSessionClaimedMasks(CardSession& s) {
 bool wsCanReceiveState(uint32_t clientId) {
   WsSubscription* sub = findWsSubscription(clientId);
   if (!sub) return false;
+  if (sub->hudMode) return true;
   if (sub->boardMode) return sub->boardAuthOk;
   if (sub->cardId[0] == '\0') return false;
   return findCardSessionById(sub->cardId) != nullptr;
@@ -1900,12 +1914,36 @@ void claimCurrentWinningPatterns(CardSession& s) {
   claimed |= satisfiedMaskForCurrentGameType(s);
 }
 
+void clearWinnerLedTimer() {
+  winnerLedUntilMs = 0;
+}
+
+/** Manual board declare → indefinite LEDs. Card-driven wins → 5s celebration. */
+void armWinnerLedsForSource() {
+  if (!winnerDeclared) {
+    winnerLedUntilMs = 0;
+    return;
+  }
+  if (manualWinnerDeclared) {
+    winnerLedUntilMs = 0;
+    return;
+  }
+  winnerLedUntilMs = millis() + CARD_WINNER_LED_MS;
+}
+
+bool winnerLedsShouldShow() {
+  if (!winnerDeclared) return false;
+  if (winnerLedUntilMs == 0) return true;
+  return (long)(millis() - winnerLedUntilMs) < 0;
+}
+
 void syncWinnerDeclared() {
   const bool want = !winnerSuppressed && (manualWinnerDeclared || (winnerCount > 0));
   if (!want) {
     winnerDeclared = false;
     pendingWinnerActivation = false;
     pendingWinnerEventBump = false;
+    clearWinnerLedTimer();
     return;
   }
   // When the board is mid call-out (hold + wait-for-audio), defer winner mode so
@@ -1914,8 +1952,13 @@ void syncWinnerDeclared() {
     pendingWinnerActivation = true;
     return;
   }
+  const bool wasDeclared = winnerDeclared;
   winnerDeclared = true;
   pendingWinnerActivation = false;
+  // First activation: arm LED timer from source. Manual → indefinite; cards → 5s.
+  // New card winner events while already declared re-arm in recomputeCardWinners.
+  if (!wasDeclared) armWinnerLedsForSource();
+  else if (manualWinnerDeclared) clearWinnerLedTimer();
 }
 
 void flushPendingWinnerActivation() {
@@ -1925,13 +1968,17 @@ void flushPendingWinnerActivation() {
   if (!want) {
     pendingWinnerEventBump = false;
     winnerDeclared = false;
+    clearWinnerLedTimer();
     return;
   }
   if (pendingWinnerEventBump) {
     winnerEventId++;
     pendingWinnerEventBump = false;
   }
+  const bool wasDeclared = winnerDeclared;
   winnerDeclared = true;
+  if (!wasDeclared) armWinnerLedsForSource();
+  else if (manualWinnerDeclared) clearWinnerLedTimer();
 }
 
 int getActiveCardCount() {
@@ -2013,6 +2060,10 @@ void recomputeCardWinners() {
     enqueueWebhookBingo(currentNumber);
   }
   syncWinnerDeclared();
+  // Fresh card bingo while already in winner mode: restart the 5s LED celebration.
+  if (hasNewWinnerEvent && winnerDeclared && !manualWinnerDeclared) {
+    armWinnerLedsForSource();
+  }
 }
 
 // Game-type pattern: fill physical indices for current gameType
@@ -2139,7 +2190,7 @@ CRGB goldShimmerColor(uint8_t salt) {
 }
 
 CRGB colorForCalledNumber(int n) {
-  if (winnerDeclared) {
+  if (winnerLedsShouldShow()) {
     return goldShimmerColor((uint8_t)(n * 7));
   }
   if (strcmp(colorMode, "solid") == 0) {
@@ -2212,7 +2263,7 @@ CRGB colorForCalledNumber(int n) {
 }
 
 CRGB colorForLetter(char letter) {
-  if (winnerDeclared) {
+  if (winnerLedsShouldShow()) {
     return goldShimmerColor((uint8_t)letter);
   }
   // BINGO header LEDs use a dedicated color independent of active number theme.
@@ -2349,7 +2400,7 @@ void updateAllLeds() {
     return;
   }
 
-  if (!winnerDeclared) {
+  if (!winnerLedsShouldShow()) {
     winnerAnimActive = false;
     winnerAnimPhase = WINNER_PHASE_BOARD;
     winnerScrollOffsetCols = 0;
@@ -2431,7 +2482,8 @@ bool autoCallingCanDrawNow() {
 
 uint32_t autoCallingRemainingMsNow() {
   if (!autoCallingEnabled || strcmp(callingStyle, "automatic") != 0) return 0;
-  // Countdown keeps running while audio plays (hold only blocks the next draw).
+  // While call-out audio plays, the next interval has not started yet.
+  if (autoCallingHold) return 0;
   if (autoCallingNextDrawMs == 0) return 0;
   unsigned long now = millis();
   if (now >= autoCallingNextDrawMs) return 0;
@@ -2443,12 +2495,21 @@ void setAutoCallingHold(bool hold) {
   autoCallingHold = hold;
   if (hold) {
     autoCallingHoldSinceMs = millis();
+    // Do not run the interval during number/joke playback.
+    autoCallingNextDrawMs = 0;
     broadcastStateWs("auto_calling_changed");
     return;
   }
-  // Do not reschedule the interval — if the deadline already passed while audio
-  // played, the next loop iteration draws immediately.
   autoCallingHoldSinceMs = 0;
+  // Start the next countdown only after call-out (+ jokes) finished.
+  if (autoCallingEnabled &&
+      strcmp(callingStyle, "automatic") == 0 &&
+      !winnerDeclared &&
+      poolCount > 0) {
+    autoCallingNextDrawMs = millis() + (unsigned long)autoCallingSeconds * 1000UL;
+  } else {
+    autoCallingNextDrawMs = 0;
+  }
   const bool hadPendingWinner = pendingWinnerActivation;
   flushPendingWinnerActivation();
   broadcastStateWs(hadPendingWinner ? "winner_changed" : "auto_calling_changed");
@@ -2465,7 +2526,7 @@ void applyAutoCallingEnabled(bool enabled) {
     return;
   }
 
-  // Play = draw now, then count down to the following call.
+  // Play = draw now, then count down to the following call (after audio if waiting).
   if (!winnerDeclared && poolCount > 0) {
     if (!gameEstablished) gameEstablished = true;
     int n = drawNext();
@@ -2475,10 +2536,12 @@ void applyAutoCallingEnabled(bool enabled) {
       broadcastStateWs("auto_calling_changed");
       return;
     }
-    autoCallingNextDrawMs = millis() + (unsigned long)autoCallingSeconds * 1000UL;
     if (autoCallingWaitForAudio) {
       autoCallingHold = true;
       autoCallingHoldSinceMs = millis();
+      autoCallingNextDrawMs = 0;
+    } else {
+      autoCallingNextDrawMs = millis() + (unsigned long)autoCallingSeconds * 1000UL;
     }
   } else {
     autoCallingNextDrawMs = millis() + (unsigned long)autoCallingSeconds * 1000UL;
@@ -3556,7 +3619,7 @@ void setup() {
                 void* arg, uint8_t* data, size_t len) {
     (void)serverWs;
     if (type == WS_EVT_CONNECT && client) {
-      setWsSubscription(client->id(), false, false, "");
+      setWsSubscription(client->id(), false, false, false, "");
       return;
     }
 
@@ -3579,9 +3642,10 @@ void setup() {
         const char* cardId = obj["cardId"] | "";
         const char* token = obj["boardToken"] | "";
         bool boardMode = strcmp(mode, "board") == 0;
+        const bool hudMode = strcmp(mode, "hud") == 0;
         const bool boardAuthOk = boardMode && isBoardTokenValid(token);
         if (boardMode && !boardAuthOk) boardMode = false;
-        setWsSubscription(client->id(), boardMode, boardAuthOk, cardId);
+        setWsSubscription(client->id(), boardMode, boardAuthOk, hudMode, cardId);
 
         if (wsCanReceiveState(client->id())) {
           DynamicJsonDocument env(STATE_WS_ENV_DOC_CAPACITY);
@@ -4963,8 +5027,8 @@ void loop() {
   if (autoCallingEnabled) {
     unsigned long now = millis();
     // Safety: never stay held forever if the board UI disconnects mid call-out.
-    // Keep this tight so short intervals (e.g. 3s) recover quickly.
-    if (autoCallingHold && autoCallingHoldSinceMs > 0 && (now - autoCallingHoldSinceMs) > 8000UL) {
+    if (autoCallingHold && autoCallingHoldSinceMs > 0 &&
+        (now - autoCallingHoldSinceMs) > AUTO_CALLING_HOLD_SAFETY_MS) {
       setAutoCallingHold(false);
     }
     if (!autoCallingCanDrawNow()) {
@@ -4981,14 +5045,14 @@ void loop() {
           autoCallingNextDrawMs = 0;
           autoCallingHoldSinceMs = 0;
           broadcastStateWs("auto_calling_changed");
+        } else if (autoCallingWaitForAudio) {
+          // Wait for number (+ jokes) to finish before starting the next countdown.
+          autoCallingHold = true;
+          autoCallingHoldSinceMs = now;
+          autoCallingNextDrawMs = 0;
+          broadcastStateWs("auto_calling_changed");
         } else {
-          // Arm next countdown immediately so the bar keeps moving during audio.
           autoCallingNextDrawMs = now + (unsigned long)autoCallingSeconds * 1000UL;
-          if (autoCallingWaitForAudio) {
-            autoCallingHold = true;
-            autoCallingHoldSinceMs = now;
-            broadcastStateWs("auto_calling_changed");
-          }
         }
       }
     }
