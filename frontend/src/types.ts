@@ -167,7 +167,7 @@ export const SCREENSAVER_TYPE_DESCRIPTIONS: Record<ScreensaverType, string> = {
   sparkle: "Gold shimmer twinkles across every LED (classic winner sparkle).",
 };
 
-export type AppMode = "board" | "card";
+export type AppMode = "board" | "card" | "scan";
 
 export interface BoardAuthSession {
   token: string;

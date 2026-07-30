@@ -17,7 +17,8 @@ function readModeTheme(mode: AppMode | null | undefined): Theme {
     if (saved === "light" || saved === "dark") return saved;
     return "dark";
   }
-  if (mode === "board") {
+  // Board and Scan share board theme (operator device).
+  if (mode === "board" || mode === "scan") {
     const saved = localStorage.getItem(BOARD_THEME_KEY) ?? localStorage.getItem(LEGACY_THEME_KEY);
     if (saved === "light" || saved === "dark") return saved;
     return "light";
@@ -29,7 +30,7 @@ function readModeTheme(mode: AppMode | null | undefined): Theme {
 function persistModeTheme(mode: AppMode | null | undefined, theme: Theme) {
   localStorage.setItem(LEGACY_THEME_KEY, theme);
   if (mode === "card") localStorage.setItem(CARD_THEME_KEY, theme);
-  else if (mode === "board") localStorage.setItem(BOARD_THEME_KEY, theme);
+  else if (mode === "board" || mode === "scan") localStorage.setItem(BOARD_THEME_KEY, theme);
 }
 
 export function useTheme(appMode?: AppMode | null) {

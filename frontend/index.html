@@ -17,7 +17,7 @@
         var theme;
         if (mode === 'card') {
           theme = localStorage.getItem('bingo-theme-card') || 'dark';
-        } else if (mode === 'board') {
+        } else if (mode === 'board' || mode === 'scan') {
           theme = localStorage.getItem('bingo-theme-board') || localStorage.getItem('bingo-theme') || 'light';
         } else {
           theme = localStorage.getItem('bingo-theme') || 'light';

@@ -3499,10 +3499,8 @@ void setup() {
 
   setupWiFi();
 
-  // Serve all static files from SPIFFS (Vite build output with hashed names)
-  server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
-
   // Captive-portal probes: return success so phones don't show a bare "Not found" splash on join.
+  // Register before serveStatic so they never pay a SPIFFS miss lookup.
   server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* req) { req->send(204); });
   server.on("/gen_204", HTTP_GET, [](AsyncWebServerRequest* req) { req->send(204); });
   server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -3518,6 +3516,16 @@ void setup() {
     req->send(200, "text/plain", "Microsoft Connect Test");
   });
 
+  // Static UI from SPIFFS (Vite hashed assets). Skip API/WS — a SPIFFS miss on a full
+  // filesystem was adding ~2–3s to every /api/* request before the real handler ran.
+  server.serveStatic("/", SPIFFS, "/")
+      .setDefaultFile("index.html")
+      .setFilter([](AsyncWebServerRequest* request) {
+        const String& url = request->url();
+        if (url.startsWith("/api")) return false;
+        if (url.startsWith("/ws")) return false;
+        return true;
+      });
   // SPA fallback + clear recovery hint when the filesystem image was never uploaded.
   server.onNotFound([](AsyncWebServerRequest* req) {
     if (req->method() == HTTP_GET && SPIFFS.exists("/index.html")) {
@@ -3629,6 +3637,30 @@ void setup() {
   server.addHandler(&ws);
 
   server.on("/api/state", HTTP_GET, [](AsyncWebServerRequest* req) { sendStateJson(req); });
+  server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest* req) {
+    int wsClients = 0;
+    for (int i = 0; i < MAX_WS_SUBSCRIPTIONS; i++) {
+      if (wsSubscriptions[i].active) wsClients++;
+    }
+    StaticJsonDocument<384> doc;
+    doc["uptimeMs"] = millis();
+    doc["freeHeap"] = ESP.getFreeHeap();
+    doc["minFreeHeap"] = ESP.getMinFreeHeap();
+    doc["maxAllocHeap"] = ESP.getMaxAllocHeap();
+    doc["freePsram"] = ESP.getFreePsram();
+    doc["psramSize"] = ESP.getPsramSize();
+    doc["cpuFreqMHz"] = getCpuFrequencyMhz();
+    doc["sketchSize"] = ESP.getSketchSize();
+    doc["flashChipSize"] = ESP.getFlashChipSize();
+    doc["spiffsUsed"] = SPIFFS.usedBytes();
+    doc["spiffsTotal"] = SPIFFS.totalBytes();
+    doc["wsClients"] = wsClients;
+    doc["cardSessions"] = getActiveCardCount();
+    doc["loopDelayMs"] = 20;
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
   server.on("/api/device-id", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
     ensureDeviceIdLoaded();

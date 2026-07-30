@@ -21,6 +21,7 @@ const ALWAYS_KEEP = new Set([
   "paw.svg",
   "favicon.ico",
   "favicon.svg",
+  "zx.wasm",
 ]);
 
 /** Hashed Vite outputs we may prune when unreferenced. */

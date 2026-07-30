@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useGameState } from "@/hooks/useGameState";
 import { GamePage } from "@/pages/GamePage";
 import { CardPage } from "@/pages/CardPage";
@@ -22,22 +22,36 @@ import { rgbaFromHex } from "@/lib/bingo-ui-colors";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { AppMode, GameType } from "@/types";
-import { isGameType } from "@/types";
-import { bootstrapQrCardClaim, clearQrBoardVerifyFlag, isQrBoardVerifyPending, takeQrCardClaim } from "@/lib/bingo-card-codec";
+import { GAME_TYPE_LABELS, isGameType } from "@/types";
+import {
+  bootstrapQrCardClaim,
+  clearQrBoardVerifyFlag,
+  isQrBoardVerifyPending,
+  takeQrCardClaim,
+  type QrCardClaim,
+} from "@/lib/bingo-card-codec";
+import { verifyScannedPrintedCard, releaseScannedWinnerSession } from "@/lib/verify-printed-card";
+
+const ScanPage = lazy(() =>
+  import("@/pages/ScanPage").then((m) => ({ default: m.ScanPage }))
+);
 
 const APP_MODE_STORAGE_KEY = "bingo-app-mode";
-// QR scan: unauthenticated → card mode; authenticated board session → board verify.
+// QR scan: unauthenticated → card mode; authenticated board session → Scan verify.
 const qrClaimRoute = bootstrapQrCardClaim(APP_MODE_STORAGE_KEY);
+
+function isAppMode(value: string | null): value is AppMode {
+  return value === "board" || value === "card" || value === "scan";
+}
 
 function readInitialAppMode(): AppMode {
   const saved = sessionStorage.getItem(APP_MODE_STORAGE_KEY);
-  if (saved === "board" || saved === "card") return saved;
+  if (isAppMode(saved)) return saved;
   return "board";
 }
 
 function readModeInitialized(): boolean {
-  const saved = sessionStorage.getItem(APP_MODE_STORAGE_KEY);
-  return saved === "board" || saved === "card";
+  return isAppMode(sessionStorage.getItem(APP_MODE_STORAGE_KEY));
 }
 
 type FullscreenDoc = Document & {
@@ -122,9 +136,14 @@ export default function App() {
   const [winnerDialogActive, setWinnerDialogActive] = useState(false);
   const [noWinnerOpen, setNoWinnerOpen] = useState(false);
   const [cardNotAuthenticOpen, setCardNotAuthenticOpen] = useState(false);
+  const [scanWinnerOpen, setScanWinnerOpen] = useState(false);
+  const [scanWinnerCardId, setScanWinnerCardId] = useState<string | null>(null);
+  const [scanVerifying, setScanVerifying] = useState(false);
   const boardQrVerifyStartedRef = useRef(false);
   const { theme, setTheme } = useTheme(appMode);
-  const canOpenSettings = appMode !== "board" || boardAuthActive;
+  const needsBoardAuth = appMode === "board" || appMode === "scan";
+  const canOpenSettings =
+    appMode === "card" || (appMode === "board" && boardAuthActive);
   const [cardJoined, setCardJoined] = useState(() => Boolean(localStorage.getItem("bingo-card-id")));
   const allowOddsGameTypeSelect = modeInitialized && appMode === "card" && (!cardJoined || !connected);
   const oddsGameType: GameType = allowOddsGameTypeSelect
@@ -187,7 +206,7 @@ export default function App() {
 
   useEffect(() => {
     const savedMode = sessionStorage.getItem(APP_MODE_STORAGE_KEY);
-    if (savedMode === "board" || savedMode === "card") {
+    if (isAppMode(savedMode)) {
       setAppMode(savedMode);
       setModeInitialized(true);
       // Card / player QR claims must never open the PIN unlock dialog.
@@ -196,8 +215,8 @@ export default function App() {
         setPendingMode(null);
         return;
       }
-      if (savedMode === "board" && !isStoredBoardSessionActive()) {
-        requestUnlock("board");
+      if ((savedMode === "board" || savedMode === "scan") && !isStoredBoardSessionActive()) {
+        requestUnlock(savedMode);
       }
       return;
     }
@@ -212,27 +231,69 @@ export default function App() {
   }, [appMode, setUnlockOpen, setPendingMode]);
 
   useEffect(() => {
-    if (appMode === "board" && settingsOpen && !boardAuthActive) {
+    if (needsBoardAuth && settingsOpen && !boardAuthActive) {
       setSettingsOpen(false);
     }
-  }, [appMode, settingsOpen, boardAuthActive]);
+    if (appMode === "scan" && settingsOpen) {
+      setSettingsOpen(false);
+    }
+  }, [appMode, settingsOpen, boardAuthActive, needsBoardAuth]);
 
   useEffect(() => {
-    if (!modeInitialized || appMode !== "board") return;
+    if (!modeInitialized || !needsBoardAuth) return;
     if (boardAuthActive || unlockOpen) return;
     // Don't PIN-gate a player QR claim that was forced into card mode.
     if (qrClaimRoute === "card") return;
-    requestUnlock("board");
-  }, [modeInitialized, appMode, boardAuthActive, unlockOpen, requestUnlock]);
+    requestUnlock(appMode === "scan" ? "scan" : "board");
+  }, [modeInitialized, appMode, needsBoardAuth, boardAuthActive, unlockOpen, requestUnlock]);
 
   useEffect(() => {
-    if (!modeInitialized || appMode !== "board" || !boardAuthActive || !connected) return;
+    if (!modeInitialized || !needsBoardAuth || !boardAuthActive || !connected) return;
     if (state.boardAuthValid !== false) return;
     void tryRefreshSession();
-  }, [modeInitialized, appMode, boardAuthActive, connected, state.boardAuthValid, tryRefreshSession]);
+  }, [modeInitialized, needsBoardAuth, boardAuthActive, connected, state.boardAuthValid, tryRefreshSession]);
+
+  const dismissScanWinner = useCallback(() => {
+    const cardId = scanWinnerCardId;
+    setScanWinnerOpen(false);
+    setScanWinnerCardId(null);
+    if (!cardId) return;
+    void releaseScannedWinnerSession(cardId, {
+      refresh: () => refresh({ force: true }),
+    });
+  }, [refresh, scanWinnerCardId]);
+
+  const applyVerifyOutcome = useCallback((result: Awaited<ReturnType<typeof verifyScannedPrintedCard>>) => {
+    if (result.outcome === "not_authentic") {
+      setCardNotAuthenticOpen(true);
+      return;
+    }
+    if (result.outcome === "authentic_winner") {
+      setScanWinnerCardId(result.cardId);
+      setScanWinnerOpen(true);
+      return;
+    }
+    // no_winner or error
+    setNoWinnerOpen(true);
+  }, []);
+
+  const handleVerifyClaim = useCallback(
+    async (claim: QrCardClaim) => {
+      setScanVerifying(true);
+      try {
+        const result = await verifyScannedPrintedCard(claim, {
+          refresh: () => refresh({ force: true }),
+        });
+        applyVerifyOutcome(result);
+      } finally {
+        setScanVerifying(false);
+      }
+    },
+    [applyVerifyOutcome, refresh]
+  );
 
   useEffect(() => {
-    if (!modeInitialized || appMode !== "board" || !boardAuthActive || !connected || !hydrated) return;
+    if (!modeInitialized || appMode !== "scan" || !boardAuthActive || !connected || !hydrated) return;
     if (!isQrBoardVerifyPending()) return;
     if (boardQrVerifyStartedRef.current) return;
     boardQrVerifyStartedRef.current = true;
@@ -246,39 +307,16 @@ export default function App() {
 
     void (async () => {
       try {
-        const result = await api.claimPrintedCard(claim.numbers, claim.sig);
-        if (result.authentic !== true) {
-          try {
-            await api.leaveCard(result.cardId);
-          } catch {
-            // Best effort.
-          }
-          await refresh({ force: true });
-          setCardNotAuthenticOpen(true);
-          return;
-        }
-        if (result.winner) {
-          await refresh({ force: true });
-        } else {
-          try {
-            await api.leaveCard(result.cardId);
-          } catch {
-            // Best effort.
-          }
-          await refresh({ force: true });
-          setNoWinnerOpen(true);
-        }
-      } catch {
-        setNoWinnerOpen(true);
+        await handleVerifyClaim(claim);
       } finally {
         boardQrVerifyStartedRef.current = false;
       }
     })();
-  }, [modeInitialized, appMode, boardAuthActive, connected, hydrated, refresh]);
+  }, [modeInitialized, appMode, boardAuthActive, connected, hydrated, handleVerifyClaim]);
 
   const boardSessionStale =
     modeInitialized &&
-    appMode === "board" &&
+    needsBoardAuth &&
     boardAuthActive &&
     connected &&
     state.boardAuthValid === false;
@@ -364,16 +402,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!(modeInitialized && appMode === "board")) return;
+    if (!(modeInitialized && (appMode === "board" || appMode === "scan"))) return;
     const existingCardId = localStorage.getItem("bingo-card-id");
     if (existingCardId) {
-      // Board-mode devices should not keep an active background card session.
+      // Board/Scan devices should not keep an active background card session.
       void api.leaveCard(existingCardId).catch(() => {
         // Best effort cleanup only.
       });
       localStorage.removeItem("bingo-card-id");
       notifyCardSessionChanged();
     }
+    if (appMode !== "board") return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       // Browser-native confirmation for page refresh/close in board mode.
       event.preventDefault();
@@ -497,10 +536,10 @@ export default function App() {
       return;
     }
     if (boardAuthActive) {
-      setMode("board");
+      setMode(mode);
       return;
     }
-    requestUnlock("board");
+    requestUnlock(mode);
   };
 
   const handleExitToModeChooser = () => {
@@ -513,10 +552,11 @@ export default function App() {
   };
 
   const handleUnlockBoard = async () => {
+    const modeToEnter: AppMode = pendingMode === "scan" ? "scan" : "board";
     const ok = await unlockWithPin(unlockPin);
     if (!ok) return;
     await refresh({ force: true });
-    if (pendingMode === "board") setMode("board");
+    setMode(modeToEnter);
   };
 
   const handleBoardLock = async () => {
@@ -539,11 +579,11 @@ export default function App() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Enter the board PIN to unlock board controls and game state.
+          Enter the board PIN to unlock {appMode === "scan" ? "Scan" : "board"} controls.
         </p>
         <Button
           type="button"
-          onClick={() => requestUnlock("board")}
+          onClick={() => requestUnlock(appMode === "scan" ? "scan" : "board")}
           className="text-white"
           style={{ backgroundColor: uiLetterColors.N }}
         >
@@ -567,7 +607,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <div className="hidden md:flex items-center gap-1.5">
-              {modeInitialized && (appMode !== "board" || boardAuthActive) && (
+              {modeInitialized && (appMode === "card" || (needsBoardAuth && boardAuthActive)) && (
                 <button
                   type="button"
                   className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
@@ -590,7 +630,7 @@ export default function App() {
                   <Settings2 className="h-4 w-4" />
                 </button>
               )}
-              {modeInitialized && (
+              {modeInitialized && appMode !== "scan" && (
                 <button
                   type="button"
                   className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
@@ -680,7 +720,7 @@ export default function App() {
               </button>
               {mobileMenuOpen && !settingsOpen && (
                 <div className="absolute right-0 top-10 z-50 w-52 rounded-md border bg-card text-card-foreground p-1 shadow-md">
-                  {modeInitialized && (appMode !== "board" || boardAuthActive) && (
+                  {modeInitialized && (appMode === "card" || (needsBoardAuth && boardAuthActive)) && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
@@ -706,7 +746,7 @@ export default function App() {
                       {settingsOpen ? "Hide settings" : "Show settings"}
                     </button>
                   )}
-                  {modeInitialized && (appMode !== "board" || boardAuthActive) && (
+                  {modeInitialized && appMode !== "scan" && (appMode === "card" || (needsBoardAuth && boardAuthActive)) && (
                     <button
                       type="button"
                       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
@@ -867,8 +907,9 @@ export default function App() {
       {/* Content */}
       <main
         className={cn(
-          "max-w-7xl mx-auto px-4 py-6",
-          modeInitialized && (appMode === "board" || appMode === "card") && "pb-16"
+          "max-w-7xl mx-auto px-4",
+          appMode === "scan" ? "py-3" : "py-6",
+          modeInitialized && (appMode === "board" || appMode === "card" || appMode === "scan") && "pb-16"
         )}
       >
         {boardSessionStale && (
@@ -880,7 +921,7 @@ export default function App() {
               variant="outline"
               size="sm"
               className="ml-3 h-7"
-              onClick={() => requestUnlock("board")}
+              onClick={() => requestUnlock(appMode === "scan" ? "scan" : "board")}
             >
               Unlock board
             </Button>
@@ -908,6 +949,24 @@ export default function App() {
                 ) : (
                   renderBoardLockedState()
                 )
+              ) : appMode === "scan" ? (
+                boardAuthActive ? (
+                  <Suspense
+                    fallback={
+                      <p className="text-sm text-muted-foreground text-center py-12">Loading scanner…</p>
+                    }
+                  >
+                    <ScanPage
+                      accentColor={uiLetterColors.N}
+                      verifying={
+                        scanVerifying || scanWinnerOpen || noWinnerOpen || cardNotAuthenticOpen
+                      }
+                      onClaim={handleVerifyClaim}
+                    />
+                  </Suspense>
+                ) : (
+                  renderBoardLockedState()
+                )
               ) : (
                 <CardPage
                   state={state}
@@ -920,7 +979,7 @@ export default function App() {
             <div className={cn(!settingsOpen && "hidden")} aria-hidden={!settingsOpen}>
               {appMode === "board" && !boardAuthActive ? (
                 renderBoardLockedState()
-              ) : (
+              ) : appMode === "scan" ? null : (
                 <Card>
                   <CardHeader className="md:hidden">
                     <CardTitle>Settings</CardTitle>
@@ -972,7 +1031,7 @@ export default function App() {
           </>
         )}
       </main>
-      {(appMode !== "board" || boardAuthActive) && (
+      {(appMode === "card" || (appMode === "board" && boardAuthActive)) && (
         <OddsDrawer
           open={oddsOpen}
           onOpenChange={setOddsOpen}
@@ -983,9 +1042,9 @@ export default function App() {
         />
       )}
       <Dialog
-        open={unlockOpen && appMode === "board"}
+        open={unlockOpen}
         onOpenChange={(open) => {
-          if (appMode === "card") {
+          if (appMode === "card" && modeInitialized) {
             setUnlockOpen(false);
             return;
           }
@@ -998,7 +1057,10 @@ export default function App() {
               <Lock className="h-4 w-4" />
               Board Access
             </DialogTitle>
-            <DialogDescription>Enter the board PIN to open Board mode.</DialogDescription>
+            <DialogDescription>
+              Enter the board PIN to open {pendingMode === "scan" || appMode === "scan" ? "Scan" : "Board"}{" "}
+              mode.
+            </DialogDescription>
           </DialogHeader>
           <Input
             type="password"
@@ -1044,7 +1106,7 @@ export default function App() {
           <DialogHeader>
             <DialogTitle>Exit Current Mode?</DialogTitle>
             <DialogDescription>
-              This will close the current view and return to the Board/Card selection screen.
+              This will close the current view and return to the Board / Card / Scan selection screen.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1082,6 +1144,29 @@ export default function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={scanWinnerOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setScanWinnerOpen(true);
+            return;
+          }
+          dismissScanWinner();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Winner Identified!</DialogTitle>
+            <DialogDescription>
+              This card is authentic and matches a winning pattern for the numbers called and the
+              current game type.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={dismissScanWinner}>OK</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {modeInitialized && appMode === "board" && boardAuthActive && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="max-w-7xl mx-auto px-4 h-10 flex items-center justify-between text-xs sm:text-sm">
@@ -1091,6 +1176,21 @@ export default function App() {
             <span />
             <span className="text-muted-foreground">
               Cards: <span className="font-semibold text-foreground">{state.cardCount ?? 0}</span>
+            </span>
+          </div>
+        </div>
+      )}
+      {modeInitialized && appMode === "scan" && boardAuthActive && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="max-w-7xl mx-auto px-4 h-10 flex items-center justify-between text-xs sm:text-sm">
+            <span className="text-muted-foreground">
+              Called: <span className="font-semibold text-foreground">{state.called?.length ?? 0}</span>
+            </span>
+            <span className="text-muted-foreground truncate px-2">
+              {isGameType(state.gameType) ? GAME_TYPE_LABELS[state.gameType] : "—"}
+            </span>
+            <span className="text-muted-foreground">
+              {connected ? "Live" : "Offline"}
             </span>
           </div>
         </div>

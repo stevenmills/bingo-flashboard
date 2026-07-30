@@ -1780,8 +1780,9 @@ export function Settings({
                 </div>
                 <div className="rounded-lg border border-border/70 bg-background/60 p-3 text-xs text-muted-foreground space-y-1.5">
                   <p>
-                    Each card’s center FREE cell is a QR. Scan with a phone camera to open the card
-                    (no board PIN).
+                    Each card’s center FREE cell is a QR. Players can scan with a phone camera to open
+                    the card (no board PIN). Hosts can open Scan mode to verify a card against the live
+                    game without leaving the app.
                   </p>
                   <p>Print on letter paper. Leave the QR unobstructed when marking or cutting cards.</p>
                 </div>

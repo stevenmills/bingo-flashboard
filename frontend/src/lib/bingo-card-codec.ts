@@ -317,7 +317,70 @@ export const QR_CARD_STORAGE_KEY = "bingo-qr-claim-card";
 export const QR_CARD_SIG_STORAGE_KEY = "bingo-qr-claim-sig";
 export const QR_BOARD_VERIFY_KEY = "bingo-qr-board-verify";
 
-export type QrClaimRoute = "card" | "board" | null;
+export type QrClaimRoute = "card" | "scan" | null;
+
+/** Parse a scanned QR string (full claim URL or raw card payload) into a claim. */
+export function parseCardClaimFromQrText(text: string): QrCardClaim | null {
+  const raw = text.trim().replace(/\s+/g, "");
+  if (!raw) return null;
+
+  let payload: string | null = null;
+  let sig: string | null = null;
+
+  const takeParams = (params: URLSearchParams) => {
+    payload = params.get("c") || params.get("n");
+    sig = params.get("s");
+  };
+
+  try {
+    const url = new URL(raw);
+    takeParams(url.searchParams);
+  } catch {
+    // Relative URLs / query-only strings from some scanners.
+    try {
+      const url = new URL(raw, "http://bingo.local");
+      takeParams(url.searchParams);
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!payload) {
+    const cMatch = raw.match(/[?&#]c=([^&?#]+)/i) || raw.match(/(?:^|[^a-z])c=([^&?#]+)/i);
+    const sMatch = raw.match(/[?&#]s=([^&?#]+)/i);
+    if (cMatch) {
+      try {
+        payload = decodeURIComponent(cMatch[1]);
+      } catch {
+        payload = cMatch[1];
+      }
+    }
+    if (sMatch) {
+      try {
+        sig = decodeURIComponent(sMatch[1]);
+      } catch {
+        sig = sMatch[1];
+      }
+    }
+  }
+
+  if (!payload) {
+    // Raw card payload (v1 / B2. / H2.)
+    if (/^(B2\.|H2\.)/i.test(raw) || /^[A-Za-z0-9_-]{20,}$/.test(raw)) {
+      payload = raw;
+    }
+  }
+
+  if (!payload) return null;
+  try {
+    payload = decodeURIComponent(payload);
+  } catch {
+    // already decoded
+  }
+  const decoded = decodeCardPayloadWithStyle(payload);
+  if (!decoded) return null;
+  return { numbers: decoded.numbers, sig: sig || null };
+}
 
 export function bootstrapQrCardClaim(appModeStorageKey = "bingo-app-mode"): QrClaimRoute {
   if (typeof window === "undefined") return null;
@@ -336,9 +399,10 @@ export function bootstrapQrCardClaim(appModeStorageKey = "bingo-app-mode"): QrCl
       if (sig) sessionStorage.setItem(QR_CARD_SIG_STORAGE_KEY, sig);
       else sessionStorage.removeItem(QR_CARD_SIG_STORAGE_KEY);
       if (isStoredBoardSessionActive()) {
-        sessionStorage.setItem(appModeStorageKey, "board");
+        // Authenticated host → Scan mode verify (not Board flashboard).
+        sessionStorage.setItem(appModeStorageKey, "scan");
         sessionStorage.setItem(QR_BOARD_VERIFY_KEY, "1");
-        route = "board";
+        route = "scan";
       } else {
         sessionStorage.setItem(appModeStorageKey, "card");
         sessionStorage.removeItem(QR_BOARD_VERIFY_KEY);

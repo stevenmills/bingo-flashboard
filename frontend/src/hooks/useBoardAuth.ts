@@ -47,7 +47,7 @@ export function useBoardAuth() {
           setPendingMode(null);
           return;
         }
-        setPendingMode("board");
+        setPendingMode(mode === "scan" ? "scan" : "board");
         setUnlockError(null);
         setUnlockPin("");
         setUnlockOpen(true);
@@ -63,7 +63,7 @@ export function useBoardAuth() {
       setPendingMode(null);
       return;
     }
-    setPendingMode(mode);
+    setPendingMode(mode === "scan" ? "scan" : "board");
     setUnlockError(null);
     setUnlockPin("");
     setUnlockOpen(true);

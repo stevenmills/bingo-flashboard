@@ -99,15 +99,16 @@ function drawCard(
         // FREE cell = large scan-target QR with a modest center label.
         const { qrX, qrY, qrSize } = drawCellQr(doc, qr.modules, cx, cy, cellW, cellH);
 
-        const labelW = qrSize * 0.42;
-        const labelH = Math.max(8, qrSize * 0.18);
+        // Keep the FREE badge small so ECC-H can recover (large overlays break JS scanners).
+        const labelW = qrSize * 0.32;
+        const labelH = Math.max(7, qrSize * 0.14);
         const labelX = qrX + (qrSize - labelW) / 2;
         const labelY = qrY + (qrSize - labelH) / 2;
         doc.setFill(255, 255, 255);
         doc.roundedRect(labelX, labelY, labelW, labelH, Math.min(2, labelH / 3), "f");
         const labelCenterX = labelX + labelW / 2 + Math.max(0.35, labelW * 0.02);
         doc.text("FREE", labelCenterX, labelY + labelH / 2 + labelH * 0.28, {
-          size: Math.min(9, Math.max(5.5, labelH * 0.72)),
+          size: Math.min(8, Math.max(5, labelH * 0.72)),
           bold: true,
           align: "center",
           color: [40, 40, 40],
