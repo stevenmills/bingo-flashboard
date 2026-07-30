@@ -11,16 +11,11 @@ import {
   LETTER_RANGES,
   type GameState,
   type AnyGameType,
-  type GameStyle,
   type CallingStyle,
-  GAME_STYLES,
-  GAME_STYLE_LABELS,
-  defaultGameTypeForStyle,
 } from "@/types";
 import { GameTypePicker } from "@/components/GameTypePicker";
 
 interface Props {
-  gameStyle: GameStyle;
   gameType: AnyGameType;
   callingStyle: CallingStyle;
   gameEstablished: boolean;
@@ -39,7 +34,6 @@ interface Props {
 }
 
 export function GameSetup({
-  gameStyle,
   gameType,
   callingStyle,
   gameEstablished,
@@ -52,16 +46,10 @@ export function GameSetup({
   onAnnounceCallNumber,
   fillHeight = false,
 }: Props) {
-  const [pendingGameStyle, setPendingGameStyle] = useState<GameStyle | null>(null);
   const [pendingGameType, setPendingGameType] = useState<AnyGameType | null>(null);
   const [pendingCallingStyle, setPendingCallingStyle] = useState<CallingStyle | null>(null);
-  const displayGameStyle = pendingGameStyle ?? gameStyle;
   const displayGameType = pendingGameType ?? gameType;
   const displayCallingStyle = pendingCallingStyle ?? callingStyle;
-
-  useEffect(() => {
-    if (pendingGameStyle !== null && pendingGameStyle === gameStyle) setPendingGameStyle(null);
-  }, [gameStyle, pendingGameStyle]);
 
   useEffect(() => {
     if (pendingGameType !== null && pendingGameType === gameType) setPendingGameType(null);
@@ -95,26 +83,10 @@ export function GameSetup({
     });
   }, [called]);
 
-  const handleGameStyle = (v: string) => {
-    const style = v as GameStyle;
-    if (style === gameStyle) return;
-    const nextType = defaultGameTypeForStyle(style);
-    setPendingGameStyle(style);
-    setPendingGameType(nextType);
-    void api.setGameSelection(style, nextType).catch((e: unknown) => {
-      setPendingGameStyle(null);
-      setPendingGameType(null);
-      if (isBoardAuthHttpError(e)) {
-        window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
-      }
-      onRefresh({ force: true });
-    });
-  };
-
   const handleGameType = (v: AnyGameType) => {
     if (v === gameType) return;
     setPendingGameType(v);
-    void api.setGameSelection(displayGameStyle, v).catch((e: unknown) => {
+    void api.setGameType(v).catch((e: unknown) => {
       setPendingGameType(null);
       if (isBoardAuthHttpError(e)) {
         window.dispatchEvent(new CustomEvent("bingo:board-auth-invalid"));
@@ -176,44 +148,9 @@ export function GameSetup({
   return (
     <div className={cn("space-y-5", fillHeight && "flex min-h-0 flex-1 flex-col space-y-0")}>
       {!gameEstablished && (
-        <div className={cn(fillHeight && "shrink-0 mb-3")}>
-          <Label className="mb-2 block text-muted-foreground">Game style</Label>
-          <RadioGroup value={displayGameStyle} onValueChange={handleGameStyle} className="grid grid-cols-2 gap-2">
-            {GAME_STYLES.map((style) => (
-              <Label
-                key={style}
-                htmlFor={`gs-${style}`}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-sm transition-colors",
-                  displayGameStyle === style ? "" : "border-border"
-                )}
-                style={
-                  displayGameStyle === style
-                    ? {
-                        borderColor: letterColors.N,
-                        backgroundColor: rgbaFromHex(letterColors.N, 0.12),
-                      }
-                    : undefined
-                }
-              >
-                <RadioGroupItem
-                  value={style}
-                  id={`gs-${style}`}
-                  className="focus-visible:ring-0 focus-visible:ring-offset-0"
-                  style={{ borderColor: letterColors.N, color: letterColors.N }}
-                />
-                {GAME_STYLE_LABELS[style]}
-              </Label>
-            ))}
-          </RadioGroup>
-        </div>
-      )}
-
-      {!gameEstablished && (
         <div className={cn(fillHeight && "flex min-h-0 flex-1 flex-col")}>
           <Label className="mb-2 block shrink-0 text-muted-foreground">Game type</Label>
           <GameTypePicker
-            gameStyle={displayGameStyle}
             value={displayGameType}
             onChange={handleGameType}
             letterColors={letterColors}

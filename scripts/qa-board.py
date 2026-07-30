@@ -27,7 +27,6 @@ REQUIRED_STATE_KEYS = (
     "current",
     "called",
     "remaining",
-    "gameStyle",
     "gameType",
     "callingStyle",
     "gameEstablished",
@@ -282,29 +281,27 @@ def main() -> int:
     def ensure_auth() -> None:
         client.ensure_unlocked(args.pin)
 
-    def test_housey_game_selection() -> None:
+    def test_battleship_game_selection() -> None:
         ensure_auth()
         before = client.get_state()
         if before.get("gameEstablished") and not before.get("winnerDeclared"):
             raise AssertionError("skip-needed: game in progress")
         status, _ = client.post_json(
             "/game-selection",
-            {"gameStyle": "housey", "gameType": "battleship"},
+            {"gameType": "battleship"},
         )
-        assert_status_ok("select housey battleship", status)
+        assert_status_ok("select battleship", status)
         state = client.get_state()
-        assert_eq("gameStyle", state.get("gameStyle"), "housey")
         assert_eq("gameType", state.get("gameType"), "battleship")
         status, _ = client.post_json(
             "/game-selection",
-            {"gameStyle": "bingo", "gameType": "cover_all"},
+            {"gameType": "cover_all"},
         )
-        assert_status_ok("restore bingo cover_all", status)
+        assert_status_ok("restore cover_all", status)
         state = client.get_state()
-        assert_eq("gameStyle back", state.get("gameStyle"), "bingo")
         assert_eq("gameType back", state.get("gameType"), "cover_all")
 
-    run_test(results, "game.housey_selection_roundtrip", test_housey_game_selection)
+    run_test(results, "game.battleship_selection_roundtrip", test_battleship_game_selection)
 
     # --- screensaver (regression-prone) ---
     initial_ss = bool(snapshot.get("screensaverEnabled"))

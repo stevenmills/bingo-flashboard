@@ -2,7 +2,6 @@ import { cn } from "@/lib/utils";
 import {
   labelForGameType,
   type AnyGameType,
-  type GameStyle,
 } from "@/types";
 import { useGameTypeCells } from "@/hooks/useGameTypeCells";
 import { LETTERS } from "@/types";
@@ -14,23 +13,20 @@ interface Props {
   gameType: AnyGameType;
   patternIndex: number;
   letterColors: LetterColors;
-  gameStyle?: GameStyle;
 }
 
 export function GameTypeIndicator({
   gameType,
   patternIndex,
   letterColors,
-  gameStyle = "bingo",
 }: Props) {
-  const activeCells = useGameTypeCells(gameType, patternIndex, gameStyle);
+  const activeCells = useGameTypeCells(gameType, patternIndex);
   const activeCellSet = new Set(activeCells);
-  const showFreeDot = gameStyle === "bingo";
 
   return (
     <div className="flex flex-col items-center gap-2">
       <span className="text-sm font-semibold text-muted-foreground">
-        {labelForGameType(gameStyle, gameType)}
+        {labelForGameType(gameType)}
       </span>
       <div className="grid grid-cols-5 gap-1.5 w-[10rem] aspect-square mx-auto">
         {Array.from({ length: 25 }, (_, i) => {
@@ -48,7 +44,7 @@ export function GameTypeIndicator({
               )}
               style={isActive ? { backgroundColor: rgbaFromHex(letterColors[LETTERS[columnIdx]], 0.9) } : undefined}
             >
-              {isActive && isFreeCell && showFreeDot && (
+              {isActive && isFreeCell && (
                 <span
                   role="img"
                   aria-label="Free space"

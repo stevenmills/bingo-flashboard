@@ -45,6 +45,7 @@ fw-upload:
 	pio run -e $(PIO_ENV) -t upload $(UPLOAD_PORT_ARG)
 
 fs-upload:
+	node scripts/prune-spiffs-data.mjs
 	pio run -e $(PIO_ENV) -t uploadfs $(UPLOAD_PORT_ARG)
 
 deploy: frontend-build fw-upload fs-upload

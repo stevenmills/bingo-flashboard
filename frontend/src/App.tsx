@@ -964,7 +964,6 @@ export default function App() {
                       callerVoice={callerVoice}
                       onCallerVoiceChange={setCallerVoice}
                       onRefresh={refresh}
-                      gameStyle={state.gameStyle ?? "bingo"}
                     />
                   </CardContent>
                 </Card>

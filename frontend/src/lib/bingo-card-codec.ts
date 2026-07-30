@@ -1,28 +1,24 @@
 import { LETTERS, LETTER_RANGES, type Letter } from "@/types";
-import { generateBingoCard, generateHouseyCard, type CardGrid } from "@/lib/card";
+import {
+  generateBingoCard,
+  readCardFillRange,
+  type CardGrid,
+} from "@/lib/card";
 import { isStoredBoardSessionActive } from "@/lib/board-auth";
 import { hmacSha256, utf8Encode } from "@/lib/hmac-sha256";
-import {
-  HOUSEY_MAX_POPULATED,
-  HOUSEY_MIN_POPULATED,
-  type GameStyle,
-} from "@/lib/game-style";
 
-/** Flat 25 cells; null = FREE (bingo center) or blank (housey). */
+/** Flat 25 cells; null = FREE (center) or blank (unfilled). */
 export type FlatCardNumbers = Array<number | null>;
 
 export type SignedPrintableCard = {
   numbers: FlatCardNumbers;
-  gameStyle: GameStyle;
-  /** HMAC-SHA256(deviceId, domain||cells…) truncated hex (32 chars). */
+  /** HMAC-SHA256(deviceId, …) truncated hex (32 chars). */
   sig: string;
-  /** Uniqueness key for this batch. */
   contentHash: string;
 };
 
 export type QrCardClaim = {
   numbers: FlatCardNumbers;
-  gameStyle: GameStyle;
   sig: string | null;
 };
 
@@ -30,8 +26,25 @@ export function gridToFlatNumbers(grid: CardGrid): FlatCardNumbers {
   return grid.flat().map((cell) => (cell.isFree || cell.isBlank || cell.value == null ? null : cell.value));
 }
 
+function populatedCount(numbers: FlatCardNumbers): number {
+  let n = 0;
+  for (let i = 0; i < 25; i++) {
+    if (i === 12) {
+      n++; // FREE always counts
+      continue;
+    }
+    if (typeof numbers[i] === "number") n++;
+  }
+  return n;
+}
+
+/** Validate column rules; FREE at center; blanks allowed; 1–25 populated (incl FREE). */
 export function flatNumbersToBingoGrid(numbers: FlatCardNumbers): CardGrid | null {
   if (!Array.isArray(numbers) || numbers.length !== 25) return null;
+  if (numbers[12] != null) return null;
+  if (populatedCount(numbers) < 1 || populatedCount(numbers) > 25) return null;
+
+  const seen = new Set<number>();
   for (let col = 0; col < 5; col++) {
     const letter = LETTERS[col] as Letter;
     const [min, max] = LETTER_RANGES[letter];
@@ -40,73 +53,44 @@ export function flatNumbersToBingoGrid(numbers: FlatCardNumbers): CardGrid | nul
       const idx = row * 5 + col;
       if (idx === 12) continue;
       const n = numbers[idx];
+      if (n == null) continue;
       if (typeof n !== "number" || n < min || n > max) return null;
-      if (colVals.includes(n)) return null;
+      if (colVals.includes(n) || seen.has(n)) return null;
       colVals.push(n);
+      seen.add(n);
     }
   }
-  if (numbers[12] != null) return null;
 
   return Array.from({ length: 5 }, (_, rowIdx) =>
     Array.from({ length: 5 }, (_, colIdx) => {
       const idx = rowIdx * 5 + colIdx;
       const isFree = idx === 12;
+      const value = numbers[idx];
+      const isBlank = !isFree && value == null;
       return {
         letter: LETTERS[colIdx],
-        value: isFree ? null : numbers[idx],
+        value: isFree || isBlank ? null : value,
         isFree,
-        isBlank: false,
+        isBlank,
         marked: isFree,
       };
     })
   );
 }
 
-export function flatNumbersToHouseyGrid(numbers: FlatCardNumbers): CardGrid | null {
-  if (!Array.isArray(numbers) || numbers.length !== 25) return null;
-  let populated = 0;
-  const seen = new Set<number>();
-  for (let col = 0; col < 5; col++) {
-    const letter = LETTERS[col] as Letter;
-    const [min, max] = LETTER_RANGES[letter];
-    const colVals: number[] = [];
-    for (let row = 0; row < 5; row++) {
-      const idx = row * 5 + col;
-      const n = numbers[idx];
-      if (n == null) continue;
-      if (typeof n !== "number" || n < min || n > max) return null;
-      if (colVals.includes(n) || seen.has(n)) return null;
-      colVals.push(n);
-      seen.add(n);
-      populated++;
-    }
+export function flatNumbersToGrid(numbers: FlatCardNumbers): CardGrid | null {
+  return flatNumbersToBingoGrid(numbers);
+}
+
+function cardIsFullyPopulated(numbers: FlatCardNumbers): boolean {
+  for (let i = 0; i < 25; i++) {
+    if (i === 12) continue;
+    if (typeof numbers[i] !== "number") return false;
   }
-  if (populated < HOUSEY_MIN_POPULATED || populated > HOUSEY_MAX_POPULATED) return null;
-
-  return Array.from({ length: 5 }, (_, rowIdx) =>
-    Array.from({ length: 5 }, (_, colIdx) => {
-      const idx = rowIdx * 5 + colIdx;
-      const value = numbers[idx];
-      const isBlank = value == null;
-      return {
-        letter: LETTERS[colIdx],
-        value: isBlank ? null : value,
-        isFree: false,
-        isBlank,
-        marked: false,
-      };
-    })
-  );
+  return numbers[12] == null;
 }
 
-export function flatNumbersToGrid(
-  numbers: FlatCardNumbers,
-  gameStyle: GameStyle = "bingo"
-): CardGrid | null {
-  return gameStyle === "housey" ? flatNumbersToHouseyGrid(numbers) : flatNumbersToBingoGrid(numbers);
-}
-
-/** Legacy v1: 24 bytes, center FREE implied. */
+/** Legacy v1: 24 bytes, center FREE implied — full cards only. */
 export function encodeCardPayloadV1(numbers: FlatCardNumbers): string {
   const bytes = new Uint8Array(24);
   let i = 0;
@@ -121,56 +105,69 @@ export function encodeCardPayloadV1(numbers: FlatCardNumbers): string {
 }
 
 /**
- * v2: version byte + style byte ('b'|'h') + 25 cell bytes (0 = blank).
- * Prefixed with "H2." so decode can distinguish from legacy base64.
+ * v2 sparse-capable: "B2." + version + 25 cell bytes (0 = blank/FREE at center).
+ * Used when the card has unfilled cells.
  */
-export function encodeCardPayloadV2(numbers: FlatCardNumbers, gameStyle: GameStyle): string {
-  const bytes = new Uint8Array(27);
+export function encodeCardPayloadV2(numbers: FlatCardNumbers): string {
+  const bytes = new Uint8Array(26);
   bytes[0] = 2;
-  bytes[1] = gameStyle === "housey" ? "h".charCodeAt(0) : "b".charCodeAt(0);
   for (let i = 0; i < 25; i++) {
     const n = numbers[i];
-    bytes[2 + i] = typeof n === "number" && n >= 1 && n <= 75 ? n : 0;
+    bytes[1 + i] = typeof n === "number" && n >= 1 && n <= 75 ? n : 0;
   }
   let bin = "";
   for (let b = 0; b < bytes.length; b++) bin += String.fromCharCode(bytes[b]);
   const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-  return `H2.${b64}`;
+  return `B2.${b64}`;
 }
 
-export function encodeCardPayload(numbers: FlatCardNumbers, gameStyle: GameStyle = "bingo"): string {
-  if (gameStyle === "housey") return encodeCardPayloadV2(numbers, "housey");
-  return encodeCardPayloadV1(numbers);
+export function encodeCardPayload(numbers: FlatCardNumbers): string {
+  if (cardIsFullyPopulated(numbers)) return encodeCardPayloadV1(numbers);
+  return encodeCardPayloadV2(numbers);
 }
 
 export type DecodedCardPayload = {
   numbers: FlatCardNumbers;
-  gameStyle: GameStyle;
 };
 
 export function decodeCardPayload(payload: string): FlatCardNumbers | null {
-  const decoded = decodeCardPayloadWithStyle(payload);
-  return decoded?.numbers ?? null;
+  return decodeCardPayloadWithStyle(payload)?.numbers ?? null;
 }
 
+/** Decode legacy H2./v1/B2. payloads into a bingo grid with FREE center. */
 export function decodeCardPayloadWithStyle(payload: string): DecodedCardPayload | null {
   try {
-    if (payload.startsWith("H2.")) {
+    if (payload.startsWith("B2.")) {
       const padded = payload.slice(3).replace(/-/g, "+").replace(/_/g, "/");
       const padLen = (4 - (padded.length % 4)) % 4;
       const b64 = padded + "=".repeat(padLen);
       const bin = atob(b64);
-      if (bin.length !== 27) return null;
-      if (bin.charCodeAt(0) !== 2) return null;
-      const styleChar = bin.charCodeAt(1);
-      const gameStyle: GameStyle = styleChar === "h".charCodeAt(0) ? "housey" : "bingo";
+      if (bin.length !== 26 || bin.charCodeAt(0) !== 2) return null;
+      const numbers: FlatCardNumbers = new Array(25).fill(null);
+      for (let i = 0; i < 25; i++) {
+        const n = bin.charCodeAt(1 + i);
+        numbers[i] = n >= 1 && n <= 75 ? n : null;
+      }
+      numbers[12] = null; // FREE
+      if (!flatNumbersToBingoGrid(numbers)) return null;
+      return { numbers };
+    }
+
+    if (payload.startsWith("H2.")) {
+      // Legacy housey-style payloads: force FREE at center.
+      const padded = payload.slice(3).replace(/-/g, "+").replace(/_/g, "/");
+      const padLen = (4 - (padded.length % 4)) % 4;
+      const b64 = padded + "=".repeat(padLen);
+      const bin = atob(b64);
+      if (bin.length !== 27 || bin.charCodeAt(0) !== 2) return null;
       const numbers: FlatCardNumbers = new Array(25).fill(null);
       for (let i = 0; i < 25; i++) {
         const n = bin.charCodeAt(2 + i);
         numbers[i] = n >= 1 && n <= 75 ? n : null;
       }
-      if (!flatNumbersToGrid(numbers, gameStyle)) return null;
-      return { numbers, gameStyle };
+      numbers[12] = null;
+      if (!flatNumbersToBingoGrid(numbers)) return null;
+      return { numbers };
     }
 
     const padded = payload.replace(/-/g, "+").replace(/_/g, "/");
@@ -190,23 +187,22 @@ export function decodeCardPayloadWithStyle(payload: string): DecodedCardPayload 
       numbers[idx] = n;
     }
     if (!flatNumbersToBingoGrid(numbers)) return null;
-    return { numbers, gameStyle: "bingo" };
+    return { numbers };
   } catch {
     return null;
   }
 }
 
-export function cardContentFingerprint(numbers: FlatCardNumbers, gameStyle: GameStyle = "bingo"): string {
-  const parts: string[] = [`v2:${gameStyle}`];
+export function cardContentFingerprint(numbers: FlatCardNumbers): string {
+  const parts: string[] = ["v3"];
   for (let idx = 0; idx < 25; idx++) {
     parts.push(`${idx}:${numbers[idx] ?? 0}`);
   }
   return parts.join("|");
 }
 
-function buildAuthMessageBytes(numbers: FlatCardNumbers, gameStyle: GameStyle): Uint8Array {
-  if (gameStyle === "bingo") {
-    // Legacy v1: 48 bytes of index+value for non-FREE cells only.
+function buildAuthMessageBytes(numbers: FlatCardNumbers): Uint8Array {
+  if (cardIsFullyPopulated(numbers)) {
     const msg = new Uint8Array(48);
     let i = 0;
     for (let idx = 0; idx < 25; idx++) {
@@ -216,7 +212,7 @@ function buildAuthMessageBytes(numbers: FlatCardNumbers, gameStyle: GameStyle): 
     }
     return msg;
   }
-  const domain = utf8Encode("housey-card-v2");
+  const domain = utf8Encode("bingo-card-v2");
   const msg = new Uint8Array(domain.length + 1 + 50);
   msg.set(domain, 0);
   let i = domain.length;
@@ -235,12 +231,8 @@ function bytesToHex(bytes: ArrayBuffer | Uint8Array): string {
   return out;
 }
 
-export async function signCardWithDeviceId(
-  numbers: FlatCardNumbers,
-  deviceId: string,
-  gameStyle: GameStyle = "bingo"
-): Promise<string> {
-  const msg = buildAuthMessageBytes(numbers, gameStyle);
+export async function signCardWithDeviceId(numbers: FlatCardNumbers, deviceId: string): Promise<string> {
+  const msg = buildAuthMessageBytes(numbers);
   const subtle = globalThis.crypto?.subtle;
   if (subtle) {
     try {
@@ -263,13 +255,12 @@ export async function signCardWithDeviceId(
 export function buildCardClaimUrl(
   numbers: FlatCardNumbers,
   origin?: string,
-  sig?: string | null,
-  gameStyle: GameStyle = "bingo"
+  sig?: string | null
 ): string {
   const base =
     origin ||
     (typeof window !== "undefined" ? window.location.origin : "http://bingo.local");
-  const c = encodeCardPayload(numbers, gameStyle);
+  const c = encodeCardPayload(numbers);
   let url = `${base.replace(/\/$/, "")}/?mode=card&claim=1&c=${c}`;
   if (sig) url += `&s=${encodeURIComponent(sig)}`;
   return url;
@@ -278,34 +269,43 @@ export function buildCardClaimUrl(
 export async function generateSignedPrintableCards(
   count: number,
   deviceId: string,
-  gameStyle: GameStyle = "bingo"
+  fill?: { min?: number; max?: number }
 ): Promise<SignedPrintableCard[]> {
+  const range = fill ?? readCardFillRange();
   const n = Math.max(1, Math.min(200, Math.round(count)));
   const cards: SignedPrintableCard[] = [];
   const seen = new Set<string>();
   let guard = 0;
   while (cards.length < n && guard < n * 40) {
     guard++;
-    const flat = gridToFlatNumbers(gameStyle === "housey" ? generateHouseyCard() : generateBingoCard());
-    const contentHash = cardContentFingerprint(flat, gameStyle);
+    const flat = gridToFlatNumbers(
+      generateBingoCard({ minFilled: range.min, maxFilled: range.max })
+    );
+    const contentHash = cardContentFingerprint(flat);
     if (seen.has(contentHash)) continue;
     seen.add(contentHash);
-    const sig = await signCardWithDeviceId(flat, deviceId, gameStyle);
-    cards.push({ numbers: flat, gameStyle, sig, contentHash });
+    const sig = await signCardWithDeviceId(flat, deviceId);
+    cards.push({ numbers: flat, sig, contentHash });
   }
   return cards;
 }
 
 /** @deprecated Prefer generateSignedPrintableCards when a deviceId is available. */
-export function generatePrintableCards(count: number, gameStyle: GameStyle = "bingo"): FlatCardNumbers[] {
+export function generatePrintableCards(
+  count: number,
+  fill?: { min?: number; max?: number }
+): FlatCardNumbers[] {
+  const range = fill ?? readCardFillRange();
   const n = Math.max(1, Math.min(200, Math.round(count)));
   const cards: FlatCardNumbers[] = [];
   const seen = new Set<string>();
   let guard = 0;
   while (cards.length < n && guard < n * 40) {
     guard++;
-    const flat = gridToFlatNumbers(gameStyle === "housey" ? generateHouseyCard() : generateBingoCard());
-    const key = cardContentFingerprint(flat, gameStyle);
+    const flat = gridToFlatNumbers(
+      generateBingoCard({ minFilled: range.min, maxFilled: range.max })
+    );
+    const key = cardContentFingerprint(flat);
     if (seen.has(key)) continue;
     seen.add(key);
     cards.push(flat);
@@ -374,5 +374,5 @@ export function takeQrCardClaim(): QrCardClaim | null {
   if (!payload) return null;
   const decoded = decodeCardPayloadWithStyle(payload);
   if (!decoded) return null;
-  return { numbers: decoded.numbers, gameStyle: decoded.gameStyle, sig: sig || null };
+  return { numbers: decoded.numbers, sig: sig || null };
 }

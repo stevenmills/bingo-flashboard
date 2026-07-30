@@ -6,7 +6,6 @@ import type {
   GameState,
   GameType,
   AnyGameType,
-  GameStyle,
   CallingStyle,
   Letter,
   LetterFullMode,
@@ -520,9 +519,9 @@ const realApi = {
   setGameType: (gameType: GameType) =>
     mutation("set_game_type", { gameType }, () => postBoardJson("/game-type", { gameType })),
 
-  setGameSelection: (gameStyle: GameStyle, gameType: AnyGameType) =>
-    mutation("set_game_selection", { gameStyle, gameType }, () =>
-      postBoardJson("/game-selection", { gameStyle, gameType })
+  setGameSelection: (gameType: AnyGameType) =>
+    mutation("set_game_selection", { gameType }, () =>
+      postBoardJson("/game-selection", { gameType })
     ),
 
   declareWinner: () => mutation("declare_winner", undefined, () => postBoardJson("/declare-winner")),
@@ -643,15 +642,15 @@ const realApi = {
     }
   },
 
-  joinCard: (numbers: Array<number | null>, cardId?: string, gameStyle: GameStyle = "bingo") =>
-    mutationNoAuth("join_card", { numbers, cardId, gameStyle }, () =>
-      postJson<CardJoinResponse>("/card/join", { numbers, cardId, gameStyle }, false)
+  joinCard: (numbers: Array<number | null>, cardId?: string) =>
+    mutationNoAuth("join_card", { numbers, cardId }, () =>
+      postJson<CardJoinResponse>("/card/join", { numbers, cardId }, false)
     ),
   /** Verify a printed card from QR-encoded numbers only (no print registry). */
   claimPrintedCard: (
     numbers: Array<number | null>,
     sig?: string | null,
-    options?: { autoSync?: boolean; gameStyle?: GameStyle }
+    options?: { autoSync?: boolean }
   ) =>
     postJson<CardClaimResponse>(
       "/card/claim",
@@ -659,7 +658,6 @@ const realApi = {
         numbers,
         sig: sig || undefined,
         autoSync: options?.autoSync !== false,
-        gameStyle: options?.gameStyle ?? "bingo",
       },
       false
     ),
@@ -735,10 +733,10 @@ export const api = {
   setGameType: async (gt: GameType) =>
     shouldUseMock() ? mockApi.setGameType(gt) : realApi.setGameType(gt),
 
-  setGameSelection: async (gameStyle: GameStyle, gameType: AnyGameType) =>
+  setGameSelection: async (gameType: AnyGameType) =>
     shouldUseMock()
-      ? mockApi.setGameSelection(gameStyle, gameType)
-      : realApi.setGameSelection(gameStyle, gameType),
+      ? mockApi.setGameSelection(gameType)
+      : realApi.setGameSelection(gameType),
 
   declareWinner: async () =>
     shouldUseMock() ? mockApi.declareWinner() : realApi.declareWinner(),
@@ -874,14 +872,14 @@ export const api = {
   },
   getBoardToken: () => boardToken,
 
-  joinCard: async (numbers: Array<number | null>, cardId?: string, gameStyle: GameStyle = "bingo") =>
+  joinCard: async (numbers: Array<number | null>, cardId?: string) =>
     shouldUseMock()
-      ? mockApi.joinCard(numbers, cardId, gameStyle)
-      : realApi.joinCard(numbers, cardId, gameStyle),
+      ? mockApi.joinCard(numbers, cardId)
+      : realApi.joinCard(numbers, cardId),
   claimPrintedCard: async (
     numbers: Array<number | null>,
     sig?: string | null,
-    options?: { autoSync?: boolean; gameStyle?: GameStyle }
+    options?: { autoSync?: boolean }
   ) =>
     shouldUseMock()
       ? mockApi.claimPrintedCard(numbers, sig, options)

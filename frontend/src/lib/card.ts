@@ -1,19 +1,11 @@
 import { GAME_TYPE_BY_ID, LETTERS, LETTER_RANGES, type GameType, type Letter } from "@/types";
-import {
-  type GameStyle,
-  type HouseyGameType,
-  HOUSEY_CORNER_INDICES,
-  HOUSEY_MAX_POPULATED,
-  HOUSEY_MIN_POPULATED,
-  isHouseyGameType,
-} from "@/lib/game-style";
 
 export interface CardCell {
   letter: Letter;
   value: number | null;
-  /** Legacy BINGO FREE center (always marked). */
+  /** FREE center (always marked). */
   isFree: boolean;
-  /** HOUSEY empty cell (never a win requirement). */
+  /** Unfilled preselected slot — shows dauber circle; not a win requirement. */
   isBlank?: boolean;
   marked: boolean;
 }
@@ -22,14 +14,19 @@ export type CardGrid = CardCell[][];
 
 export interface StoredCardState {
   version?: number;
-  /** bingo | housey — missing → bingo (legacy). */
-  gameStyle?: GameStyle;
   numbers: Array<number | null>;
   marks: boolean[];
   autoSync?: boolean;
 }
 
-export const CARD_STATE_STORAGE_VERSION = 3;
+export const CARD_STATE_STORAGE_VERSION = 4;
+
+export const CARD_FILL_MIN = 1;
+export const CARD_FILL_MAX = 25;
+export const CARD_FILL_DEFAULT = 25;
+
+export const CARD_FILL_MIN_STORAGE_KEY = "bingo-card-fill-min";
+export const CARD_FILL_MAX_STORAGE_KEY = "bingo-card-fill-max";
 
 /**
  * Uniform int in [0, maxExclusive). Uses crypto.getRandomValues with rejection
@@ -41,7 +38,6 @@ function randomInt(maxExclusive: number): number {
   const max = 0x1_0000_0000;
   const limit = max - (max % maxExclusive);
   const buf = new Uint32Array(1);
-  // Prefer Web Crypto when available; fall back for non-browser test hosts.
   const cryptoObj = typeof globalThis.crypto?.getRandomValues === "function" ? globalThis.crypto : null;
   for (;;) {
     if (cryptoObj) {
@@ -71,31 +67,101 @@ function pickUniqueRandom(min: number, max: number, count: number): number[] {
   return pool.slice(0, count);
 }
 
-export function generateBingoCard(): CardGrid {
-  const grid: CardGrid = Array.from({ length: 5 }, (_, rowIdx) =>
+export function clampCardFill(n: number): number {
+  if (!Number.isFinite(n)) return CARD_FILL_DEFAULT;
+  return Math.min(CARD_FILL_MAX, Math.max(CARD_FILL_MIN, Math.round(n)));
+}
+
+/** Keep min ≤ max; when raising min above max bump max; when lowering max below min lower min. */
+export function normalizeCardFillRange(minIn: number, maxIn: number): { min: number; max: number } {
+  let min = clampCardFill(minIn);
+  let max = clampCardFill(maxIn);
+  if (min > max) max = min;
+  return { min, max };
+}
+
+export function readCardFillRange(): { min: number; max: number } {
+  if (typeof window === "undefined") return { min: CARD_FILL_DEFAULT, max: CARD_FILL_DEFAULT };
+  const minStr = localStorage.getItem(CARD_FILL_MIN_STORAGE_KEY);
+  const maxStr = localStorage.getItem(CARD_FILL_MAX_STORAGE_KEY);
+  const minRaw = minStr == null || minStr === "" ? NaN : Number(minStr);
+  const maxRaw = maxStr == null || maxStr === "" ? NaN : Number(maxStr);
+  return normalizeCardFillRange(
+    Number.isFinite(minRaw) ? minRaw : CARD_FILL_DEFAULT,
+    Number.isFinite(maxRaw) ? maxRaw : CARD_FILL_DEFAULT
+  );
+}
+
+export function writeCardFillRange(minIn: number, maxIn: number): { min: number; max: number } {
+  const range = normalizeCardFillRange(minIn, maxIn);
+  if (typeof window !== "undefined") {
+    localStorage.setItem(CARD_FILL_MIN_STORAGE_KEY, String(range.min));
+    localStorage.setItem(CARD_FILL_MAX_STORAGE_KEY, String(range.max));
+  }
+  return range;
+}
+
+function emptyGrid(): CardGrid {
+  return Array.from({ length: 5 }, (_, rowIdx) =>
     Array.from({ length: 5 }, (_, colIdx) => ({
       letter: LETTERS[colIdx]!,
       value: null as number | null,
       isFree: false,
-      isBlank: false,
+      isBlank: true,
       marked: false,
     }))
   );
+}
 
-  for (let colIdx = 0; colIdx < 5; colIdx++) {
-    const letter = LETTERS[colIdx]!;
-    const [min, max] = LETTER_RANGES[letter];
-    const isN = letter === "N";
-    // N column: 4 numbers + FREE center. Others: 5 numbers.
-    const nums = pickUniqueRandom(min, max, isN ? 4 : 5);
-    const rows = isN ? [0, 1, 3, 4] : [0, 1, 2, 3, 4];
-    shuffleInPlace(rows);
-    for (let i = 0; i < nums.length; i++) {
-      const cell = grid[rows[i]!]![colIdx]!;
-      cell.value = nums[i]!;
+/**
+ * Standard 5×5 bingo card. `minFilled`/`maxFilled` = total preselected spaces including FREE (1–25).
+ * Defaults 25/25 match a classic full card.
+ */
+export function generateBingoCard(opts?: { minFilled?: number; maxFilled?: number }): CardGrid {
+  const { min, max } = normalizeCardFillRange(
+    opts?.minFilled ?? CARD_FILL_DEFAULT,
+    opts?.maxFilled ?? opts?.minFilled ?? CARD_FILL_DEFAULT
+  );
+  const filled = min + randomInt(max - min + 1);
+
+  // Full classic card path (identical to historical generateBingoCard).
+  if (filled === 25) {
+    const grid: CardGrid = Array.from({ length: 5 }, (_, rowIdx) =>
+      Array.from({ length: 5 }, (_, colIdx) => ({
+        letter: LETTERS[colIdx]!,
+        value: null as number | null,
+        isFree: false,
+        isBlank: false,
+        marked: false,
+      }))
+    );
+
+    for (let colIdx = 0; colIdx < 5; colIdx++) {
+      const letter = LETTERS[colIdx]!;
+      const [lo, hi] = LETTER_RANGES[letter];
+      const isN = letter === "N";
+      const nums = pickUniqueRandom(lo, hi, isN ? 4 : 5);
+      const rows = isN ? [0, 1, 3, 4] : [0, 1, 2, 3, 4];
+      shuffleInPlace(rows);
+      for (let i = 0; i < nums.length; i++) {
+        const cell = grid[rows[i]!]![colIdx]!;
+        cell.value = nums[i]!;
+        cell.isBlank = false;
+      }
     }
+
+    grid[2]![2] = {
+      letter: "N",
+      value: null,
+      isFree: true,
+      isBlank: false,
+      marked: true,
+    };
+    return grid;
   }
 
+  // Sparse: FREE always counts as 1 filled space; pick filled-1 other cells.
+  const grid = emptyGrid();
   grid[2]![2] = {
     letter: "N",
     value: null,
@@ -104,51 +170,39 @@ export function generateBingoCard(): CardGrid {
     marked: true,
   };
 
-  return grid;
-}
+  const numberSlots = filled - 1; // FREE already placed
+  if (numberSlots <= 0) return grid;
 
-/** Sparse 5×5 HOUSEY card: 10–12 column-valid numbers, no FREE. */
-export function generateHouseyCard(): CardGrid {
-  const total =
-    HOUSEY_MIN_POPULATED + randomInt(HOUSEY_MAX_POPULATED - HOUSEY_MIN_POPULATED + 1);
+  const candidates: number[] = [];
+  for (let i = 0; i < 25; i++) {
+    if (i === 12) continue;
+    candidates.push(i);
+  }
+  shuffleInPlace(candidates);
+  const chosen = candidates.slice(0, numberSlots);
 
-  // Uniform random distribution of slot counts across columns (0–5 each).
-  const colCounts = [0, 0, 0, 0, 0];
-  for (let n = 0; n < total; n++) {
-    const open: number[] = [];
-    for (let c = 0; c < 5; c++) if (colCounts[c]! < 5) open.push(c);
-    colCounts[open[randomInt(open.length)]!]!++;
+  // Group by column for uniqueness within letter range.
+  const byCol: number[][] = [[], [], [], [], []];
+  for (const idx of chosen) {
+    byCol[idx % 5]!.push(Math.floor(idx / 5));
   }
 
-  const values = new Array<number | null>(25).fill(null);
-
   for (let col = 0; col < 5; col++) {
-    const count = colCounts[col]!;
-    if (count === 0) continue;
-
+    const rows = byCol[col]!;
+    if (rows.length === 0) continue;
     const letter = LETTERS[col]!;
-    const [min, max] = LETTER_RANGES[letter];
-    const nums = pickUniqueRandom(min, max, count);
-    const rows = [0, 1, 2, 3, 4];
-    shuffleInPlace(rows);
-    for (let i = 0; i < count; i++) {
-      values[rows[i]! * 5 + col] = nums[i]!;
+    const [lo, hi] = LETTER_RANGES[letter];
+    const nums = pickUniqueRandom(lo, hi, rows.length);
+    for (let i = 0; i < rows.length; i++) {
+      const cell = grid[rows[i]!]![col]!;
+      cell.value = nums[i]!;
+      cell.isBlank = false;
+      cell.isFree = false;
+      cell.marked = false;
     }
   }
 
-  return Array.from({ length: 5 }, (_, rowIdx) =>
-    Array.from({ length: 5 }, (_, colIdx) => {
-      const idx = rowIdx * 5 + colIdx;
-      const value = values[idx] ?? null;
-      return {
-        letter: LETTERS[colIdx]!,
-        value,
-        isFree: false,
-        isBlank: value == null,
-        marked: false,
-      };
-    })
-  );
+  return grid;
 }
 
 export function isCellClickableInManual(cell: CardCell, calledSet: Set<number>): boolean {
@@ -156,15 +210,10 @@ export function isCellClickableInManual(cell: CardCell, calledSet: Set<number>):
   return calledSet.has(cell.value);
 }
 
-export function gridToStoredCardState(
-  grid: CardGrid,
-  autoSync = true,
-  gameStyle: GameStyle = "bingo"
-): StoredCardState {
+export function gridToStoredCardState(grid: CardGrid, autoSync = true): StoredCardState {
   const flat = grid.flat();
   return {
     version: CARD_STATE_STORAGE_VERSION,
-    gameStyle,
     numbers: flat.map((cell) => (cell.isFree || cell.isBlank ? null : cell.value)),
     marks: flat.map((cell) => Boolean(cell.marked)),
     autoSync,
@@ -175,39 +224,21 @@ export function storedCardStateToGrid(stored: StoredCardState): CardGrid | null 
   if (!stored || !Array.isArray(stored.numbers) || !Array.isArray(stored.marks)) return null;
   if (stored.numbers.length !== 25 || stored.marks.length !== 25) return null;
 
-  const style: GameStyle = stored.gameStyle === "housey" ? "housey" : "bingo";
-
-  if (style === "housey") {
-    return Array.from({ length: 5 }, (_, rowIdx) =>
-      Array.from({ length: 5 }, (_, colIdx) => {
-        const idx = rowIdx * 5 + colIdx;
-        const value = stored.numbers[idx];
-        const isBlank = value == null;
-        return {
-          letter: LETTERS[colIdx],
-          value: isBlank ? null : value,
-          isFree: false,
-          isBlank,
-          marked: Boolean(stored.marks[idx]),
-        };
-      })
-    );
-  }
-
-  const grid: CardGrid = Array.from({ length: 5 }, (_, rowIdx) =>
+  return Array.from({ length: 5 }, (_, rowIdx) =>
     Array.from({ length: 5 }, (_, colIdx) => {
       const idx = rowIdx * 5 + colIdx;
       const isFree = idx === 12;
+      const value = stored.numbers[idx];
+      const isBlank = !isFree && value == null;
       return {
         letter: LETTERS[colIdx],
-        value: isFree ? null : stored.numbers[idx],
+        value: isFree || isBlank ? null : value,
         isFree,
-        isBlank: false,
+        isBlank,
         marked: isFree ? true : Boolean(stored.marks[idx]),
       };
     })
   );
-  return grid;
 }
 
 export function gameTypeUsesFreeSpace(gameType: GameType): boolean {
@@ -224,18 +255,25 @@ export function winningPatterns(card: CardGrid, gameType: GameType, calledSet: S
     const cell = flat[idx];
     if (!cell) return false;
     if (cell.isFree) return true;
-    if (cell.isBlank || cell.value === null) return false;
+    // Blank (unfilled) cells do not block pattern wins.
+    if (cell.isBlank || cell.value === null) return true;
     if (!cell.marked) return false;
     return calledSet.has(cell.value);
   };
 
   const def = GAME_TYPE_BY_ID[gameType];
-  if (!def) return [];
+  if (!def || def.elimination) return [];
 
   if (def.coveredThreshold > 0) {
     const covered: number[] = [];
-    for (let i = 0; i < 25; i++) if (isSatisfied(i)) covered.push(i);
-    return covered.length >= def.coveredThreshold ? [covered] : [];
+    for (let i = 0; i < 25; i++) {
+      const cell = flat[i]!;
+      if (cell.isBlank) continue;
+      if (isSatisfied(i)) covered.push(i);
+    }
+    // Count only non-blank cells toward threshold when sparse.
+    const needed = Math.min(def.coveredThreshold, flat.filter((c) => !c.isBlank).length);
+    return covered.length >= needed ? [covered] : [];
   }
 
   const patterns0 = def.winPatterns.map((pattern) => pattern.map((cell1) => cell1 - 1));
@@ -246,107 +284,22 @@ export function gridHasWinningPattern(card: CardGrid, gameType: GameType, called
   return winningPatterns(card, gameType, calledSet).length >= requiredPatternsForGameType(gameType);
 }
 
-function rowPopulatedComplete(flat: CardCell[], row: number, calledSet: Set<number>): boolean {
-  let populated = 0;
-  for (let c = 0; c < 5; c++) {
-    const cell = flat[row * 5 + c]!;
-    if (cell.isBlank || cell.value === null) continue;
-    populated++;
+/** All populated numbers called (Battleship sink / local flash). */
+export function cardAllPopulatedCalled(card: CardGrid, calledSet: Set<number>): boolean {
+  let n = 0;
+  for (const cell of card.flat()) {
+    if (cell.isFree || cell.isBlank || cell.value == null) continue;
+    n++;
     if (!calledSet.has(cell.value)) return false;
   }
-  return populated > 0;
+  return n > 0;
 }
 
-/** Local HOUSEY pattern cells (0-indexed) for flash UI. */
-export function houseyWinningFlashCells(
-  card: CardGrid,
-  houseyType: HouseyGameType,
-  calledSet: Set<number>,
-  current?: number
-): number[] {
+export function battleshipSunkFlashCells(card: CardGrid, calledSet: Set<number>, current?: number): number[] {
+  if (!cardAllPopulatedCalled(card, calledSet)) return [];
   const flat = card.flat();
-
-  const allPopulatedCalled = (): boolean => {
-    let n = 0;
-    for (const cell of flat) {
-      if (cell.isBlank || cell.value === null) continue;
-      n++;
-      if (!calledSet.has(cell.value)) return false;
-    }
-    return n > 0;
-  };
-
-  if (houseyType === "battleship" || houseyType === "full_house") {
-    if (!allPopulatedCalled()) return [];
-    if (current != null && current > 0) {
-      const onCard = flat.some((c) => c.value === current);
-      if (!onCard) return [];
-    }
-    return flat
-      .map((cell, idx) => (cell.value != null && !cell.isBlank ? idx : -1))
-      .filter((idx) => idx >= 0);
-  }
-
-  if (houseyType === "four_corners") {
-    const corners = HOUSEY_CORNER_INDICES.filter((idx) => {
-      const cell = flat[idx]!;
-      return cell.value != null && !cell.isBlank;
-    });
-    if (corners.length === 0) return [];
-    if (!corners.every((idx) => calledSet.has(flat[idx]!.value!))) return [];
-    if (current != null && current > 0 && !corners.some((idx) => flat[idx]!.value === current)) {
-      return [];
-    }
-    return [...corners];
-  }
-
-  if (houseyType === "line") {
-    for (let r = 0; r < 5; r++) {
-      if (!rowPopulatedComplete(flat, r, calledSet)) continue;
-      const completed: number[] = [];
-      for (let c = 0; c < 5; c++) {
-        const idx = r * 5 + c;
-        if (flat[idx]!.value != null && !flat[idx]!.isBlank) completed.push(idx);
-      }
-      if (current != null && current > 0) {
-        const rowHasCurrent = completed.some((idx) => flat[idx]!.value === current);
-        if (!rowHasCurrent) continue;
-      }
-      return completed;
-    }
-    return [];
-  }
-
-  if (houseyType === "two_lines") {
-    const completeRows: number[] = [];
-    for (let r = 0; r < 5; r++) {
-      if (rowPopulatedComplete(flat, r, calledSet)) completeRows.push(r);
-    }
-    if (completeRows.length < 2) return [];
-    const use = completeRows.slice(0, 2);
-    const cells: number[] = [];
-    for (const r of use) {
-      for (let c = 0; c < 5; c++) {
-        const idx = r * 5 + c;
-        if (flat[idx]!.value != null && !flat[idx]!.isBlank) cells.push(idx);
-      }
-    }
-    if (current != null && current > 0 && !cells.some((idx) => flat[idx]!.value === current)) {
-      return [];
-    }
-    return cells;
-  }
-
-  return [];
-}
-
-export function gridHasHouseyWinningPattern(
-  card: CardGrid,
-  houseyType: HouseyGameType,
-  calledSet: Set<number>,
-  current?: number
-): boolean {
-  return houseyWinningFlashCells(card, houseyType, calledSet, current).length > 0;
+  if (current != null && current > 0 && !flat.some((c) => c.value === current)) return [];
+  return flat.map((cell, idx) => (cell.value != null && !cell.isBlank && !cell.isFree ? idx : -1)).filter((idx) => idx >= 0);
 }
 
 export function buildAutoSyncedGrid(

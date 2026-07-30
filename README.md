@@ -72,25 +72,15 @@ Any button exits LED test / screensaver.
 - **Power-loss recovery** — call order / current / pool restore from NVS
 - Default auto-call interval: **10 seconds** (configurable; Play stays UI-driven)
 
-### Game styles & types
+### Game types
 
-**Game style** is **BINGO** (default) or **HOUSEY**.
+**48 types** in the generated catalog (Classics, Letters & Symbols, Shapes & Frames, Blocks & Arrows, Pictures, Combos & Rules, plus **Battleship**). The board/new-game UI uses a **searchable, filterable picker** with mini pattern previews. Physical **Button 1** cycles every type in catalog order when changing type is allowed.
 
-**BINGO — 42 types** in six categories (Classics, Letters & Symbols, Shapes & Frames, Blocks & Arrows, Pictures, Combos & Rules). The board/new-game UI uses a **searchable, filterable picker** with mini pattern previews. Physical **Button 1** cycles every type in catalog order within the current style when changing type is allowed.
+Canonical definitions live in `scripts/generate-game-types.mjs` (generates frontend + firmware tables). Multi-orientation types cycle display patterns on the LED matrix (synced to the UI). **Double Bingo** wins on any two Traditional lines; **Blackout Lite** wins at any 20 covered cells.
 
-Canonical BINGO definitions live in `scripts/generate-game-types.mjs` (generates frontend + firmware tables). Multi-orientation types cycle display patterns on the LED matrix (synced to the UI). **Double Bingo** wins on any two Traditional lines; **Blackout Lite** wins at any 20 covered cells.
+**Battleship** is an elimination game: last card still afloat wins; a card sinks when all its populated numbers are called (same-call co-survivors share). Sparse cards (blanks allowed, FREE at center) are supported. LED indicator: looping 1→25 chase. Sink LEDs invert the board (uncalled lit); from call 38 the current number strobes red.
 
-**HOUSEY — 5×5 sparse cards** (same B-I-N-G-O column ranges / 1–75 pool, **not** UK 9×3 tickets): 10–12 numbers, no FREE cell. Types:
-
-| Type | Rule |
-|---|---|
-| Battleship | Last card still afloat; a card sinks when all its numbers are called (same-call co-survivors share) |
-| Four Corners | Populated corners `{B top, O top, B bottom, O bottom}`; completing call must be a corner |
-| Line | Any one horizontal row (populated cells only) |
-| Two Lines | Any two complete horizontal rows |
-| Full House | All populated numbers called |
-
-HOUSEY winner mode auto-alerts when a pattern is complete (same as BINGO); the real-world host adjudicates. Keep-going dismisses the prize and continues. LED indicators: Battleship loops a 1→25 chase at the standard pattern cycle speed; Four Corners lights corners; Line middle row; Two Lines two rows; Full House all 25.
+Cards may include blank cells; pattern wins only require populated cells in the mask. HMAC domain `bingo-card-v2` covers all 25 cells (including blanks); legacy full-card signatures are still accepted.
 
 ### Winners
 - Declare / clear winner (UI + Button 2 long-press)
@@ -267,7 +257,7 @@ bingo-flashboard/
 
 ## 🔑 Persistence cheatsheet
 
-**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game style, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
+**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
 
 **Browser:** UI themes (per mode), UI letter colors, auto-call seconds UI, board token/expiry, card id + card state, caller speech/jokes/rate prefs.
 

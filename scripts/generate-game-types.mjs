@@ -30,6 +30,7 @@ const CATEGORIES = [
   { id: "blocks", label: "Blocks & Arrows" },
   { id: "pictures", label: "Pictures" },
   { id: "combos", label: "Combos & Rules" },
+  { id: "experimental", label: "Experimental" },
 ];
 
 /** @param {number[]} cells1 1-indexed cells */
@@ -163,7 +164,9 @@ function minCallsForMask(mask, requiredPatterns = 1) {
 function def(partial) {
   const winMasks = partial.winMasks;
   if (!winMasks || winMasks.length === 0) {
-    if (partial.coveredThreshold == null) throw new Error(`${partial.id}: no winMasks`);
+    if (partial.coveredThreshold == null && !partial.elimination) {
+      throw new Error(`${partial.id}: no winMasks`);
+    }
   }
   if (winMasks && winMasks.length > MAX_WIN_ALTS) {
     throw new Error(`${partial.id}: ${winMasks.length} win alts > ${MAX_WIN_ALTS}`);
@@ -176,7 +179,10 @@ function def(partial) {
   const coveredThreshold = partial.coveredThreshold ?? 0;
   let minCalls;
   let oddsHits;
-  if (coveredThreshold > 0) {
+  if (partial.elimination) {
+    minCalls = partial.minCalls ?? 10;
+    oddsHits = partial.oddsHits ?? 0;
+  } else if (coveredThreshold > 0) {
     // Blackout Lite: 20 covered including FREE → 19 numbered calls minimum.
     minCalls = coveredThreshold - 1;
     oddsHits = coveredThreshold;
@@ -201,6 +207,7 @@ function def(partial) {
     minCalls,
     oddsHits,
     usesFreeSpace: partial.usesFreeSpace ?? (winMasks?.some(freeInMask) ?? coveredThreshold > 0),
+    elimination: Boolean(partial.elimination),
   };
 }
 
@@ -732,6 +739,21 @@ const CATALOG = [
     oddsHits: 13,
     usesFreeSpace: true,
   }),
+
+  // ── Experimental ──────────────────────────────────────────
+  def({
+    id: "battleship",
+    label: "Battleship",
+    category: "experimental",
+    description:
+      "Last card still afloat wins. A card sinks when all of its numbers are called.",
+    winMasks: [],
+    displayMasks: [],
+    elimination: true,
+    minCalls: 10,
+    oddsHits: 0,
+    usesFreeSpace: true,
+  }),
 ];
 
 // Fix vip_cross — the def() above has a bug: I left comments inside the object after winMasks was wrongly set.
@@ -749,14 +771,16 @@ function validate(catalog) {
     if (!CATEGORIES.some((c) => c.id === g.category)) errors.push(`${g.id}: bad category`);
     if (g.winMasks.length > MAX_WIN_ALTS) errors.push(`${g.id}: too many winMasks`);
     if (g.displayMasks.length > MAX_DISPLAY_ALTS) errors.push(`${g.id}: too many displayMasks`);
-    if (g.coveredThreshold === 0 && g.winMasks.length === 0) errors.push(`${g.id}: empty winMasks`);
+    if (g.coveredThreshold === 0 && g.winMasks.length === 0 && !g.elimination) {
+      errors.push(`${g.id}: empty winMasks`);
+    }
     if (g.coveredThreshold < 0 || g.coveredThreshold > 25) errors.push(`${g.id}: bad threshold`);
     if (g.requiredPatterns < 1 || g.requiredPatterns > 8) errors.push(`${g.id}: bad requiredPatterns`);
     for (const m of [...g.winMasks, ...g.displayMasks]) {
-      if (m === 0 && g.coveredThreshold === 0) errors.push(`${g.id}: empty mask`);
+      if (m === 0 && g.coveredThreshold === 0 && !g.elimination) errors.push(`${g.id}: empty mask`);
     }
   }
-  if (catalog.length !== 47) errors.push(`Expected 47 types, got ${catalog.length}`);
+  if (catalog.length !== 48) errors.push(`Expected 48 types, got ${catalog.length}`);
   if (errors.length) {
     console.error("Catalog validation failed:\n" + errors.map((e) => `  - ${e}`).join("\n"));
     process.exit(1);
@@ -790,6 +814,8 @@ function emitTs(catalog) {
   lines.push(`  minCalls: number;`);
   lines.push(`  oddsHits: number;`);
   lines.push(`  usesFreeSpace: boolean;`);
+  lines.push(`  /** Last-survivor elimination (e.g. Battleship); no pattern masks. */`);
+  lines.push(`  elimination: boolean;`);
   lines.push(`}`);
   lines.push(``);
   lines.push(`export const GAME_TYPE_DEFS: GameTypeDef[] = [`);
@@ -808,6 +834,7 @@ function emitTs(catalog) {
     lines.push(`    minCalls: ${g.minCalls},`);
     lines.push(`    oddsHits: ${g.oddsHits},`);
     lines.push(`    usesFreeSpace: ${g.usesFreeSpace},`);
+    lines.push(`    elimination: ${g.elimination},`);
     lines.push(`  },`);
   }
   lines.push(`];`);
@@ -864,6 +891,7 @@ function emitH(catalog) {
   lines.push(`  uint8_t requiredPatterns;`);
   lines.push(`  uint8_t coveredThreshold;`);
   lines.push(`  uint8_t minCalls;`);
+  lines.push(`  uint8_t elimination;`);
   lines.push(`  const uint32_t* winMasks;`);
   lines.push(`  const uint32_t* displayMasks;`);
   lines.push(`};`);
@@ -885,7 +913,7 @@ function emitH(catalog) {
   for (let i = 0; i < catalog.length; i++) {
     const g = catalog[i];
     lines.push(
-      `  { "${g.id}", ${g.winMasks.length}, ${g.displayMasks.length}, ${g.requiredPatterns}, ${g.coveredThreshold}, ${g.minCalls}, GT_WIN_${i}, GT_DISP_${i} },`
+      `  { "${g.id}", ${g.winMasks.length}, ${g.displayMasks.length}, ${g.requiredPatterns}, ${g.coveredThreshold}, ${g.minCalls}, ${g.elimination ? 1 : 0}, GT_WIN_${i}, GT_DISP_${i} },`
     );
   }
   lines.push(`};`);
@@ -935,6 +963,7 @@ function emitJson(catalog) {
           minCalls: g.minCalls,
           oddsHits: g.oddsHits,
           usesFreeSpace: g.usesFreeSpace,
+          elimination: g.elimination,
         })),
       },
       null,

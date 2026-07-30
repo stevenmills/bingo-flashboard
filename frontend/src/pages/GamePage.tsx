@@ -121,7 +121,6 @@ export function GamePage({
   const gameControls = (
     <GameControls
       callingStyle={state.callingStyle}
-      gameStyle={state.gameStyle ?? "bingo"}
       gameType={state.gameType}
       called={state.called}
       remaining={state.remaining}
@@ -220,6 +219,7 @@ export function GamePage({
                 called={state.called}
                 current={state.current}
                 letterColors={uiLetterColors}
+                sinkMode={state.gameType === "battleship"}
               />
             </CardContent>
           </Card>
@@ -229,7 +229,6 @@ export function GamePage({
                 gameType={state.gameType}
                 patternIndex={state.patternIndex}
                 letterColors={uiLetterColors}
-                gameStyle={state.gameStyle ?? "bingo"}
               />
             </CardContent>
           </Card>
@@ -240,7 +239,6 @@ export function GamePage({
                 gameType={state.gameType}
                 patternIndex={state.patternIndex}
                 letterColors={uiLetterColors}
-                gameStyle={state.gameStyle ?? "bingo"}
               />
             </CardContent>
           </Card>
@@ -257,7 +255,6 @@ export function GamePage({
                 gameType={state.gameType}
                 patternIndex={state.patternIndex}
                 letterColors={uiLetterColors}
-                gameStyle={state.gameStyle ?? "bingo"}
               />
             </CardContent>
           </Card>
@@ -287,7 +284,6 @@ export function GamePage({
               </CardHeader>
               <CardContent className="pt-1">
                 <GameSetup
-                  gameStyle={state.gameStyle ?? "bingo"}
                   gameType={state.gameType}
                   callingStyle={state.callingStyle}
                   gameEstablished={gameActive}

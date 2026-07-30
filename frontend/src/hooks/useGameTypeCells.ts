@@ -2,9 +2,6 @@ import {
   GAME_TYPE_CELLS,
   CYCLING_PATTERNS,
   type AnyGameType,
-  type GameStyle,
-  HOUSEY_DISPLAY_CELLS,
-  isHouseyGameType,
   isGameType,
 } from "@/types";
 import { useEffect, useState } from "react";
@@ -15,17 +12,16 @@ const PATTERN_CYCLE_MS = 1500;
 /**
  * Returns the active cells for a game type indicator.
  * Cycling types advance via patternIndex (synced with LED output).
- * HOUSEY Battleship loops 1→25 at PATTERN_CYCLE_MS per cell.
+ * Battleship loops 1→25 at PATTERN_CYCLE_MS per cell.
  */
 export function useGameTypeCells(
   gameType: AnyGameType,
-  patternIndex: number,
-  gameStyle: GameStyle = "bingo"
+  patternIndex: number
 ): number[] {
   const [battleshipCell, setBattleshipCell] = useState(0);
 
   useEffect(() => {
-    if (gameStyle !== "housey" || gameType !== "battleship") {
+    if (gameType !== "battleship") {
       setBattleshipCell(0);
       return;
     }
@@ -37,13 +33,10 @@ export function useGameTypeCells(
       setBattleshipCell(cell);
     }, PATTERN_CYCLE_MS);
     return () => window.clearInterval(id);
-  }, [gameStyle, gameType]);
+  }, [gameType]);
 
-  if (gameStyle === "housey" && isHouseyGameType(gameType)) {
-    if (gameType === "battleship") {
-      return battleshipCell > 0 ? [battleshipCell] : [];
-    }
-    return HOUSEY_DISPLAY_CELLS[gameType];
+  if (gameType === "battleship") {
+    return battleshipCell > 0 ? [battleshipCell] : [];
   }
 
   if (!isGameType(gameType)) return [];

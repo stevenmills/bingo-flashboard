@@ -2,7 +2,6 @@ import QRCode from "qrcode";
 import { LETTERS } from "@/types";
 import {
   buildCardClaimUrl,
-  type FlatCardNumbers,
   type SignedPrintableCard,
 } from "@/lib/bingo-card-codec";
 import { MiniPdf } from "@/lib/mini-pdf";
@@ -16,24 +15,6 @@ const LETTER_COLORS: Record<string, [number, number, number]> = {
 };
 
 export const CARDS_PER_PAGE = 4;
-
-/** Prefer center, else blank nearest to center (HOUSEY always has blanks). */
-function pickBlankCell(numbers: FlatCardNumbers): number {
-  if (numbers[12] == null) return 12;
-  let best = -1;
-  let bestDist = Infinity;
-  for (let i = 0; i < 25; i++) {
-    if (numbers[i] != null) continue;
-    const row = Math.floor(i / 5);
-    const col = i % 5;
-    const dist = Math.abs(row - 2) + Math.abs(col - 2);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = i;
-    }
-  }
-  return best >= 0 ? best : 12;
-}
 
 function drawCellQr(
   doc: MiniPdf,
@@ -65,7 +46,6 @@ function drawCard(
 ) {
   const { x, y, width, height, cardIndex, claimUrl } = opts;
   const numbers = card.numbers;
-  const isHousey = card.gameStyle === "housey";
   const pad = 6;
   const headerH = 16;
   const footerH = 10;
@@ -76,7 +56,6 @@ function drawCard(
   const gridW = width - pad * 2;
   const cellW = gridW / 5;
   const cellH = gridH / 5;
-  const houseyQrIdx = isHousey ? pickBlankCell(numbers) : -1;
 
   doc.setStroke(180, 180, 180, 0.6);
   doc.roundedRect(x, y, width, height, 3, "S");
@@ -98,16 +77,25 @@ function drawCard(
   // H (~30% recovery) so a small centered "FREE" label doesn't break scanning.
   const qr = QRCode.create(claimUrl, { errorCorrectionLevel: "H" });
 
-  doc.setStroke(200, 200, 200, 0.3);
+  // Fill cells white first; draw content; then stroke grid lines last so
+  // empty-cell dauber stroke changes can't alter borders (old per-cell "B" leaked).
+  const gridX = x + pad;
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 5; col++) {
+      const cx = gridX + col * cellW;
+      const cy = gridTop + row * cellH;
+      doc.setFill(255, 255, 255);
+      doc.rect(cx, cy, cellW, cellH, "f");
+    }
+  }
+
   for (let row = 0; row < 5; row++) {
     for (let col = 0; col < 5; col++) {
       const idx = row * 5 + col;
-      const cx = x + pad + col * cellW;
+      const cx = gridX + col * cellW;
       const cy = gridTop + row * cellH;
-      doc.setFill(255, 255, 255);
-      doc.rect(cx, cy, cellW, cellH, "B");
 
-      if (!isHousey && idx === 12) {
+      if (idx === 12) {
         // FREE cell = large scan-target QR with a modest center label.
         const { qrX, qrY, qrSize } = drawCellQr(doc, qr.modules, cx, cy, cellW, cellH);
 
@@ -127,14 +115,14 @@ function drawCard(
         continue;
       }
 
-      if (isHousey && idx === houseyQrIdx) {
-        // Blank cell = claim QR at the same size as BINGO FREE.
-        drawCellQr(doc, qr.modules, cx, cy, cellW, cellH);
+      const val = numbers[idx];
+      if (val == null) {
+        // Unfilled preselected space — small center dauber mark.
+        const d = Math.min(cellW, cellH) * 0.22;
+        doc.setStroke(160, 160, 160, 1.1);
+        doc.roundedRect(cx + (cellW - d) / 2, cy + (cellH - d) / 2, d, d, d / 2, "S");
         continue;
       }
-
-      const val = numbers[idx];
-      if (val == null) continue; // HOUSEY blank
       doc.text(String(val), cx + cellW / 2, cy + cellH / 2 + 3.5, {
         size: Math.min(12, Math.max(9, cellH * 0.38)),
         align: "center",
@@ -143,19 +131,19 @@ function drawCard(
     }
   }
 
-  if (isHousey) {
-    doc.text(`HOUSEY · Card ${cardIndex + 1}`, x + width / 2, y + height - pad + 1, {
-      size: 5.5,
-      align: "center",
-      color: [170, 170, 170],
-    });
-  } else {
-    doc.text(`Card ${cardIndex + 1}`, x + width / 2, y + height - pad + 1, {
-      size: 5.5,
-      align: "center",
-      color: [170, 170, 170],
-    });
+  doc.setStroke(180, 180, 180, 0.55);
+  for (let i = 0; i <= 5; i++) {
+    const lx = gridX + i * cellW;
+    const ly = gridTop + i * cellH;
+    doc.line(lx, gridTop, lx, gridTop + gridH);
+    doc.line(gridX, ly, gridX + gridW, ly);
   }
+
+  doc.text(`Card ${cardIndex + 1}`, x + width / 2, y + height - pad + 1, {
+    size: 5.5,
+    align: "center",
+    color: [170, 170, 170],
+  });
 }
 
 /**
@@ -187,7 +175,7 @@ export async function buildBingoCardsPdf(
       width: cardW,
       height: cardH,
       cardIndex: i,
-      claimUrl: buildCardClaimUrl(cards[i].numbers, origin, cards[i].sig, cards[i].gameStyle ?? "bingo"),
+      claimUrl: buildCardClaimUrl(cards[i].numbers, origin, cards[i].sig),
     });
   }
 
