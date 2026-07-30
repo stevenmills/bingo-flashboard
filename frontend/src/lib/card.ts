@@ -295,6 +295,18 @@ export function cardAllPopulatedCalled(card: CardGrid, calledSet: Set<number>): 
   return n > 0;
 }
 
+/** Battleship scan: still afloat when any populated number has not been called. */
+export function cardHasUncalledPopulated(
+  numbers: ReadonlyArray<number | null | undefined>,
+  calledSet: Set<number>
+): boolean {
+  for (const n of numbers) {
+    if (typeof n !== "number" || n < 1 || n > 75) continue;
+    if (!calledSet.has(n)) return true;
+  }
+  return false;
+}
+
 export function battleshipSunkFlashCells(card: CardGrid, calledSet: Set<number>, current?: number): number[] {
   if (!cardAllPopulatedCalled(card, calledSet)) return [];
   const flat = card.flat();

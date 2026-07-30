@@ -138,6 +138,7 @@ export default function App() {
   const [cardNotAuthenticOpen, setCardNotAuthenticOpen] = useState(false);
   const [scanWinnerOpen, setScanWinnerOpen] = useState(false);
   const [scanWinnerCardId, setScanWinnerCardId] = useState<string | null>(null);
+  const [scanWinnerClearManual, setScanWinnerClearManual] = useState(false);
   const [scanVerifying, setScanVerifying] = useState(false);
   const boardQrVerifyStartedRef = useRef(false);
   const { theme, setTheme } = useTheme(appMode);
@@ -255,13 +256,16 @@ export default function App() {
 
   const dismissScanWinner = useCallback(() => {
     const cardId = scanWinnerCardId;
+    const clearManual = scanWinnerClearManual;
     setScanWinnerOpen(false);
     setScanWinnerCardId(null);
+    setScanWinnerClearManual(false);
     if (!cardId) return;
     void releaseScannedWinnerSession(cardId, {
       refresh: () => refresh({ force: true }),
+      clearManualWinner: clearManual,
     });
-  }, [refresh, scanWinnerCardId]);
+  }, [refresh, scanWinnerCardId, scanWinnerClearManual]);
 
   const applyVerifyOutcome = useCallback((result: Awaited<ReturnType<typeof verifyScannedPrintedCard>>) => {
     if (result.outcome === "not_authentic") {
@@ -270,6 +274,7 @@ export default function App() {
     }
     if (result.outcome === "authentic_winner") {
       setScanWinnerCardId(result.cardId);
+      setScanWinnerClearManual(Boolean(result.clearManualWinner));
       setScanWinnerOpen(true);
       return;
     }
@@ -283,13 +288,15 @@ export default function App() {
       try {
         const result = await verifyScannedPrintedCard(claim, {
           refresh: () => refresh({ force: true }),
+          gameType: state.gameType,
+          called: state.called,
         });
         applyVerifyOutcome(result);
       } finally {
         setScanVerifying(false);
       }
     },
-    [applyVerifyOutcome, refresh]
+    [applyVerifyOutcome, refresh, state.called, state.gameType]
   );
 
   useEffect(() => {
@@ -958,6 +965,7 @@ export default function App() {
                   >
                     <ScanPage
                       accentColor={uiLetterColors.N}
+                      gameType={state.gameType}
                       verifying={
                         scanVerifying || scanWinnerOpen || noWinnerOpen || cardNotAuthenticOpen
                       }

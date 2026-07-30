@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { CurrentNumber } from "@/components/CurrentNumber";
 import { Flashboard } from "@/components/Flashboard";
 import { GameControls } from "@/components/GameControls";
@@ -17,6 +17,19 @@ import { cn } from "@/lib/utils";
 import type { RefreshOptions } from "@/hooks/useGameState";
 import type { GameState } from "@/types";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
+
+/** Tailwind `md` — only mount controls once (CSS hide still mounts two dialog hosts). */
+function useMdUp() {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const mq = window.matchMedia("(min-width: 768px)");
+      mq.addEventListener("change", onStoreChange);
+      return () => mq.removeEventListener("change", onStoreChange);
+    },
+    () => window.matchMedia("(min-width: 768px)").matches,
+    () => false
+  );
+}
 
 interface Props {
   state: GameState;
@@ -47,6 +60,7 @@ export function GamePage({
   const [newGameDismissed, setNewGameDismissed] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const prevEstablished = useRef(state.gameEstablished);
+  const mdUp = useMdUp();
 
   const gameActive = state.gameEstablished || localStarted;
   const newGameOpen = stateHydrated && !gameActive && !newGameDismissed;
@@ -182,31 +196,35 @@ export function GamePage({
       />
 
       <div className="flex flex-col gap-4">
-        {/* Mobile: current number + controls */}
-        <div className="grid grid-cols-2 gap-4 md:hidden">
-          <CurrentNumber
-            current={state.current}
-            remaining={state.remaining}
-            letterColors={uiLetterColors}
-            compact
-            className="h-full"
-          />
-          <Card className="h-full">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Controls</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">{controls}</CardContent>
-          </Card>
-        </div>
+        {/* Mobile: current number + controls (single GameControls mount — see desktop below) */}
+        {!mdUp && (
+          <div className="grid grid-cols-2 gap-4">
+            <CurrentNumber
+              current={state.current}
+              remaining={state.remaining}
+              letterColors={uiLetterColors}
+              compact
+              className="h-full"
+            />
+            <Card className="h-full">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Controls</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">{controls}</CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Desktop: current number banner (full width) */}
-        <div className="hidden w-full md:block">
-          <CurrentNumber
-            current={state.current}
-            remaining={state.remaining}
-            letterColors={uiLetterColors}
-          />
-        </div>
+        {mdUp && (
+          <div className="w-full">
+            <CurrentNumber
+              current={state.current}
+              remaining={state.remaining}
+              letterColors={uiLetterColors}
+            />
+          </div>
+        )}
 
         {/* Board + pattern preview */}
         <div className="flex w-full flex-col gap-4 md:flex-row md:items-stretch">
@@ -244,8 +262,8 @@ export function GamePage({
           </Card>
         </div>
 
-        {/* Desktop controls */}
-        <div className="hidden w-full md:block">{controls}</div>
+        {/* Desktop controls — mutually exclusive with mobile mount above */}
+        {mdUp && <div className="w-full">{controls}</div>}
 
         {/* Mobile landscape: pattern + call history */}
         <div className="hidden w-full grid-cols-2 gap-4 max-md:landscape:grid">

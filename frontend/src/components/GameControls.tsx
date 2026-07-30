@@ -110,10 +110,23 @@ export function GameControls({
     return () => window.removeEventListener("bingo:ws-message", onWsMessage as EventListener);
   }, [openWinnerAnnouncement]);
 
+  // Show once per empty-pool stretch. Reset only on a real new game or undo
+  // (called length drops) — not on remaining-only flicker from WS/merge races.
+  const prevCalledLenRef = useRef(called.length);
   useEffect(() => {
-    if (remaining > 0 || called.length === 0) {
+    const calledDecreased = called.length < prevCalledLenRef.current;
+    prevCalledLenRef.current = called.length;
+
+    if (called.length === 0) {
       gameOverShownRef.current = false;
       setGameOverOpen(false);
+      return;
+    }
+    if (remaining > 0) {
+      if (calledDecreased) {
+        gameOverShownRef.current = false;
+        setGameOverOpen(false);
+      }
       return;
     }
     if (!gameOverShownRef.current) {
