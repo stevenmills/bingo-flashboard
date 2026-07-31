@@ -8,7 +8,7 @@ import { ModeChooser } from "@/components/ModeChooser";
 import { Settings } from "@/components/Settings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { Dices, Laugh, Lock, LogOut, Maximize2, Menu, Minimize2, Moon, Pause, PawPrint, Play, Settings2, Sun, Volume2, VolumeX, X } from "lucide-react";
+import { Dices, Image, ImageOff, Laugh, Lock, LogOut, Maximize2, Menu, Minimize2, Moon, Pause, PawPrint, Play, Settings2, Sun, Volume2, VolumeX, X } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/hooks/useTheme";
 import { useBingoUiColors } from "@/hooks/useBingoUiColors";
@@ -19,11 +19,11 @@ import { notifyAppModeChanged, notifyCardSessionChanged } from "@/lib/card-sessi
 import { isBoardAuthHttpError, isStoredBoardSessionActive } from "@/lib/board-auth";
 import { api } from "@/api";
 import { Input } from "@/components/ui/input";
-import { rgbaFromHex } from "@/lib/bingo-ui-colors";
+import { isBingoUiThemeId, rgbaFromHex } from "@/lib/bingo-ui-colors";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { AppMode, GameType } from "@/types";
-import { GAME_TYPE_LABELS, isGameType } from "@/types";
+import { GAME_TYPE_LABELS, LETTERS, isGameType } from "@/types";
 import {
   bootstrapQrCardClaim,
   clearQrBoardVerifyFlag,
@@ -135,7 +135,17 @@ export default function App() {
     effectiveColors: uiLetterColors,
     setActiveTheme: setUiColorTheme,
     setCustomColor: setUiCustomColor,
+    applyServerColors: applyServerUiColors,
   } = useBingoUiColors();
+
+  // Board-shared UI letter theme — apply on every client (board / card / HUD).
+  useEffect(() => {
+    const theme = state.uiColorTheme;
+    const custom = state.uiCustomColors;
+    if (!theme || !isBingoUiThemeId(theme) || !custom) return;
+    if (!LETTERS.every((letter) => typeof custom[letter] === "string")) return;
+    applyServerUiColors(theme, custom);
+  }, [state.uiColorTheme, state.uiCustomColors, applyServerUiColors]);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [cardOddsGameType, setCardOddsGameType] = useState<GameType>("traditional");
   const [cardAutoSyncEnabled, setCardAutoSyncEnabled] = useState<boolean>(() => readStoredAutoSync());
@@ -200,7 +210,11 @@ export default function App() {
     modeInitialized &&
     speechSupported &&
     ((appMode === "board" && boardAuthActive) || appMode === "hud");
+  const showGifModeControl =
+    modeInitialized && ((appMode === "board" && boardAuthActive) || appMode === "hud");
   const callerSpeechLive = speechOn && speechUnlocked;
+  const gifModeOn = Boolean(state.gifModeEnabled);
+  const gifModeLabel = gifModeOn ? "Turn GIFs off" : "Turn GIFs on";
   const callerSpeechLabel = !speechOn
     ? "Unmute number caller"
     : !speechUnlocked
@@ -582,6 +596,20 @@ export default function App() {
     void clearSessionForModeExit();
   };
 
+  const toggleGifMode = useCallback(() => {
+    const next = !Boolean(state.gifModeEnabled);
+    applyOptimistic((prev) => ({
+      ...prev,
+      gifModeEnabled: next,
+      // Keep currentGifUrl when arming — server now sends it even while GIFs are off.
+      currentGifUrl: next ? prev.currentGifUrl ?? "" : prev.currentGifUrl ?? "",
+    }));
+    void api
+      .setGifMode(next)
+      .then(() => refresh({ force: true }))
+      .catch(() => refresh({ force: true }));
+  }, [applyOptimistic, refresh, state.gifModeEnabled]);
+
   const handleUnlockBoard = async () => {
     const modeToEnter: AppMode = pendingMode === "scan" ? "scan" : "board";
     const ok = await unlockWithPin(unlockPin);
@@ -711,6 +739,24 @@ export default function App() {
                   <Laugh className="h-4 w-4" />
                 </button>
               )}
+              {showGifModeControl && (
+                <button
+                  type="button"
+                  className={cn(
+                    "h-8 w-8 rounded-md inline-flex items-center justify-center transition-colors",
+                    gifModeOn
+                      ? "text-foreground hover:bg-accent"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                  )}
+                  style={gifModeOn ? { color: uiLetterColors.B } : undefined}
+                  aria-label={gifModeLabel}
+                  aria-pressed={gifModeOn}
+                  title={gifModeLabel}
+                  onClick={toggleGifMode}
+                >
+                  {gifModeOn ? <Image className="h-4 w-4" /> : <ImageOff className="h-4 w-4" />}
+                </button>
+              )}
               <button
                 type="button"
                 className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent inline-flex items-center justify-center transition-colors"
@@ -823,6 +869,23 @@ export default function App() {
                     >
                       <Laugh className="h-3.5 w-3.5 shrink-0" />
                       {jokesMenuLabel}
+                    </button>
+                  )}
+                  {showGifModeControl && (
+                    <button
+                      type="button"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent inline-flex items-center gap-2"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        toggleGifMode();
+                      }}
+                    >
+                      {gifModeOn ? (
+                        <Image className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <ImageOff className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      {gifModeOn ? "Turn GIFs off" : "Turn GIFs on"}
                     </button>
                   )}
                   <button

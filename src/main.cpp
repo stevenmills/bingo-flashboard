@@ -122,6 +122,21 @@ uint32_t customLetterColors[5] = {
   0xF59E0B, // G
   0xA855F7, // O
 };
+// Shared web UI letter theme (synced to Board / Card / HUD).
+static char uiColorThemeBuf[16] = "default";
+uint32_t uiCustomLetterColors[5] = {
+  0x3B82F6, // B
+  0xEF4444, // I
+  0x10B981, // N
+  0xF59E0B, // G
+  0xA855F7, // O
+};
+// Presets mirror frontend/src/lib/bingo-ui-colors.ts
+const uint32_t UI_PRESET_DEFAULT[5] = { 0x3B82F6, 0xEF4444, 0x10B981, 0xF59E0B, 0xA855F7 };
+const uint32_t UI_PRESET_RAINBOW[5] = { 0xEF4444, 0xF59E0B, 0xEAB308, 0x22C55E, 0x3B82F6 };
+const uint32_t UI_PRESET_WARM_SUNSET[5] = { 0xDC2626, 0xEA580C, 0xF97316, 0xF59E0B, 0xDB2777 };
+const uint32_t UI_PRESET_COOL_BLUE[5] = { 0x2563EB, 0x0EA5E9, 0x06B6D4, 0x14B8A6, 0x6366F1 };
+const uint32_t UI_PRESET_HIGH_CONTRAST[5] = { 0x1D4ED8, 0xB91C1C, 0x15803D, 0xB45309, 0x7E22CE };
 static char boardPinBuf[12] = BOARD_DEFAULT_PIN;
 /** Stable per-board id used as HMAC salt for printable-card authenticity. */
 static char deviceIdBuf[33] = "";
@@ -148,6 +163,11 @@ static void ensureWifiScanRadio() {
 // --- Outbound webhooks (STA only) ---
 static char webhookNumberUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
 static char webhookBingoUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
+
+// --- HUD number GIFs (board-shared) ---
+static bool gifModeEnabled = false;
+/** Indexes 1–75; empty string = no GIF for that number. */
+static char numberGifUrl[76][GIF_URL_MAX_LEN + 1];
 enum WebhookKind : uint8_t { WH_NONE = 0, WH_NUMBER = 1, WH_BINGO = 2 };
 struct WebhookJob {
   WebhookKind kind;
@@ -192,9 +212,9 @@ struct WsSubscription {
 };
 WsSubscription wsSubscriptions[MAX_WS_SUBSCRIPTIONS];
 
-// State payload can include up to 75 called numbers; keep generous JSON headroom.
-const size_t STATE_JSON_DOC_CAPACITY = 4096;
-const size_t STATE_WS_ENV_DOC_CAPACITY = 4608;
+// State payload can include up to 75 called numbers + optional currentGifUrl (≤256); keep headroom.
+const size_t STATE_JSON_DOC_CAPACITY = 5120;
+const size_t STATE_WS_ENV_DOC_CAPACITY = 5120;
 
 // --- LED board test mode ---
 bool ledTestMode = false;
@@ -283,6 +303,10 @@ void updateAllLeds();
 void loadNvs();
 void saveNvsSettings();
 bool saveNvsWifiCredentials();
+bool saveNvsGifModeEnabledOnly();
+bool saveNvsNumberGifMapOnly();
+void clearNumberGifUrls();
+bool applyNumberGifUrlsFromJson(JsonObject urlsObj, String* errOut);
 void saveNvsGameTypeOnly();
 void saveNvsCallingStyleOnly();
 void saveNvsScreensaverEnabledOnly();
@@ -318,6 +342,10 @@ char bingoLetterForNumber(int n);
 void recomputeCardWinners();
 int letterIndex(char letter);
 CRGB customLetterColorForLetter(char letter);
+CRGB uiLetterColorForLetter(char letter);
+CRGB boostUiColorForStrip(CRGB rgb);
+bool isValidUiColorTheme(const char* theme);
+uint32_t effectiveUiLetterColor(int idx);
 CRGB boostVividForStrip(CRGB rgb);
 CRGB solidColorForStrip();
 CRGB headerLetterColorForStrip();
@@ -414,6 +442,81 @@ CRGB customLetterColorForLetter(char letter) {
   uint32_t c = customLetterColors[idx];
   CRGB rgb((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
   return boostVividForStrip(rgb);
+}
+
+bool isValidUiColorTheme(const char* theme) {
+  if (!theme || !*theme) return false;
+  return strcmp(theme, "default") == 0 ||
+         strcmp(theme, "rainbow") == 0 ||
+         strcmp(theme, "warm_sunset") == 0 ||
+         strcmp(theme, "cool_blue") == 0 ||
+         strcmp(theme, "high_contrast") == 0 ||
+         strcmp(theme, "custom") == 0;
+}
+
+uint32_t effectiveUiLetterColor(int idx) {
+  if (idx < 0 || idx >= 5) return 0;
+  if (strcmp(uiColorThemeBuf, "custom") == 0) return uiCustomLetterColors[idx];
+  if (strcmp(uiColorThemeBuf, "rainbow") == 0) return UI_PRESET_RAINBOW[idx];
+  if (strcmp(uiColorThemeBuf, "warm_sunset") == 0) return UI_PRESET_WARM_SUNSET[idx];
+  if (strcmp(uiColorThemeBuf, "cool_blue") == 0) return UI_PRESET_COOL_BLUE[idx];
+  if (strcmp(uiColorThemeBuf, "high_contrast") == 0) return UI_PRESET_HIGH_CONTRAST[idx];
+  return UI_PRESET_DEFAULT[idx];
+}
+
+CRGB boostUiColorForStrip(CRGB rgb) {
+  if (ledVibrance == 0) return rgb;
+  // Match-UI must keep the web hue. Do NOT run rgb2hsv→S=255→rgb:
+  // on WS2811 that turns Tailwind blue/orange/purple into cyan/lime/magenta.
+  // Expand saturation in RGB (partial), lift brightness, and tame green a little.
+  const uint8_t mx = (rgb.r > rgb.g) ? ((rgb.r > rgb.b) ? rgb.r : rgb.b) : ((rgb.g > rgb.b) ? rgb.g : rgb.b);
+  const uint8_t mn = (rgb.r < rgb.g) ? ((rgb.r < rgb.b) ? rgb.r : rgb.b) : ((rgb.g < rgb.b) ? rgb.g : rgb.b);
+  if (mx == 0) return rgb;
+
+  const uint8_t amount = (uint8_t)(((uint16_t)ledVibrance * 255u) / 100u);
+  // Pull at most ~55% of the way to fully saturated at vibrance 100.
+  const uint8_t satAmount = scale8(amount, 140);
+
+  CRGB out = rgb;
+  const uint8_t span = mx - mn;
+  if (span > 0 && satAmount > 0) {
+    // Saturated sibling at the same peak channel (gray removed, then rescaled).
+    const uint8_t cr = rgb.r - mn;
+    const uint8_t cg = rgb.g - mn;
+    const uint8_t cb = rgb.b - mn;
+    const uint8_t cm = (cr > cg) ? ((cr > cb) ? cr : cb) : ((cg > cb) ? cg : cb);
+    CRGB pure(
+      (uint8_t)((uint16_t)cr * mx / cm),
+      (uint8_t)((uint16_t)cg * mx / cm),
+      (uint8_t)((uint16_t)cb * mx / cm)
+    );
+    out.r = lerp8by8(rgb.r, pure.r, satAmount);
+    out.g = lerp8by8(rgb.g, pure.g, satAmount);
+    out.b = lerp8by8(rgb.b, pure.b, satAmount);
+  }
+
+  // Brightness lift so mid-tone UI hexes don't look washed on the strip.
+  const uint8_t outMx = (out.r > out.g) ? ((out.r > out.b) ? out.r : out.b) : ((out.g > out.b) ? out.g : out.b);
+  if (outMx > 0) {
+    const uint8_t targetMx = qadd8(outMx, scale8((uint8_t)(255 - outMx), scale8(amount, 200)));
+    if (targetMx > outMx) {
+      out.r = (uint8_t)((uint16_t)out.r * targetMx / outMx);
+      out.g = (uint8_t)((uint16_t)out.g * targetMx / outMx);
+      out.b = (uint8_t)((uint16_t)out.b * targetMx / outMx);
+    }
+  }
+
+  // WS2811 green runs hot through these diffusers — slight cut keeps blue from reading cyan.
+  out.g = scale8(out.g, 210);
+  return out;
+}
+
+CRGB uiLetterColorForLetter(char letter) {
+  int idx = letterIndex(letter);
+  if (idx < 0 || idx >= 5) return CRGB::Black;
+  uint32_t c = effectiveUiLetterColor(idx);
+  CRGB rgb((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+  return boostUiColorForStrip(rgb);
 }
 
 CRGB boostVividForStrip(CRGB rgb) {
@@ -2199,6 +2302,9 @@ CRGB colorForCalledNumber(int n) {
   if (strcmp(colorMode, "custom") == 0) {
     return customLetterColorForLetter(numberToLetter(n));
   }
+  if (strcmp(colorMode, "ui") == 0) {
+    return uiLetterColorForLetter(numberToLetter(n));
+  }
 
   int t = themeId % NUM_THEMES;
   uint8_t pal = THEME_PALETTE[t];
@@ -2828,6 +2934,7 @@ void loadNvs() {
   if (nvs_get_u8(nvs, NVS_COLOR_MODE, &cm) == ESP_OK) {
     if (cm == 1) strcpy(colorModeBuf, "solid");
     else if (cm == 2) strcpy(colorModeBuf, "custom");
+    else if (cm == 3) strcpy(colorModeBuf, "ui");
     else strcpy(colorModeBuf, "theme");
   }
   uint32_t customB;
@@ -2840,6 +2947,20 @@ void loadNvs() {
   if (nvs_get_u32(nvs, NVS_LED_COLOR_G, &customG) == ESP_OK) customLetterColors[3] = customG;
   uint32_t customO;
   if (nvs_get_u32(nvs, NVS_LED_COLOR_O, &customO) == ESP_OK) customLetterColors[4] = customO;
+  size_t utLen = sizeof(uiColorThemeBuf);
+  if (nvs_get_str(nvs, NVS_UI_COLOR_THEME, uiColorThemeBuf, &utLen) == ESP_OK) {
+    if (!isValidUiColorTheme(uiColorThemeBuf)) strcpy(uiColorThemeBuf, "default");
+  }
+  uint32_t uiB;
+  if (nvs_get_u32(nvs, NVS_UI_COLOR_B, &uiB) == ESP_OK) uiCustomLetterColors[0] = uiB;
+  uint32_t uiI;
+  if (nvs_get_u32(nvs, NVS_UI_COLOR_I, &uiI) == ESP_OK) uiCustomLetterColors[1] = uiI;
+  uint32_t uiN;
+  if (nvs_get_u32(nvs, NVS_UI_COLOR_N, &uiN) == ESP_OK) uiCustomLetterColors[2] = uiN;
+  uint32_t uiG;
+  if (nvs_get_u32(nvs, NVS_UI_COLOR_G, &uiG) == ESP_OK) uiCustomLetterColors[3] = uiG;
+  uint32_t uiO;
+  if (nvs_get_u32(nvs, NVS_UI_COLOR_O, &uiO) == ESP_OK) uiCustomLetterColors[4] = uiO;
   size_t bpLen = sizeof(boardPinBuf);
   if (nvs_get_str(nvs, NVS_BOARD_PIN, boardPinBuf, &bpLen) != ESP_OK) {
     strncpy(boardPinBuf, BOARD_DEFAULT_PIN, sizeof(boardPinBuf) - 1);
@@ -2910,6 +3031,17 @@ void loadNvs() {
   if (nvs_get_str(nvs, NVS_WEBHOOK_BINGO_URL, webhookBingoUrlBuf, &wbuLen) != ESP_OK) {
     webhookBingoUrlBuf[0] = '\0';
   }
+  uint8_t gme = 0;
+  if (nvs_get_u8(nvs, NVS_GIF_MODE_ENABLED, &gme) == ESP_OK) gifModeEnabled = (gme != 0);
+  clearNumberGifUrls();
+  size_t gifBlobLen = GIF_MAP_BLOB_MAX;
+  static uint8_t gifMapBlob[GIF_MAP_BLOB_MAX];
+  if (nvs_get_blob(nvs, NVS_NUMBER_GIF_MAP, gifMapBlob, &gifBlobLen) == ESP_OK && gifBlobLen > 0) {
+    DynamicJsonDocument gifDoc(GIF_MAP_BLOB_MAX + 1024);
+    if (deserializeJson(gifDoc, gifMapBlob, gifBlobLen) == DeserializationError::Ok && gifDoc.is<JsonObject>()) {
+      applyNumberGifUrlsFromJson(gifDoc.as<JsonObject>(), nullptr);
+    }
+  }
   nvs_close(nvs);
 }
 
@@ -2930,12 +3062,19 @@ void saveNvsSettings() {
   uint8_t mode = 0;
   if (strcmp(colorMode, "solid") == 0) mode = 1;
   else if (strcmp(colorMode, "custom") == 0) mode = 2;
+  else if (strcmp(colorMode, "ui") == 0) mode = 3;
   nvs_set_u8(nvs, NVS_COLOR_MODE, mode);
   nvs_set_u32(nvs, NVS_LED_COLOR_B, customLetterColors[0]);
   nvs_set_u32(nvs, NVS_LED_COLOR_I, customLetterColors[1]);
   nvs_set_u32(nvs, NVS_LED_COLOR_N, customLetterColors[2]);
   nvs_set_u32(nvs, NVS_LED_COLOR_G, customLetterColors[3]);
   nvs_set_u32(nvs, NVS_LED_COLOR_O, customLetterColors[4]);
+  nvs_set_str(nvs, NVS_UI_COLOR_THEME, uiColorThemeBuf);
+  nvs_set_u32(nvs, NVS_UI_COLOR_B, uiCustomLetterColors[0]);
+  nvs_set_u32(nvs, NVS_UI_COLOR_I, uiCustomLetterColors[1]);
+  nvs_set_u32(nvs, NVS_UI_COLOR_N, uiCustomLetterColors[2]);
+  nvs_set_u32(nvs, NVS_UI_COLOR_G, uiCustomLetterColors[3]);
+  nvs_set_u32(nvs, NVS_UI_COLOR_O, uiCustomLetterColors[4]);
   nvs_set_str(nvs, NVS_GAME_TYPE, gameType);
   nvs_erase_key(nvs, "gst");
   nvs_set_str(nvs, NVS_BOARD_PIN, boardPinBuf);
@@ -2949,8 +3088,95 @@ void saveNvsSettings() {
   nvs_set_str(nvs, NVS_WIFI_PASSWORD, staPasswordBuf);
   nvs_set_str(nvs, NVS_WEBHOOK_NUMBER_URL, webhookNumberUrlBuf);
   nvs_set_str(nvs, NVS_WEBHOOK_BINGO_URL, webhookBingoUrlBuf);
+  nvs_set_u8(nvs, NVS_GIF_MODE_ENABLED, gifModeEnabled ? 1 : 0);
   nvs_commit(nvs);
   nvs_close(nvs);
+  saveNvsNumberGifMapOnly();
+}
+
+void clearNumberGifUrls() {
+  for (int i = 0; i < 76; i++) numberGifUrl[i][0] = '\0';
+}
+
+static bool isHttpOrHttpsUrl(const char* url) {
+  if (!url || !*url) return false;
+  return strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0;
+}
+
+bool applyNumberGifUrlsFromJson(JsonObject urlsObj, String* errOut) {
+  // Static to avoid ~10KB stack frame on ESP32.
+  static char pending[76][GIF_URL_MAX_LEN + 1];
+  for (int i = 0; i < 76; i++) pending[i][0] = '\0';
+
+  for (JsonPair kv : urlsObj) {
+    const char* key = kv.key().c_str();
+    if (!key || !*key) continue;
+    char* endp = nullptr;
+    long n = strtol(key, &endp, 10);
+    if (!endp || *endp != '\0' || n < 1 || n > 75) {
+      if (errOut) *errOut = "invalid number key";
+      return false;
+    }
+    if (kv.value().isNull()) continue;
+    const char* url = kv.value().as<const char*>();
+    if (!url || !*url) continue;
+    size_t len = strlen(url);
+    if (len > GIF_URL_MAX_LEN) {
+      if (errOut) *errOut = "url too long";
+      return false;
+    }
+    if (!isHttpOrHttpsUrl(url)) {
+      if (errOut) *errOut = "url must be http(s)";
+      return false;
+    }
+    strncpy(pending[n], url, GIF_URL_MAX_LEN);
+    pending[n][GIF_URL_MAX_LEN] = '\0';
+  }
+
+  // Size budget check via serialize of sparse map.
+  DynamicJsonDocument checkDoc(GIF_MAP_BLOB_MAX + 1024);
+  JsonObject checkObj = checkDoc.to<JsonObject>();
+  for (int i = 1; i <= 75; i++) {
+    if (pending[i][0] != '\0') checkObj[String(i)] = pending[i];
+  }
+  size_t needed = measureJson(checkObj);
+  if (needed > GIF_MAP_BLOB_MAX) {
+    if (errOut) *errOut = "map too large for NVS";
+    return false;
+  }
+
+  for (int i = 0; i < 76; i++) {
+    strncpy(numberGifUrl[i], pending[i], GIF_URL_MAX_LEN);
+    numberGifUrl[i][GIF_URL_MAX_LEN] = '\0';
+  }
+  return true;
+}
+
+bool saveNvsGifModeEnabledOnly() {
+  nvs_handle handle;
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return false;
+  esp_err_t err = nvs_set_u8(handle, NVS_GIF_MODE_ENABLED, gifModeEnabled ? 1 : 0);
+  if (err == ESP_OK) err = nvs_commit(handle);
+  nvs_close(handle);
+  return err == ESP_OK;
+}
+
+bool saveNvsNumberGifMapOnly() {
+  DynamicJsonDocument doc(GIF_MAP_BLOB_MAX + 1024);
+  JsonObject obj = doc.to<JsonObject>();
+  for (int i = 1; i <= 75; i++) {
+    if (numberGifUrl[i][0] != '\0') obj[String(i)] = numberGifUrl[i];
+  }
+  static uint8_t blob[GIF_MAP_BLOB_MAX];
+  size_t written = serializeJson(obj, blob, sizeof(blob));
+  if (written == 0 || written >= sizeof(blob)) return false;
+
+  nvs_handle handle;
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return false;
+  esp_err_t err = nvs_set_blob(handle, NVS_NUMBER_GIF_MAP, blob, written);
+  if (err == ESP_OK) err = nvs_commit(handle);
+  nvs_close(handle);
+  return err == ESP_OK;
 }
 
 /** Persist STA credentials alone — avoids silent failure when a full settings write hits NVS pressure. */
@@ -3058,6 +3284,14 @@ void populateStateJson(JsonObject doc) {
   snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[2]); ledLetterObj["N"] = ledHex;
   snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[3]); ledLetterObj["G"] = ledHex;
   snprintf(ledHex, sizeof(ledHex), "#%06X", customLetterColors[4]); ledLetterObj["O"] = ledHex;
+  doc["uiColorTheme"] = uiColorThemeBuf;
+  JsonObject uiCustomObj = doc.createNestedObject("uiCustomColors");
+  char uiHex[8];
+  snprintf(uiHex, sizeof(uiHex), "#%06X", uiCustomLetterColors[0]); uiCustomObj["B"] = uiHex;
+  snprintf(uiHex, sizeof(uiHex), "#%06X", uiCustomLetterColors[1]); uiCustomObj["I"] = uiHex;
+  snprintf(uiHex, sizeof(uiHex), "#%06X", uiCustomLetterColors[2]); uiCustomObj["N"] = uiHex;
+  snprintf(uiHex, sizeof(uiHex), "#%06X", uiCustomLetterColors[3]); uiCustomObj["G"] = uiHex;
+  snprintf(uiHex, sizeof(uiHex), "#%06X", uiCustomLetterColors[4]); uiCustomObj["O"] = uiHex;
   doc["letterFullMode"] = letterFullMode;
   doc["currentNumberEffect"] = currentNumberEffect;
   char currentNumHex[8];
@@ -3067,6 +3301,14 @@ void populateStateJson(JsonObject doc) {
   doc["winnerEffect"] = screensaverTypeToString(winnerEffectType);
   doc["webhookNumberConfigured"] = (webhookNumberUrlBuf[0] != '\0');
   doc["webhookBingoConfigured"] = (webhookBingoUrlBuf[0] != '\0');
+  doc["gifModeEnabled"] = gifModeEnabled;
+  // Always include the mapped URL for the current number so HUD can show it as
+  // soon as GIFs are turned on (client still gates display on gifModeEnabled).
+  if (currentNumber >= 1 && currentNumber <= 75 && numberGifUrl[currentNumber][0] != '\0') {
+    doc["currentGifUrl"] = numberGifUrl[currentNumber];
+  } else {
+    doc["currentGifUrl"] = "";
+  }
   doc["wifiSsid"] = staSsidBuf;
   doc["wifiConfigured"] = (staSsidBuf[0] != '\0');
   doc["wifiConnected"] = wifiStaConnected;
@@ -4285,6 +4527,66 @@ void setup() {
     req->send(200, "application/json", "{}");
   }));
 
+  server.addHandler(new AsyncCallbackJsonWebHandler("/led-color-mode", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* mode = obj["mode"].as<const char*>();
+    if (!mode || strcmp(mode, "ui") != 0) {
+      req->send(400, "application/json", "{\"error\":\"mode must be ui\"}");
+      return;
+    }
+    strcpy(colorModeBuf, "ui");
+    updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("color_mode_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.addHandler(new AsyncCallbackJsonWebHandler("/ui-colors", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    const char* theme = obj["theme"].as<const char*>();
+    if (!isValidUiColorTheme(theme)) {
+      req->send(400, "application/json", "{\"error\":\"invalid theme\"}");
+      return;
+    }
+    JsonObject colors = obj["colors"].as<JsonObject>();
+    if (colors.isNull()) {
+      req->send(400, "application/json", "{\"error\":\"colors required\"}");
+      return;
+    }
+    const char* keys[5] = {"B", "I", "N", "G", "O"};
+    uint32_t parsed[5];
+    for (int i = 0; i < 5; i++) {
+      const char* raw = colors[keys[i]].as<const char*>();
+      if (!raw || !*raw) {
+        req->send(400, "application/json", "{\"error\":\"B/I/N/G/O required\"}");
+        return;
+      }
+      String s(raw);
+      s.trim();
+      if (s.startsWith("#")) s = s.substring(1);
+      if (s.length() != 6) {
+        req->send(400, "application/json", "{\"error\":\"invalid hex\"}");
+        return;
+      }
+      char* endPtr = nullptr;
+      uint32_t value = (uint32_t)strtoul(s.c_str(), &endPtr, 16);
+      if (!endPtr || *endPtr != '\0') {
+        req->send(400, "application/json", "{\"error\":\"invalid hex\"}");
+        return;
+      }
+      parsed[i] = value;
+    }
+    strncpy(uiColorThemeBuf, theme, sizeof(uiColorThemeBuf) - 1);
+    uiColorThemeBuf[sizeof(uiColorThemeBuf) - 1] = '\0';
+    for (int i = 0; i < 5; i++) uiCustomLetterColors[i] = parsed[i];
+    if (strcmp(colorMode, "ui") == 0) updateAllLeds();
+    saveNvsSettings();
+    broadcastStateWs("ui_colors_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
   // Public (no board token): /auth/board/unlock, /card/join|mark|sync-marks|leave|claim.
   // All other mutating game/LED/settings routes must call requireBoardAuth().
   server.addHandler(new AsyncCallbackJsonWebHandler("/auth/board/unlock", [](AsyncWebServerRequest* req, JsonVariant& json) {
@@ -4509,6 +4811,65 @@ void setup() {
     webhookBingoUrlBuf[sizeof(webhookBingoUrlBuf) - 1] = '\0';
     saveNvsSettings();
     broadcastStateWs("webhooks_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/api/number-gifs", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    DynamicJsonDocument doc(GIF_MAP_BLOB_MAX + 1536);
+    doc["enabled"] = gifModeEnabled;
+    JsonObject urls = doc.createNestedObject("urls");
+    for (int i = 1; i <= 75; i++) {
+      if (numberGifUrl[i][0] != '\0') urls[String(i)] = numberGifUrl[i];
+    }
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
+  // Buffer must fit a full sparse URL map in the JSON body.
+  auto* numberGifsHandler = new AsyncCallbackJsonWebHandler("/number-gifs", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    if (!obj.containsKey("urls") || !obj["urls"].is<JsonObject>()) {
+      req->send(400, "application/json", "{\"error\":\"urls object required\"}");
+      return;
+    }
+    String err;
+    if (!applyNumberGifUrlsFromJson(obj["urls"].as<JsonObject>(), &err)) {
+      StaticJsonDocument<96> errDoc;
+      errDoc["error"] = err.c_str();
+      String out;
+      serializeJson(errDoc, out);
+      req->send(400, "application/json", out);
+      return;
+    }
+    if (obj.containsKey("enabled")) {
+      gifModeEnabled = obj["enabled"].as<bool>();
+      saveNvsGifModeEnabledOnly();
+    }
+    if (!saveNvsNumberGifMapOnly()) {
+      req->send(500, "application/json", "{\"error\":\"nvs write failed\"}");
+      return;
+    }
+    broadcastStateWs("number_gifs_changed");
+    req->send(200, "application/json", "{}");
+  });
+  numberGifsHandler->setMaxContentLength(GIF_MAP_BLOB_MAX + 2048);
+  server.addHandler(numberGifsHandler);
+  // GIFs on/off is public so HUD TVs can toggle without a board PIN.
+  // URL map editing remains board-auth via /number-gifs.
+  server.addHandler(new AsyncCallbackJsonWebHandler("/gif-mode", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    JsonObject obj = json.as<JsonObject>();
+    if (!obj.containsKey("enabled")) {
+      req->send(400, "application/json", "{\"error\":\"enabled required\"}");
+      return;
+    }
+    gifModeEnabled = obj["enabled"].as<bool>();
+    if (!saveNvsGifModeEnabledOnly()) {
+      req->send(500, "application/json", "{\"error\":\"nvs write failed\"}");
+      return;
+    }
+    broadcastStateWs("gif_mode_changed");
     req->send(200, "application/json", "{}");
   }));
 

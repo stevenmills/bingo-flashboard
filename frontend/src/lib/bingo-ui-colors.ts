@@ -1,13 +1,6 @@
-import type { Letter } from "@/types";
+import type { BingoUiThemeId, Letter } from "@/types";
 
-export type BingoUiThemeId =
-  | "default"
-  | "rainbow"
-  | "warm_sunset"
-  | "cool_blue"
-  | "high_contrast"
-  | "custom";
-
+export type { BingoUiThemeId };
 export type LetterColors = Record<Letter, string>;
 
 export const BINGO_UI_COLORS_STORAGE_KEY = "bingo-ui-colors";

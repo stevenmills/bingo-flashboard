@@ -94,6 +94,21 @@ const state = {
   brightness: 255,
   colorMode: "theme",
   staticColor: "#00ff00",
+  ledLetterColors: {
+    B: "#3b82f6",
+    I: "#ef4444",
+    N: "#10b981",
+    G: "#f59e0b",
+    O: "#a855f7",
+  },
+  uiColorTheme: "default",
+  uiCustomColors: {
+    B: "#3b82f6",
+    I: "#ef4444",
+    N: "#10b981",
+    G: "#f59e0b",
+    O: "#a855f7",
+  },
   patternIndex: 0,
 };
 
@@ -626,6 +641,46 @@ const server = http.createServer(async (req, res) => {
       state.colorMode = "solid";
     }
     broadcastState("color_changed");
+    return json(res, 200, {});
+  }
+  if (method === "POST" && path === "/letter-colors") {
+    if (!requireBoardAuth(req, res)) return;
+    const body = await parseBody(req);
+    const pick = (k) => {
+      const raw = String(body[k] ?? "").replace("#", "");
+      return raw.length === 6 ? `#${raw.toLowerCase()}` : null;
+    };
+    const next = { B: pick("B"), I: pick("I"), N: pick("N"), G: pick("G"), O: pick("O") };
+    if (Object.values(next).some((v) => !v)) return badRequest(res, "B/I/N/G/O required");
+    state.ledLetterColors = next;
+    state.colorMode = "custom";
+    broadcastState("letter_colors_changed");
+    return json(res, 200, {});
+  }
+  if (method === "POST" && path === "/led-color-mode") {
+    if (!requireBoardAuth(req, res)) return;
+    const body = await parseBody(req);
+    if (body.mode !== "ui") return badRequest(res, "mode must be ui");
+    state.colorMode = "ui";
+    broadcastState("color_mode_changed");
+    return json(res, 200, {});
+  }
+  if (method === "POST" && path === "/ui-colors") {
+    if (!requireBoardAuth(req, res)) return;
+    const body = await parseBody(req);
+    const theme = String(body.theme ?? "");
+    const allowed = new Set(["default", "rainbow", "warm_sunset", "cool_blue", "high_contrast", "custom"]);
+    if (!allowed.has(theme)) return badRequest(res, "invalid theme");
+    const colors = body.colors && typeof body.colors === "object" ? body.colors : {};
+    const pick = (k) => {
+      const raw = String(colors[k] ?? "").replace("#", "");
+      return raw.length === 6 ? `#${raw.toLowerCase()}` : null;
+    };
+    const next = { B: pick("B"), I: pick("I"), N: pick("N"), G: pick("G"), O: pick("O") };
+    if (Object.values(next).some((v) => !v)) return badRequest(res, "B/I/N/G/O required");
+    state.uiColorTheme = theme;
+    state.uiCustomColors = next;
+    broadcastState("ui_colors_changed");
     return json(res, 200, {});
   }
 

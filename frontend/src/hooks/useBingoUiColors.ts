@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Letter } from "@/types";
 import {
   BINGO_UI_COLORS_STORAGE_KEY,
@@ -21,6 +21,8 @@ interface BingoUiColorsState {
   effectiveColors: LetterColors;
   setActiveTheme: (theme: BingoUiThemeId) => void;
   setCustomColor: (letter: Letter, hex: string) => void;
+  /** Apply board-shared UI colors from game state (Board / Card / HUD). */
+  applyServerColors: (theme: BingoUiThemeId, customColors: LetterColors) => void;
 }
 
 const FALLBACK_STATE: StoredBingoUiColors = {
@@ -86,11 +88,35 @@ export function useBingoUiColors(): BingoUiColorsState {
     }));
   };
 
+  const applyServerColors = useCallback((theme: BingoUiThemeId, customColors: LetterColors) => {
+    const nextCustom: LetterColors = {
+      B: normalizeHexColor(customColors.B),
+      I: normalizeHexColor(customColors.I),
+      N: normalizeHexColor(customColors.N),
+      G: normalizeHexColor(customColors.G),
+      O: normalizeHexColor(customColors.O),
+    };
+    setState((prev) => {
+      if (
+        prev.activeTheme === theme &&
+        prev.customColors.B === nextCustom.B &&
+        prev.customColors.I === nextCustom.I &&
+        prev.customColors.N === nextCustom.N &&
+        prev.customColors.G === nextCustom.G &&
+        prev.customColors.O === nextCustom.O
+      ) {
+        return prev;
+      }
+      return { activeTheme: theme, customColors: nextCustom };
+    });
+  }, []);
+
   return {
     activeTheme: state.activeTheme,
     customColors: state.customColors,
     effectiveColors,
     setActiveTheme,
     setCustomColor,
+    applyServerColors,
   };
 }

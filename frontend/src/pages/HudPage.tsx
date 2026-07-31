@@ -1,9 +1,14 @@
+import { useEffect, useState } from "react";
 import { CurrentNumber } from "@/components/CurrentNumber";
 import { CallHistory } from "@/components/CallHistory";
 import { GameTypeIndicator } from "@/components/GameTypeIndicator";
+import { NumberGifOverlay } from "@/components/NumberGifOverlay";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { GameState } from "@/types";
 import type { LetterColors } from "@/lib/bingo-ui-colors";
+
+/** How long to show a number's GIF after it becomes current (independent of caller audio). */
+const GIF_DISPLAY_MS = 4000;
 
 interface Props {
   state: GameState;
@@ -11,8 +16,23 @@ interface Props {
 }
 
 export function HudPage({ state, letterColors }: Props) {
+  const gifsOn = Boolean(state.gifModeEnabled);
+  const gifUrl = (state.currentGifUrl ?? "").trim();
+  const current = state.current;
+  const [overlayVisible, setOverlayVisible] = useState(false);
+
+  useEffect(() => {
+    if (!gifsOn || !gifUrl || current < 1) {
+      setOverlayVisible(false);
+      return;
+    }
+    setOverlayVisible(true);
+    const id = window.setTimeout(() => setOverlayVisible(false), GIF_DISPLAY_MS);
+    return () => window.clearTimeout(id);
+  }, [gifsOn, gifUrl, current]);
+
   return (
-    <div className="h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden">
+    <div className="relative h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden">
       <div className="grid h-full min-h-0 grid-cols-[3fr_1fr] gap-3 p-3">
         <CurrentNumber
           current={state.current}
@@ -52,6 +72,7 @@ export function HudPage({ state, letterColors }: Props) {
           </Card>
         </div>
       </div>
+      <NumberGifOverlay url={gifUrl} number={current} visible={overlayVisible} />
     </div>
   );
 }

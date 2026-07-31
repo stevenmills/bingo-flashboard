@@ -12,6 +12,7 @@ import type {
   CurrentNumberEffect,
   ScreensaverType,
   WebhookSettings,
+  NumberGifSettings,
 } from "./types";
 import {
   BOARD_SESSION_MS,
@@ -579,6 +580,20 @@ const realApi = {
       O: colors.O.replace("#", ""),
     }),
 
+  setLedMatchUiColors: () => postBoardJson("/led-color-mode", { mode: "ui" }),
+
+  setUiColors: (theme: string, colors: Record<Letter, string>) =>
+    postBoardJson("/ui-colors", {
+      theme,
+      colors: {
+        B: colors.B.startsWith("#") ? colors.B : `#${colors.B}`,
+        I: colors.I.startsWith("#") ? colors.I : `#${colors.I}`,
+        N: colors.N.startsWith("#") ? colors.N : `#${colors.N}`,
+        G: colors.G.startsWith("#") ? colors.G : `#${colors.G}`,
+        O: colors.O.startsWith("#") ? colors.O : `#${colors.O}`,
+      },
+    }),
+
   setLetterFullMode: (mode: LetterFullMode) =>
     postForm("/letter-full-mode", { mode }),
 
@@ -612,6 +627,28 @@ const realApi = {
 
   setWebhooks: (settings: WebhookSettings) =>
     postBoardJson("/webhooks", settings),
+
+  getNumberGifs: async (): Promise<NumberGifSettings> => {
+    syncBoardTokenFromStorage();
+    const { signal, cancel } = abortAfterMs(fetchTimeoutMs());
+    try {
+      const headers: Record<string, string> = {};
+      if (boardToken) headers["X-Board-Token"] = boardToken;
+      const res = await fetch(`${BASE}/api/number-gifs`, { signal, headers });
+      cancel();
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    } catch (err) {
+      cancel();
+      throw err;
+    }
+  },
+
+  setNumberGifs: (settings: Pick<NumberGifSettings, "urls"> & { enabled?: boolean }) =>
+    postBoardJson("/number-gifs", settings),
+
+  /** Public — HUD TVs can turn GIFs on/off without a board PIN. */
+  setGifMode: (enabled: boolean) => postJson("/gif-mode", { enabled }, false),
 
   setWifiCredentials: (ssid: string, password?: string) => {
     const body: { ssid: string; password?: string } = { ssid };
@@ -795,6 +832,12 @@ export const api = {
   setLedLetterColors: async (colors: Record<Letter, string>) =>
     shouldUseMock() ? mockApi.setLedLetterColors(colors) : realApi.setLedLetterColors(colors),
 
+  setLedMatchUiColors: async () =>
+    shouldUseMock() ? mockApi.setLedMatchUiColors() : realApi.setLedMatchUiColors(),
+
+  setUiColors: async (theme: string, colors: Record<Letter, string>) =>
+    shouldUseMock() ? mockApi.setUiColors(theme, colors) : realApi.setUiColors(theme, colors),
+
   setLetterFullMode: async (mode: LetterFullMode) =>
     shouldUseMock() ? mockApi.setLetterFullMode(mode) : realApi.setLetterFullMode(mode),
 
@@ -815,6 +858,15 @@ export const api = {
 
   setWebhooks: async (settings: WebhookSettings) =>
     shouldUseMock() ? mockApi.setWebhooks(settings) : realApi.setWebhooks(settings),
+
+  getNumberGifs: async (): Promise<NumberGifSettings> =>
+    shouldUseMock() ? mockApi.getNumberGifs() : realApi.getNumberGifs(),
+
+  setNumberGifs: async (settings: Pick<NumberGifSettings, "urls"> & { enabled?: boolean }) =>
+    shouldUseMock() ? mockApi.setNumberGifs(settings) : realApi.setNumberGifs(settings),
+
+  setGifMode: async (enabled: boolean) =>
+    shouldUseMock() ? mockApi.setGifMode(enabled) : realApi.setGifMode(enabled),
 
   setWifiCredentials: async (ssid: string, password?: string) =>
     shouldUseMock() ? mockApi.setWifiCredentials(ssid, password) : realApi.setWifiCredentials(ssid, password),

@@ -78,5 +78,6 @@ export function optimisticResetState(prev: GameState): GameState {
     autoCallingEnabled: false,
     autoCallingHold: false,
     autoCallingRemainingMs: 0,
+    currentGifUrl: "",
   };
 }

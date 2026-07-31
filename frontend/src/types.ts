@@ -73,6 +73,10 @@ export interface GameState {
   ledHeaderColor: string;
   ledGameTypeColor: string;
   ledLetterColors: LedLetterColors;
+  /** Board-shared BINGO UI letter theme (Default / Rainbow / … / Custom) */
+  uiColorTheme?: BingoUiThemeId;
+  /** Custom UI letter colors (used when uiColorTheme is custom) */
+  uiCustomColors?: LedLetterColors;
   /** When a letter column is fully called: on | off | number_theme */
   letterFullMode: LetterFullMode;
   /** Current-number beacon animation */
@@ -85,6 +89,10 @@ export interface GameState {
   /** Webhook URLs configured (full URLs are board-auth only via /webhooks) */
   webhookNumberConfigured?: boolean;
   webhookBingoConfigured?: boolean;
+  /** Board-shared HUD GIFs armed (header toggle) */
+  gifModeEnabled?: boolean;
+  /** GIF URL mapped for the current called number (display still gated by gifModeEnabled) */
+  currentGifUrl?: string;
   wifiSsid?: string;
   wifiConfigured?: boolean;
   wifiConnected?: boolean;
@@ -99,6 +107,12 @@ export interface GameState {
 export interface WebhookSettings {
   numberCalledUrl: string;
   bingoUrl: string;
+}
+
+/** Sparse number → GIF URL map (keys "1"…"75"); board-auth only via /number-gifs. */
+export interface NumberGifSettings {
+  enabled: boolean;
+  urls: Record<string, string>;
 }
 
 export type LetterFullMode = "on" | "off" | "number_theme";
@@ -200,7 +214,15 @@ export interface CardStateResponse {
 }
 
 export type CallingStyle = "automatic" | "manual";
-export type ColorMode = "theme" | "solid" | "custom";
+export type ColorMode = "theme" | "solid" | "custom" | "ui";
+
+export type BingoUiThemeId =
+  | "default"
+  | "rainbow"
+  | "warm_sunset"
+  | "cool_blue"
+  | "high_contrast"
+  | "custom";
 
 export const LETTERS = ["B", "I", "N", "G", "O"] as const;
 export type Letter = (typeof LETTERS)[number];
@@ -293,6 +315,8 @@ export const DEFAULT_STATE: GameState = {
   ledHeaderColor: "#ffd8a8",
   ledGameTypeColor: "#ffd8a8",
   ledLetterColors: DEFAULT_LED_LETTER_COLORS,
+  uiColorTheme: "default",
+  uiCustomColors: DEFAULT_LED_LETTER_COLORS,
   letterFullMode: "on",
   currentNumberEffect: "flash",
   currentNumberColor: "#ffffff",
@@ -300,6 +324,8 @@ export const DEFAULT_STATE: GameState = {
   winnerEffect: "sparkle",
   webhookNumberConfigured: false,
   webhookBingoConfigured: false,
+  gifModeEnabled: false,
+  currentGifUrl: "",
   wifiSsid: "",
   wifiConfigured: false,
   wifiConnected: false,

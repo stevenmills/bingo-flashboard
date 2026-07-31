@@ -19,12 +19,18 @@ import {
   type Letter,
   type LetterFullMode,
   type CurrentNumberEffect,
+  type BingoUiThemeId,
   SCREENSAVER_TYPE_LABELS,
   type ScreensaverType,
   LETTER_FULL_MODE_LABELS,
   CURRENT_NUMBER_EFFECT_LABELS,
   type WebhookSettings,
+  type NumberGifSettings,
 } from "./types";
+import { isBingoUiThemeId, normalizeHexColor } from "./lib/bingo-ui-colors";
+
+const GIF_URL_MAX_LEN = 256;
+const GIF_MAP_BLOB_MAX = 6144;
 
 // Deep clone initial state, restoring persisted game type and calling style
 const state: GameState = JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -36,6 +42,35 @@ let webhookSettings: WebhookSettings = {
 };
 state.webhookNumberConfigured = webhookSettings.numberCalledUrl.trim().length > 0;
 state.webhookBingoConfigured = webhookSettings.bingoUrl.trim().length > 0;
+
+function readNumberGifUrls(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem("bingo-number-gif-urls");
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) out[k] = v.trim();
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+let numberGifUrls: Record<string, string> = readNumberGifUrls();
+state.gifModeEnabled = localStorage.getItem("bingo-gif-mode-enabled") === "1";
+
+function syncCurrentGifUrl() {
+  const n = state.current;
+  if (typeof n === "number" && n >= 1 && n <= 75 && numberGifUrls[String(n)]) {
+    state.currentGifUrl = numberGifUrls[String(n)];
+  } else {
+    state.currentGifUrl = "";
+  }
+}
+syncCurrentGifUrl();
 const savedGameType = localStorage.getItem("bingo-gameType");
 if (savedGameType && isGameType(savedGameType)) {
   state.gameType = savedGameType;
@@ -240,6 +275,7 @@ function syncScreensaverActive() {
 
 function snapshot(): GameState {
   syncScreensaverActive();
+  syncCurrentGifUrl();
   return JSON.parse(JSON.stringify(state));
 }
 
@@ -853,6 +889,28 @@ export const mockApi = {
     return {};
   },
 
+  setLedMatchUiColors: async () => {
+    await delay(10);
+    assertBoardAuth();
+    state.colorMode = "ui";
+    return {};
+  },
+
+  setUiColors: async (theme: string, colors: Record<Letter, string>) => {
+    await delay(10);
+    assertBoardAuth();
+    if (!isBingoUiThemeId(theme)) throw new Error("invalid theme");
+    state.uiColorTheme = theme as BingoUiThemeId;
+    state.uiCustomColors = {
+      B: normalizeHexColor(colors.B),
+      I: normalizeHexColor(colors.I),
+      N: normalizeHexColor(colors.N),
+      G: normalizeHexColor(colors.G),
+      O: normalizeHexColor(colors.O),
+    };
+    return {};
+  },
+
   setLetterFullMode: async (mode: LetterFullMode) => {
     await delay(10);
     assertBoardAuth();
@@ -901,6 +959,46 @@ export const mockApi = {
     await delay(10);
     assertBoardAuth();
     return { ...webhookSettings };
+  },
+
+  getNumberGifs: async (): Promise<NumberGifSettings> => {
+    await delay(10);
+    assertBoardAuth();
+    return { enabled: Boolean(state.gifModeEnabled), urls: { ...numberGifUrls } };
+  },
+
+  setNumberGifs: async (settings: Pick<NumberGifSettings, "urls"> & { enabled?: boolean }) => {
+    await delay(10);
+    assertBoardAuth();
+    const next: Record<string, string> = {};
+    const urls = settings.urls ?? {};
+    for (const [k, v] of Object.entries(urls)) {
+      const n = Number.parseInt(k, 10);
+      if (!Number.isFinite(n) || n < 1 || n > 75) throw new Error("invalid number key");
+      const url = typeof v === "string" ? v.trim() : "";
+      if (!url) continue;
+      if (url.length > GIF_URL_MAX_LEN) throw new Error("url too long");
+      if (!/^https?:\/\//i.test(url)) throw new Error("url must be http(s)");
+      next[String(n)] = url;
+    }
+    if (JSON.stringify(next).length > GIF_MAP_BLOB_MAX) throw new Error("map too large for NVS");
+    numberGifUrls = next;
+    localStorage.setItem("bingo-number-gif-urls", JSON.stringify(numberGifUrls));
+    if (typeof settings.enabled === "boolean") {
+      state.gifModeEnabled = settings.enabled;
+      localStorage.setItem("bingo-gif-mode-enabled", settings.enabled ? "1" : "0");
+    }
+    syncCurrentGifUrl();
+    return {};
+  },
+
+  setGifMode: async (enabled: boolean) => {
+    await delay(10);
+    // Public — matches firmware /gif-mode (HUD can toggle without PIN).
+    state.gifModeEnabled = Boolean(enabled);
+    localStorage.setItem("bingo-gif-mode-enabled", state.gifModeEnabled ? "1" : "0");
+    syncCurrentGifUrl();
+    return {};
   },
 
   setWebhooks: async (settings: WebhookSettings) => {

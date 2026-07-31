@@ -12,6 +12,7 @@ import type { RefreshOptions } from "@/hooks/useGameState";
 import {
   THEME_NAMES,
   LETTERS,
+  LETTER_RANGES,
   DEFAULT_LED_LETTER_COLORS,
   SCREENSAVER_TYPE_DESCRIPTIONS,
   SCREENSAVER_TYPE_LABELS,
@@ -35,7 +36,7 @@ import {
 } from "@/lib/bingo-ui-colors";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { Check, Copy, FileStack, Lightbulb, Lock, MonitorPlay, Palette, Play, Power, RefreshCw, Square, Volume2, Webhook, Wifi, X } from "lucide-react";
+import { Check, Copy, FileStack, Image, Lightbulb, Lock, MonitorPlay, Palette, Play, Power, RefreshCw, Square, Volume2, Webhook, Wifi, X } from "lucide-react";
 import { buildCardClaimUrl, generateSignedPrintableCards } from "@/lib/bingo-card-codec";
 import {
   CARD_FILL_DEFAULT,
@@ -48,9 +49,27 @@ import {
 
 const STATIC_VALUE = "static";
 const CUSTOM_LETTERS_VALUE = "custom_letters";
+const UI_LETTERS_VALUE = "ui_letters";
 const MAX_BRIGHTNESS = 255;
 
-type SettingsTabId = "leds" | "screensaver" | "ui" | "caller" | "cards" | "wifi" | "webhooks" | "access";
+type SettingsTabId =
+  | "leds"
+  | "screensaver"
+  | "ui"
+  | "caller"
+  | "cards"
+  | "wifi"
+  | "webhooks"
+  | "gifs"
+  | "access";
+
+const GIF_URL_MAX_LEN = 256;
+
+function emptyGifUrlDrafts(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let n = 1; n <= 75; n++) out[String(n)] = "";
+  return out;
+}
 
 function SettingsPanel({
   title,
@@ -240,6 +259,10 @@ export function Settings({
   const [localWebhookBingoUrl, setLocalWebhookBingoUrl] = useState("");
   const [webhooksLoaded, setWebhooksLoaded] = useState(false);
   const [webhooksMessage, setWebhooksMessage] = useState<string | null>(null);
+  const [localGifUrls, setLocalGifUrls] = useState<Record<string, string>>(() => emptyGifUrlDrafts());
+  const [gifsLoaded, setGifsLoaded] = useState(false);
+  const [gifsMessage, setGifsMessage] = useState<string | null>(null);
+  const [gifJsonPaste, setGifJsonPaste] = useState("");
   const [localWifiSsid, setLocalWifiSsid] = useState(wifiSsid);
   const [localWifiPassword, setLocalWifiPassword] = useState("");
   const [wifiMessage, setWifiMessage] = useState<string | null>(null);
@@ -345,6 +368,9 @@ export function Settings({
     setLocalWifiPassword("");
     setWebhooksLoaded(false);
     setWebhooksMessage(null);
+    setGifsLoaded(false);
+    setGifsMessage(null);
+    setGifJsonPaste("");
     setLocalUiCustomColors(uiCustomColors);
     setLocalCallerSpeechRate(callerSpeechRate);
     setLocalCallerVoice(callerVoice);
@@ -421,12 +447,14 @@ export function Settings({
     return () => stopCallerExample();
   }, []);
 
-  // The select value: "0"–"7" for palettes, "static" for solid color
+  // The select value: theme index, static, custom letters, or match UI letters
   const selectValue = localColorMode === "solid"
     ? STATIC_VALUE
     : localColorMode === "custom"
       ? CUSTOM_LETTERS_VALUE
-      : String(localTheme);
+      : localColorMode === "ui"
+        ? UI_LETTERS_VALUE
+        : String(localTheme);
 
   const handleBoardAuthFailure = (error: unknown) => {
     if (isBoardAuthHttpError(error)) {
@@ -450,6 +478,15 @@ export function Settings({
     if (value === CUSTOM_LETTERS_VALUE) {
       setLocalColorMode("custom");
       persistSetting(() => api.setLedLetterColors(localLedLetterColors));
+      return;
+    }
+    if (value === UI_LETTERS_VALUE) {
+      setLocalColorMode("ui");
+      // Push current UI palette first so the strip matches what the board is showing.
+      persistSetting(async () => {
+        await api.setUiColors(uiColorTheme, localUiCustomColors);
+        await api.setLedMatchUiColors();
+      });
       return;
     }
     const nextTheme = parseInt(value, 10);
@@ -579,15 +616,24 @@ export function Settings({
     setEditingHexField(null);
   };
 
+  const persistUiColors = (theme: BingoUiThemeId, colors: LetterColors) => {
+    if (!boardAuthGranted) return;
+    persistSetting(() => api.setUiColors(theme, colors));
+  };
+
   const handleUiThemeChange = (value: string) => {
-    onUiColorThemeChange(value as BingoUiThemeId);
+    const theme = value as BingoUiThemeId;
+    onUiColorThemeChange(theme);
+    persistUiColors(theme, localUiCustomColors);
   };
 
   const handleUiCustomColorPicker =
     (letter: (typeof LETTERS)[number]) => (e: ChangeEvent<HTMLInputElement>) => {
       const next = e.target.value;
-      setLocalUiCustomColors((prev) => ({ ...prev, [letter]: next }));
+      const colors = { ...localUiCustomColors, [letter]: next };
+      setLocalUiCustomColors(colors);
       onUiCustomColorChange(letter, next);
+      persistUiColors("custom", colors);
     };
 
   const handleUiCustomColorHex =
@@ -601,7 +647,10 @@ export function Settings({
       setEditingHexField(null);
       return;
     }
+    const colors = { ...localUiCustomColors, [letter]: value };
+    setLocalUiCustomColors(colors);
     onUiCustomColorChange(letter, value);
+    persistUiColors("custom", colors);
     setEditingHexField(null);
   };
 
@@ -714,6 +763,7 @@ export function Settings({
       { id: "cards", label: "Cards", icon: <FileStack className="h-3.5 w-3.5" /> },
       { id: "wifi", label: "WiFi", icon: <Wifi className="h-3.5 w-3.5" /> },
       { id: "webhooks", label: "Webhooks", icon: <Webhook className="h-3.5 w-3.5" /> },
+      { id: "gifs", label: "GIFs", icon: <Image className="h-3.5 w-3.5" /> },
       { id: "access", label: "Access", icon: <Lock className="h-3.5 w-3.5" /> }
     );
     return tabs;
@@ -827,6 +877,7 @@ export function Settings({
 
   useEffect(() => {
     if (settingsTab === "webhooks") loadWebhooks();
+    if (settingsTab === "gifs") loadNumberGifs();
   }, [settingsTab, boardAuthGranted]);
 
   useEffect(() => {
@@ -927,6 +978,79 @@ export function Settings({
         handleBoardAuthFailure(error);
         setWebhooksMessage("Unable to save webhooks.");
       });
+  };
+
+  const loadNumberGifs = () => {
+    if (!boardAuthGranted || gifsLoaded) return;
+    void api
+      .getNumberGifs()
+      .then((settings) => {
+        const next = emptyGifUrlDrafts();
+        for (const [k, v] of Object.entries(settings.urls ?? {})) {
+          if (k in next && typeof v === "string") next[k] = v;
+        }
+        setLocalGifUrls(next);
+        setGifsLoaded(true);
+      })
+      .catch((error: unknown) => {
+        handleBoardAuthFailure(error);
+        setGifsMessage("Unable to load GIF URLs.");
+      });
+  };
+
+  const handleNumberGifsSave = () => {
+    setGifsMessage(null);
+    const urls: Record<string, string> = {};
+    for (let n = 1; n <= 75; n++) {
+      const raw = (localGifUrls[String(n)] ?? "").trim();
+      if (!raw) continue;
+      if (raw.length > GIF_URL_MAX_LEN) {
+        setGifsMessage(`URL for ${n} is too long (max ${GIF_URL_MAX_LEN}).`);
+        return;
+      }
+      if (!/^https?:\/\//i.test(raw)) {
+        setGifsMessage(`URL for ${n} must start with http:// or https://.`);
+        return;
+      }
+      urls[String(n)] = raw;
+    }
+    void api
+      .setNumberGifs({ urls })
+      .then(() => {
+        setGifsMessage("GIF URLs saved. Use the header Image button to turn GIFs on.");
+        onRefresh({ force: true });
+      })
+      .catch((error: unknown) => {
+        handleBoardAuthFailure(error);
+        const msg = error instanceof Error ? error.message : "";
+        setGifsMessage(
+          msg.includes("too large") || msg.includes("map too large")
+            ? "Map too large for board storage — shorten URLs or remove some."
+            : "Unable to save GIF URLs."
+        );
+      });
+  };
+
+  const handleGifJsonPasteApply = () => {
+    setGifsMessage(null);
+    try {
+      const parsed = JSON.parse(gifJsonPaste) as unknown;
+      const map =
+        parsed && typeof parsed === "object" && "urls" in (parsed as object)
+          ? (parsed as { urls: unknown }).urls
+          : parsed;
+      if (!map || typeof map !== "object") throw new Error("invalid");
+      const next = { ...localGifUrls };
+      for (const [k, v] of Object.entries(map as Record<string, unknown>)) {
+        const n = Number.parseInt(k, 10);
+        if (!Number.isFinite(n) || n < 1 || n > 75) continue;
+        next[String(n)] = typeof v === "string" ? v : "";
+      }
+      setLocalGifUrls(next);
+      setGifsMessage("JSON applied — review URLs and save.");
+    } catch {
+      setGifsMessage("Invalid JSON. Use { \"12\": \"https://…\" } or { \"urls\": { … } }.");
+    }
   };
 
   const handleBoardPinChange = async () => {
@@ -1151,8 +1275,14 @@ export function Settings({
                       ))}
                       <SelectItem value={STATIC_VALUE}>Static</SelectItem>
                       <SelectItem value={CUSTOM_LETTERS_VALUE}>Custom BINGO Letters</SelectItem>
+                      <SelectItem value={UI_LETTERS_VALUE}>Match UI Letters</SelectItem>
                     </SelectContent>
                   </Select>
+                  {localColorMode === "ui" && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Number LEDs use solid colors from the UI Colors tab (B/I/N/G/O), synced to every client.
+                    </p>
+                  )}
                 </div>
 
                 {localColorMode === "solid" && (
@@ -1571,7 +1701,7 @@ export function Settings({
           <TabsContent value="ui" className="mt-0 outline-none">
             <SettingsPanel
               title="BINGO UI colors"
-              description="Colors used in the web interface only — not the physical LED strip."
+              description="Shared across Board, Card, and HUD. Choose Match UI Letters under LEDs to drive the strip from these colors."
             >
               <SettingsGroup>
                 <div>
@@ -2046,6 +2176,96 @@ export function Settings({
             </SettingsPanel>
           </TabsContent>
 
+          <TabsContent
+            value="gifs"
+            className="mt-0 outline-none"
+            onFocusCapture={loadNumberGifs}
+          >
+            <SettingsPanel
+              title="Number GIFs"
+              description="Optional GIF URLs for each called number. Shown on HUD when GIFs are on (header Image button) — independent of caller/jokes. URLs are stored on the board (max 256 chars each)."
+            >
+              <SettingsGroup>
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label>Paste JSON map</Label>
+                    <textarea
+                      value={gifJsonPaste}
+                      onChange={(e) => setGifJsonPaste(e.target.value)}
+                      placeholder='{ "12": "https://example.com/b12.gif" }'
+                      disabled={!boardAuthGranted}
+                      rows={3}
+                      className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={loadNumberGifs}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!boardAuthGranted || !gifJsonPaste.trim()}
+                      onClick={handleGifJsonPasteApply}
+                    >
+                      Apply JSON
+                    </Button>
+                  </div>
+                  {LETTERS.map((letter) => {
+                    const [lo, hi] = LETTER_RANGES[letter];
+                    const nums: number[] = [];
+                    for (let n = lo; n <= hi; n++) nums.push(n);
+                    return (
+                      <div key={letter} className="space-y-2">
+                        <p className="text-sm font-semibold" style={{ color: letterColors[letter] }}>
+                          {letter} ({lo}–{hi})
+                        </p>
+                        <div className="grid gap-2">
+                          {nums.map((n) => (
+                            <div key={n} className="flex items-center gap-2">
+                              <span className="w-10 shrink-0 text-xs tabular-nums text-muted-foreground">
+                                {letter}-{n}
+                              </span>
+                              <Input
+                                value={localGifUrls[String(n)] ?? ""}
+                                onChange={(e) =>
+                                  setLocalGifUrls((prev) => ({
+                                    ...prev,
+                                    [String(n)]: e.target.value,
+                                  }))
+                                }
+                                placeholder="https://…"
+                                disabled={!boardAuthGranted}
+                                maxLength={GIF_URL_MAX_LEN}
+                                className="min-w-0 flex-1"
+                                style={{ borderColor: letterColors[letter] }}
+                                onFocus={(e) => {
+                                  loadNumberGifs();
+                                  focusWithLetterN(e, letterColors[letter]);
+                                }}
+                                onBlur={(e) => blurWithLetterN(e, letterColors[letter])}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <Button
+                    type="button"
+                    onClick={handleNumberGifsSave}
+                    disabled={!boardAuthGranted}
+                    className="text-white"
+                    style={{ backgroundColor: letterColors.N }}
+                  >
+                    Save GIF URLs
+                  </Button>
+                  {gifsMessage && (
+                    <p className="text-xs text-muted-foreground">{gifsMessage}</p>
+                  )}
+                </div>
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+
           <TabsContent value="access" className="mt-0 outline-none">
             <SettingsPanel
               title="Board access"
@@ -2114,7 +2334,7 @@ export function Settings({
       ) : (
         <SettingsPanel
           title="BINGO UI colors"
-          description="Colors used in the web interface only."
+          description="Shared from the board when connected. Changes here stay on this device unless board settings push an update."
         >
           <SettingsGroup>
             <div>

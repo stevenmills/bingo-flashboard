@@ -44,6 +44,12 @@
 #define NVS_LED_COLOR_N "ln"
 #define NVS_LED_COLOR_G "lg"
 #define NVS_LED_COLOR_O "lo"
+#define NVS_UI_COLOR_THEME "ut"
+#define NVS_UI_COLOR_B "ucb"
+#define NVS_UI_COLOR_I "uci"
+#define NVS_UI_COLOR_N "ucn"
+#define NVS_UI_COLOR_G "ucg"
+#define NVS_UI_COLOR_O "uco"
 #define NVS_GAME_TYPE "gt"
 #define NVS_CALLING_STYLE "cs"
 #define NVS_BOARD_PIN "bp"
@@ -60,10 +66,16 @@
 #define NVS_WEBHOOK_BINGO_URL "wbu"
 #define NVS_WIFI_SSID "ws"
 #define NVS_WIFI_PASSWORD "wp"
+#define NVS_GIF_MODE_ENABLED "gme"
+#define NVS_NUMBER_GIF_MAP "ngm"
 
 #define WIFI_STA_CONNECT_TIMEOUT_MS 15000UL
 #define WIFI_SSID_MAX_LEN 32
 #define WIFI_PASSWORD_MAX_LEN 64
 #define WEBHOOK_URL_MAX_LEN 256
+/** Per-number GIF URL cap (CDN links are often long). */
+#define GIF_URL_MAX_LEN 256
+/** Sparse JSON map blob max size in NVS. */
+#define GIF_MAP_BLOB_MAX 6144
 
 #endif

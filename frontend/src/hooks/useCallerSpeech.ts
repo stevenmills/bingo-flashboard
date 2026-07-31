@@ -189,6 +189,8 @@ interface UseCallerSpeechState {
   speechSupported: boolean;
   speechRate: number;
   callerVoice: CallerVoiceId;
+  /** Number currently being announced (incl. joke/column prompts); null when idle. */
+  announcementNumber: number | null;
   /** Read whether call-out audio is currently holding the auto-call timer (ref-based). */
   isAudioHoldActive: () => boolean;
   /** Start loading a number clip (e.g. on pointer-down before tap completes). */
@@ -219,6 +221,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
   const [speechUnlocked, setSpeechUnlocked] = useState(false);
   const [speechRate, setSpeechRateState] = useState<number>(() => readCallerSpeechRate());
   const [callerVoice, setCallerVoiceState] = useState<CallerVoiceId>(() => readCallerVoice());
+  const [announcementNumber, setAnnouncementNumber] = useState<number | null>(null);
   const [speechSupported] = useState<boolean>(
     () =>
       typeof window !== "undefined" &&
@@ -751,6 +754,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
       if (!speechOnRef.current || !speechUnlockedRef.current) return;
       const voice = callerVoiceRef.current;
       const generation = ++playGenerationRef.current;
+      setAnnouncementNumber(n);
       const clipUrl = numberClipUrl(voice, n);
       const jokeUrl = jokesOnRef.current ? jokeClipUrl(voice, n) : null;
       const calledBefore = new Set(calledRef.current);
@@ -827,6 +831,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
           window.clearTimeout(holdDelayId);
           if (generation === playGenerationRef.current) {
             playbackBusyRef.current = false;
+            setAnnouncementNumber(null);
             const playBingo = pendingBingoRef.current;
             pendingBingoRef.current = false;
             // Release hold first so firmware activates deferred winner mode, then bingo audio.
@@ -898,6 +903,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
         discardCachedJokeClips(callerVoiceRef.current);
         playGenerationRef.current += 1;
         playbackBusyRef.current = false;
+        setAnnouncementNumber(null);
         stopAudio();
         notifyBoardWaitForAudio(false);
         void releaseAutoCallingHold(true);
@@ -1022,6 +1028,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     cancelVoicePrefetch();
     playGenerationRef.current += 1;
     playbackBusyRef.current = false;
+    setAnnouncementNumber(null);
     stopAudio();
     // Only clear firmware wait-audio/hold if this tab was the board caller.
     if (!mayNotifyBoardAudioRef.current) return;
@@ -1154,6 +1161,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
         pendingBingoRef.current = false;
         playGenerationRef.current += 1;
         playbackBusyRef.current = false;
+        setAnnouncementNumber(null);
         stopAudio();
       }
       return;
@@ -1255,6 +1263,7 @@ export function useCallerSpeech(options: UseCallerSpeechOptions): UseCallerSpeec
     speechSupported,
     speechRate,
     callerVoice,
+    announcementNumber,
     isAudioHoldActive,
     prefetchNumberClip,
     announceNumberNow,

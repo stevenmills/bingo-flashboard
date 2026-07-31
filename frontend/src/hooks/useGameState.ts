@@ -264,7 +264,9 @@ export function useGameState(pollMs = isOnBoardHost() ? 4000 : 1500) {
             msgType === "number_called" ||
             msgType === "number_undone" ||
             msgType === "screensaver_changed" ||
-            msgType === "auto_calling_changed";
+            msgType === "auto_calling_changed" ||
+            msgType === "gif_mode_changed" ||
+            msgType === "number_gifs_changed";
           const allowCallRegression =
             msgType === "game_reset" || msgType === "number_undone";
           if (mountedRef.current) {
