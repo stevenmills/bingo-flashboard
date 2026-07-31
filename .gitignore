@@ -6,6 +6,9 @@ AGENTS.md
 .env.local
 .env.*.local
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Vite → SPIFFS UI output (make frontend-build / make deploy). Keep MP3s + static assets.
 data/index.html
 data/*.js
