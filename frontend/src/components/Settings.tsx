@@ -188,6 +188,8 @@ interface Props {
   onCallerVoiceChange?: (voice: CallerVoiceId) => void;
   onClose?: () => void;
   onRefresh: (options?: RefreshOptions) => void;
+  /** Revoke the shared board token on every device. */
+  onLockAllDevices?: () => void;
 }
 
 export function Settings({
@@ -228,6 +230,7 @@ export function Settings({
   onCallerVoiceChange,
   onClose,
   onRefresh,
+  onLockAllDevices,
 }: Props) {
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
   const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
@@ -2269,7 +2272,7 @@ export function Settings({
           <TabsContent value="access" className="mt-0 outline-none">
             <SettingsPanel
               title="Board access"
-              description="Change the PIN that unlocks board controls on this device."
+              description="Change the PIN that unlocks board and scan controls. Multiple devices can stay unlocked at once with the same PIN."
             >
               <SettingsGroup>
                 <div className="grid sm:grid-cols-2 gap-3">
@@ -2307,6 +2310,23 @@ export function Settings({
                   {pinMessage && <span className="text-xs text-muted-foreground">{pinMessage}</span>}
                 </div>
               </SettingsGroup>
+              {onLockAllDevices ? (
+                <SettingsGroup
+                  title="Lock all devices"
+                  description="Revoke board authorization everywhere (laptop, phone, etc.). Each device must enter the PIN again."
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!boardAuthGranted}
+                    onClick={onLockAllDevices}
+                    className="gap-1.5"
+                  >
+                    <Lock className="h-3.5 w-3.5" />
+                    Lock all devices
+                  </Button>
+                </SettingsGroup>
+              ) : null}
               <SettingsGroup
                 title="Restart"
                 description="Soft-reboot the ESP32 (same as a power cycle for firmware and WiFi). The web UI will reconnect after the board comes back."

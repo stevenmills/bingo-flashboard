@@ -20,6 +20,7 @@
 #include "mbedtls/md.h"
 #include "driver/gpio.h"
 #include "config.h"
+#include "crash_log.h"
 #include "led_map.h"
 #include "game_types.generated.h"
 
@@ -150,6 +151,8 @@ int sectionStartCol[3] = {16, 0, 1};
 static char staSsidBuf[WIFI_SSID_MAX_LEN + 1] = "";
 static char staPasswordBuf[WIFI_PASSWORD_MAX_LEN + 1] = "";
 bool wifiStaConnected = false;
+static bool wifiStaConnecting = false;
+static unsigned long wifiStaAttemptStartMs = 0;
 static bool pendingBoardRestart = false;
 static unsigned long pendingBoardRestartAtMs = 0;
 
@@ -311,6 +314,7 @@ void saveNvsGameTypeOnly();
 void saveNvsCallingStyleOnly();
 void saveNvsScreensaverEnabledOnly();
 void setupWiFi();
+void pollWifiStaConnect();
 void startMdns();
 void saveGameStateSnapshot();
 bool loadGameStateSnapshot();
@@ -330,6 +334,7 @@ void clearBoardUnlockFailures();
 void issueBoardAuthToken();
 void ensureBoardAuthToken();
 void syncWinnerDeclared();
+void syncWinnerDeclared(bool forceImmediate);
 void armWinnerLedsForSource();
 void clearWinnerLedTimer();
 bool winnerLedsShouldShow();
@@ -2041,6 +2046,10 @@ bool winnerLedsShouldShow() {
 }
 
 void syncWinnerDeclared() {
+  syncWinnerDeclared(false);
+}
+
+void syncWinnerDeclared(bool forceImmediate) {
   const bool want = !winnerSuppressed && (manualWinnerDeclared || (winnerCount > 0));
   if (!want) {
     winnerDeclared = false;
@@ -2051,7 +2060,8 @@ void syncWinnerDeclared() {
   }
   // When the board is mid call-out (hold + wait-for-audio), defer winner mode so
   // the number finishes speaking before bingo audio / sparkle / dialog.
-  if (autoCallingWaitForAudio && autoCallingHold && !winnerDeclared) {
+  // Physical Button 2 long-press passes forceImmediate to skip that deferral.
+  if (!forceImmediate && autoCallingWaitForAudio && autoCallingHold && !winnerDeclared) {
     pendingWinnerActivation = true;
     return;
   }
@@ -2831,34 +2841,55 @@ void startMdns() {
   }
 }
 
-void setupWiFi() {
-  if (staSsidBuf[0] != '\0') {
-    Serial.printf("Attempting WiFi STA: %s\n", staSsidBuf);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(staSsidBuf, staPasswordBuf);
-    const unsigned long startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - startMs) < WIFI_STA_CONNECT_TIMEOUT_MS) {
-      delay(250);
-      Serial.print(".");
-    }
-    Serial.println();
-    if (WiFi.status() == WL_CONNECTED) {
-      wifiStaConnected = true;
-      Serial.print("STA connected, IP: ");
-      Serial.println(WiFi.localIP());
-      startMdns();
-      return;
-    }
-    Serial.println("STA connect failed, falling back to AP");
-    WiFi.disconnect(true);
-    delay(100);
-  }
-
+void startSoftAp(const char* reason) {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASSWORD);
   wifiStaConnected = false;
+  wifiStaConnecting = false;
+  if (reason && reason[0]) Serial.println(reason);
   Serial.println("AP started: " AP_SSID " – open http://192.168.4.1");
+  MDNS.end();
   startMdns();
+}
+
+void setupWiFi() {
+  if (staSsidBuf[0] != '\0') {
+    // AP up immediately so LEDs/buttons/UI are live; STA joins in loop().
+    Serial.printf("Attempting WiFi STA (background): %s\n", staSsidBuf);
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(AP_SSID, AP_PASSWORD);
+    wifiStaConnected = false;
+    WiFi.begin(staSsidBuf, staPasswordBuf);
+    wifiStaConnecting = true;
+    wifiStaAttemptStartMs = millis();
+    Serial.println("AP started: " AP_SSID " – open http://192.168.4.1 (STA connecting…)");
+    startMdns();
+    return;
+  }
+  startSoftAp(nullptr);
+}
+
+void pollWifiStaConnect() {
+  if (!wifiStaConnecting) return;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiStaConnecting = false;
+    wifiStaConnected = true;
+    // Match prior boot behavior: drop softAP once STA is up.
+    WiFi.mode(WIFI_STA);
+    Serial.print("STA connected, IP: ");
+    Serial.println(WiFi.localIP());
+    MDNS.end();
+    startMdns();
+    broadcastStateWs("wifi_changed");
+    return;
+  }
+
+  if ((millis() - wifiStaAttemptStartMs) >= WIFI_STA_CONNECT_TIMEOUT_MS) {
+    Serial.println("STA connect timed out — staying on AP");
+    WiFi.disconnect(false);
+    startSoftAp(nullptr);
+  }
 }
 
 void loadNvs() {
@@ -3728,6 +3759,7 @@ void setup() {
   if (nvsErr != ESP_OK) {
     Serial.printf("NVS init failed: %s\n", esp_err_to_name(nvsErr));
   }
+  crashLogBegin();
   loadNvs();
   Serial.printf("WiFi NVS loaded ssid=\"%s\" configured=%d\n", staSsidBuf, staSsidBuf[0] != '\0');
   ensureDeviceIdLoaded();
@@ -3751,12 +3783,12 @@ void setup() {
   FastLED.setBrightness(255);
   FastLED.clear(true);
 
-  // Boot prove-out: R/G/B/W so any wiring that works is obvious regardless of color order.
+  // Boot prove-out: brief R/G/B/W so wiring/color-order issues are obvious.
   const CRGB bootColors[] = {CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::White};
   for (size_t c = 0; c < sizeof(bootColors) / sizeof(bootColors[0]); c++) {
     fill_solid(leds, NUM_LEDS, bootColors[c]);
     FastLED.show();
-    delay(300);
+    delay(80);
   }
   FastLED.clear(true);
   FastLED.setBrightness(brightness);
@@ -3782,18 +3814,8 @@ void setup() {
   if (!SPIFFS.begin(true)) {
     Serial.println("SPIFFS mount failed");
   } else {
-    size_t fileCount = 0;
-    File root = SPIFFS.open("/");
-    if (root && root.isDirectory()) {
-      File f = root.openNextFile();
-      while (f) {
-        fileCount++;
-        f = root.openNextFile();
-      }
-    }
     const bool hasIndex = SPIFFS.exists("/index.html");
-    Serial.printf("SPIFFS: %u files, index.html %s, used %u / total %u\n",
-                  (unsigned)fileCount,
+    Serial.printf("SPIFFS: index.html %s, used %u / total %u\n",
                   hasIndex ? "OK" : "MISSING",
                   (unsigned)SPIFFS.usedBytes(),
                   (unsigned)SPIFFS.totalBytes());
@@ -3821,6 +3843,15 @@ void setup() {
     req->send(200, "text/plain", "Microsoft Connect Test");
   });
 
+  // ZXing Scan WASM — must be application/wasm for streaming compile (default MIME is octet-stream).
+  server.on("/zx.wasm", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!SPIFFS.exists("/zx.wasm")) {
+      req->send(404, "text/plain", "zx.wasm missing");
+      return;
+    }
+    req->send(SPIFFS, "/zx.wasm", "application/wasm");
+  });
+
   // Static UI from SPIFFS (Vite hashed assets). Skip API/WS — a SPIFFS miss on a full
   // filesystem was adding ~2–3s to every /api/* request before the real handler ran.
   server.serveStatic("/", SPIFFS, "/")
@@ -3829,6 +3860,7 @@ void setup() {
         const String& url = request->url();
         if (url.startsWith("/api")) return false;
         if (url.startsWith("/ws")) return false;
+        if (url.equals("/zx.wasm")) return false;
         return true;
       });
   // SPA fallback + clear recovery hint when the filesystem image was never uploaded.
@@ -3948,7 +3980,7 @@ void setup() {
     for (int i = 0; i < MAX_WS_SUBSCRIPTIONS; i++) {
       if (wsSubscriptions[i].active) wsClients++;
     }
-    StaticJsonDocument<384> doc;
+    StaticJsonDocument<512> doc;
     doc["uptimeMs"] = millis();
     doc["freeHeap"] = ESP.getFreeHeap();
     doc["minFreeHeap"] = ESP.getMinFreeHeap();
@@ -3963,9 +3995,28 @@ void setup() {
     doc["wsClients"] = wsClients;
     doc["cardSessions"] = getActiveCardCount();
     doc["loopDelayMs"] = 20;
+    doc["bootResetReason"] = crashLogBootResetReasonName();
+    doc["bootResetReasonCode"] = crashLogBootResetReasonCode();
+    doc["hasCrashLog"] = crashLogHasRecord();
     String out;
     serializeJson(doc, out);
     req->send(200, "application/json", out);
+  });
+  server.on("/api/crash-log", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    StaticJsonDocument<768> doc;
+    crashLogPopulateJson(doc.to<JsonObject>());
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
+  server.on("/api/crash-log/clear", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    if (!crashLogClearRecord()) {
+      req->send(500, "application/json", "{\"error\":\"clear failed\"}");
+      return;
+    }
+    req->send(200, "application/json", "{\"ok\":true}");
   });
   server.on("/api/device-id", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
@@ -4053,6 +4104,10 @@ void setup() {
       if (value < 20) value = 20;
       if (value > 500) value = 500;
       screensaverSpeedMs = (uint16_t)value;
+      crashLogUpdateBreadcrumb(
+          screensaverSpeedMs, screensaverType, screensaverEnabled,
+          (uint8_t)(callOrderCount > 255 ? 255 : callOrderCount),
+          gameEstablished, winnerDeclared, ESP.getFreeHeap(), "ss_speed");
       saveNvsSettings();
       broadcastStateWs("screensaver_speed_changed");
     }
@@ -5283,11 +5338,18 @@ void handleButton2LongPress() {
     }
     recomputeCardWinners();
   } else {
-    // Declare winner.
+    // Declare winner immediately — skip call-out audio deferral that made
+    // physical long-press look like a no-op while autoCallingHold was set.
     winnerSuppressed = false;
     manualWinnerDeclared = true;
     winnerEventId++;
-    syncWinnerDeclared();
+    if (autoCallingHold) {
+      autoCallingHold = false;
+      autoCallingHoldSinceMs = 0;
+      autoCallingNextDrawMs = 0;
+    }
+    pendingWinnerActivation = false;
+    syncWinnerDeclared(true);
     enqueueWebhookBingo(currentNumber);
   }
   updateAllLeds();
@@ -5354,12 +5416,28 @@ void loop() {
   if (pendingBoardRestart && (long)(millis() - pendingBoardRestartAtMs) >= 0) {
     pendingBoardRestart = false;
     Serial.println("Restarting…");
+    crashLogMarkCleanRestart();
     delay(50);
     ESP.restart();
   }
   flushDeferredResetWork();
+  pollWifiStaConnect();
   updateButtonState(button1, handleButton1ShortPress, handleButton1LongPress);
   updateButtonState(button2, handleButton2ShortPress, handleButton2LongPress);
+
+  static unsigned long lastCrashBreadcrumbMs = 0;
+  if ((millis() - lastCrashBreadcrumbMs) >= 1000UL) {
+    lastCrashBreadcrumbMs = millis();
+    const char* mark = "loop";
+    if (ledTestMode) mark = "led_test";
+    else if (screensaverEnabled) mark = "screensaver";
+    else if (winnerDeclared) mark = "winner";
+    else if (gameEstablished) mark = "game";
+    crashLogUpdateBreadcrumb(
+        screensaverSpeedMs, screensaverType, screensaverEnabled,
+        (uint8_t)(callOrderCount > 255 ? 255 : callOrderCount),
+        gameEstablished, winnerDeclared, ESP.getFreeHeap(), mark);
+  }
 
   // Cycle display patterns for game types with multiple orientations
   if ((millis() - lastPatternChange) >= PATTERN_CYCLE_MS) {

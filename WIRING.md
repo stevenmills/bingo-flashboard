@@ -12,14 +12,16 @@ This project targets a **44-pin ESP32-S3-WROOM-1 N16R8** development board in th
 
 Pin assignments for the bingo flashboard are in `include/config.h`.
 
-> **Use the numeric GPIO labels printed on your board** (e.g. `4`, `16`, `17`, `2`). This layout follows the Espressif DevKitC-1 header map — it is **not** the same as classic 30-pin ESP32 or 38-pin ESP32 DevKit boards. Official pin tables: [ESP32-S3-DevKitC-1 user guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/index.html).
+> **Use the numeric GPIO labels printed on your board** (e.g. `4`, `16`, `18`, `2`). This layout follows the Espressif DevKitC-1 header map — it is **not** the same as classic 30-pin ESP32 or 38-pin ESP32 DevKit boards. Official pin tables: [ESP32-S3-DevKitC-1 user guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/index.html).
+>
+> Some screw-terminal carriers label **`17`** but that pad is open / not bonded to the module. Firmware uses **`18`** for Button 2 — verify with a GND jumper if a terminal never shows up in serial.
 
 ## Power
 
 | Connection | Silkscreen | Header | Notes |
 |---|---|---|---|
-| **USB-C (UART)** | — | Edge | Primary power + `pio upload` / serial monitor |
-| **USB-C (OTG)** | — | Edge | Native USB — leave unconnected unless you use USB device mode |
+| **USB-C (UART)** | — | Edge | On many boards this port has **no USB-UART chip** and will not appear in `pio device list`. Prefer the port that enumerates. |
+| **USB-C (USB / JTAG)** | — | Edge | Built-in USB-Serial/JTAG (`303A:1001`) — **primary** for power, `pio upload`, and serial monitor with CDC-on-boot |
 | **Common GND** | `G` | J1 pin 22 or J3 pins 1/21/22 | Tie to 12V (−) and strip GND |
 | **3V3 out** | `3V3` | J1 pins 1–2 | 3.3V regulated output — not for the strip |
 | **5V in** | `5V` | J1 pin 21 | 5V input when not using USB |
@@ -31,7 +33,7 @@ Pin assignments for the bingo flashboard are in `include/config.h`.
 |---|---|---|---|---|
 | **LED data** | **4** | **`4`** | J1 | WS2811 strip **DIN** |
 | **Button 1** | **16** | **`16`** | J1 | Momentary switch → **GND** |
-| **Button 2** | **17** | **`17`** | J1 | Momentary switch → **GND** |
+| **Button 2** | **18** | **`18`** | J1 | Momentary switch → **GND** (not `17` — see note above) |
 | **Status LED** | **2** | **`2`** | J3 | Header GPIO (see note below) |
 | **Ground** | — | **`G`** | J1 or J3 | 12V (−) + strip GND |
 
@@ -44,7 +46,7 @@ Firmware uses **internal pull-ups** on the buttons.
 | Button | Silkscreen | GPIO | Short press | Long press |
 |---|---|---|---|---|
 | **Button 1** | `16` | 16 | Cycle game type (pre-game / during winner) | Reset game (during active game) |
-| **Button 2** | `17` | 17 | Draw next number (automatic mode only) | Winner / keep-going flow |
+| **Button 2** | `18` | 18 | Draw next number (automatic mode only) | Winner / keep-going flow |
 
 ## WS2811 strip (105 LEDs, 12V)
 
@@ -101,7 +103,7 @@ Left header = **J1** (pins listed on the left above). Right header = **J3**.
 J1: G (pin 22) or J3: G     ──────► 12V supply (−) and strip GND
 J1: 4 (GPIO 4)              ──────► strip DIN
 J1: 16 (GPIO 16)            ──────► Button 1 ──► GND
-J1: 17 (GPIO 17)            ──────► Button 2 ──► GND
+J1: 18 (GPIO 18)            ──────► Button 2 ──► GND
 J3: 2 (GPIO 2)              ────── optional external status LED (firmware default)
 ```
 
@@ -123,8 +125,8 @@ All four bingo signals use **J1** for data + buttons; status uses **J3** pin `2`
 
 | Item | Notes |
 |---|---|
-| **USB-C (UART)** | Power + `pio run -t upload` / serial monitor |
-| **USB-C (OTG)** | Native USB device port — not needed for this project |
+| **USB-C (USB / JTAG)** | Power + `pio run -t upload` / serial monitor (`303A:1001`) |
+| **USB-C (UART silk)** | Often unused on these clones — may not enumerate at all |
 | **RST button** | Hardware reset |
 | **BOOT button** | Hold **BOOT**, tap **RST** (or hold BOOT while plugging in) to enter download mode |
 | **RGB LED** | Addressable LED on GPIO48 (v1.0) or GPIO38 (v1.1) — not used by stock firmware |
@@ -147,4 +149,4 @@ On macOS the UART port is often `/dev/cu.usbmodem*` (not `usbserial-*`).
 
 ## Not this board?
 
-Classic **ESP32** (30-pin WROOM-32) and **ESP32-S3** DevKit boards share **GPIO numbers** for this project (4, 16, 17, 2) but **header positions and silkscreen labels differ**. Always wire by the label printed next to the pin on **your** board.
+Classic **ESP32** (30-pin WROOM-32) used GPIO **4 / 16 / 17**. This S3 build uses **4 / 16 / 18** (Button 2 on `18` because carrier `17` is often unwired). Always wire by the label printed next to the pin on **your** board, and confirm with a GND short if serial never sees the pin.

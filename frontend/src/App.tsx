@@ -593,7 +593,7 @@ export default function App() {
     setModeInitialized(false);
     setExitConfirmOpen(false);
     sessionStorage.removeItem(APP_MODE_STORAGE_KEY);
-    void clearSessionForModeExit();
+    clearSessionForModeExit();
   };
 
   const toggleGifMode = useCallback(() => {
@@ -625,7 +625,10 @@ export default function App() {
       // Still clear local session if the board is unreachable.
     }
     clearSession({ promptUnlock: false });
-    setMode("card");
+    setSettingsOpen(false);
+    setOddsOpen(false);
+    setModeInitialized(false);
+    sessionStorage.removeItem(APP_MODE_STORAGE_KEY);
   };
 
   const renderBoardLockedState = () => (
@@ -1126,6 +1129,7 @@ export default function App() {
                       callerVoice={callerVoice}
                       onCallerVoiceChange={setCallerVoice}
                       onRefresh={refresh}
+                      onLockAllDevices={() => void handleBoardLock()}
                     />
                   </CardContent>
                 </Card>
@@ -1209,7 +1213,8 @@ export default function App() {
           <DialogHeader>
             <DialogTitle>Exit Current Mode?</DialogTitle>
             <DialogDescription>
-              This will close the current view and return to the Board / Card / Scan / HUD selection screen.
+              This closes Board/Scan/HUD on this device only and returns to mode selection.
+              Other unlocked devices stay authorized until you lock all devices in Settings.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

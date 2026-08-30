@@ -29,7 +29,7 @@ Wire by **GPIO numbers on the silkscreen** (not classic 30-pin ESP32 charts). Fu
 |---|---|---|---|
 | LED data | **4** | **`4`** (J1) | Strip **DIN** |
 | Button 1 | **16** | **`16`** (J1) | Momentary → **GND** |
-| Button 2 | **17** | **`17`** (J1) | Momentary → **GND** |
+| Button 2 | **18** | **`18`** (J1) | Momentary → **GND** (not `17`) |
 | Status LED | **2** | **`2`** (J3) | Header GPIO (onboard RGB is separate) |
 | Ground | — | **`G`** | 12V (−) + strip GND |
 

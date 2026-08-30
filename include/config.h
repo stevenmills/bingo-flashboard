@@ -2,11 +2,11 @@
 #define CONFIG_H
 
 // Target board: ESP32-S3-WROOM-1 N16R8 (44-pin DevKitC-1 layout). Wiring: WIRING.md
-// Silkscreen: 4=GPIO4, 16=GPIO16, 17=GPIO17, 2=GPIO2 (J3 header — not onboard RGB).
+// Silkscreen: 4=GPIO4, 16=GPIO16, 18=GPIO18 (17 dead/unwired on some screw-terminal carriers), 2=GPIO2 (J3).
 
 #define DATA_PIN      4   // Silkscreen 4 (J1) → WS2811 DIN
 #define BUTTON1_PIN   16  // Silkscreen 16 (J1) → game type / reset
-#define BUTTON2_PIN   17  // Silkscreen 17 (J1) → draw / winner
+#define BUTTON2_PIN   18  // Silkscreen 18 (J1) → draw / winner (use 18; silkscreen 17 often open on these carriers)
 #define NUM_LEDS      105
 #define LED_COLOR_ORDER RGB
 #define STATUS_LED_ENABLED 1
@@ -68,6 +68,8 @@
 #define NVS_WIFI_PASSWORD "wp"
 #define NVS_GIF_MODE_ENABLED "gme"
 #define NVS_NUMBER_GIF_MAP "ngm"
+#define NVS_CRASH_LOG "cl"
+#define NVS_LAST_RESET_REASON "lrr"
 
 #define WIFI_STA_CONNECT_TIMEOUT_MS 15000UL
 #define WIFI_SSID_MAX_LEN 32

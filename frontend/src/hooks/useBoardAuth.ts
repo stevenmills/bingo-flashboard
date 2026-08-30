@@ -89,13 +89,8 @@ export function useBoardAuth() {
     [persistSession]
   );
 
-  /** Exit to mode chooser — drop local board auth completely. */
-  const clearSessionForModeExit = useCallback(async () => {
-    try {
-      await api.lockBoard();
-    } catch {
-      // Board may be offline; still clear local session.
-    }
+  /** Exit to mode chooser — clear auth on this device only (other devices keep the shared board token). */
+  const clearSessionForModeExit = useCallback(() => {
     clearSession({ promptUnlock: false });
     setPendingMode(null);
   }, [clearSession]);
