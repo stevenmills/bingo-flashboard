@@ -164,6 +164,9 @@ export default function App() {
   const [scanWinnerClearManual, setScanWinnerClearManual] = useState(false);
   const [scanVerifying, setScanVerifying] = useState(false);
   const boardQrVerifyStartedRef = useRef(false);
+  /** Hold NewGameDialog until unlock dialog finish closing (avoids blank Radix overlay). */
+  const [allowBoardDialogs, setAllowBoardDialogs] = useState(true);
+  const boardDialogGateTimerRef = useRef<number | null>(null);
   const { theme, setTheme } = useTheme(appMode);
   const needsBoardAuth = appMode === "board" || appMode === "scan";
   const canOpenSettings =
@@ -262,6 +265,14 @@ export default function App() {
       setPendingMode(null);
     }
   }, [appMode, setUnlockOpen, setPendingMode]);
+
+  useEffect(() => {
+    return () => {
+      if (boardDialogGateTimerRef.current !== null) {
+        window.clearTimeout(boardDialogGateTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (needsBoardAuth && settingsOpen && !boardAuthActive) {
@@ -612,10 +623,25 @@ export default function App() {
 
   const handleUnlockBoard = async () => {
     const modeToEnter: AppMode = pendingMode === "scan" ? "scan" : "board";
-    const ok = await unlockWithPin(unlockPin);
+    const ok = await unlockWithPin(unlockPin, { closeDialog: false });
     if (!ok) return;
-    await refresh({ force: true });
+    // Close unlock first, enter board mode, but defer NewGameDialog until the
+    // unlock overlay animation finishes — opening both dialogs in one tick
+    // leaves a stuck blank overlay until a full page refresh.
+    if (boardDialogGateTimerRef.current !== null) {
+      window.clearTimeout(boardDialogGateTimerRef.current);
+      boardDialogGateTimerRef.current = null;
+    }
+    setAllowBoardDialogs(false);
+    setUnlockOpen(false);
+    setUnlockPin("");
+    setPendingMode(null);
     setMode(modeToEnter);
+    void refresh({ force: true });
+    boardDialogGateTimerRef.current = window.setTimeout(() => {
+      boardDialogGateTimerRef.current = null;
+      setAllowBoardDialogs(true);
+    }, 350);
   };
 
   const handleBoardLock = async () => {
@@ -1048,6 +1074,7 @@ export default function App() {
                     onSuppressAutoRestore={handleSuppressAutoRestore}
                     uiLetterColors={uiLetterColors}
                     stateHydrated={hydrated}
+                    allowNewGameDialog={allowBoardDialogs}
                   />
                 ) : (
                   renderBoardLockedState()
@@ -1096,7 +1123,6 @@ export default function App() {
                       settingsMode={appMode}
                       onClose={() => setSettingsOpen(false)}
                       brightness={state.brightness}
-                      ledVibrance={state.ledVibrance}
                       theme={state.theme}
                       colorMode={state.colorMode}
                       staticColor={state.staticColor}

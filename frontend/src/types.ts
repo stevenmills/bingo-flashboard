@@ -67,7 +67,6 @@ export interface GameState {
   autoCallingRemainingMs?: number;
   theme: number;
   brightness: number;
-  ledVibrance: number;
   colorMode: ColorMode;
   staticColor: string;
   ledHeaderColor: string;
@@ -86,9 +85,11 @@ export interface GameState {
   calledNumberBanner?: boolean;
   /** Winner LED board-phase effect (same catalog as screensavers; default sparkle) */
   winnerEffect?: ScreensaverType;
-  /** Webhook URLs configured (full URLs are board-auth only via /webhooks) */
-  webhookNumberConfigured?: boolean;
-  webhookBingoConfigured?: boolean;
+  /** Outbound webhook URL configured (details board-auth only via /webhooks) */
+  webhookConfigured?: boolean;
+  /** MQTT broker+topic configured and enabled */
+  mqttConfigured?: boolean;
+  mqttConnected?: boolean;
   /** Board-shared HUD GIFs armed (header toggle) */
   gifModeEnabled?: boolean;
   /** GIF URL mapped for the current called number (display still gated by gifModeEnabled) */
@@ -104,9 +105,45 @@ export interface GameState {
   eliminatedCount?: number;
 }
 
-export interface WebhookSettings {
-  numberCalledUrl: string;
-  bingoUrl: string;
+export interface OutboundEventFlags {
+  numberCalled: boolean;
+  numberUndone: boolean;
+  winnerDeclared: boolean;
+  winnerCleared: boolean;
+  gameStarted: boolean;
+  gameTypeChanged: boolean;
+  callingStyleChanged: boolean;
+}
+
+export const DEFAULT_OUTBOUND_EVENT_FLAGS: OutboundEventFlags = {
+  numberCalled: true,
+  numberUndone: false,
+  winnerDeclared: true,
+  winnerCleared: false,
+  gameStarted: false,
+  gameTypeChanged: false,
+  callingStyleChanged: false,
+};
+
+export interface WebhookSettings extends OutboundEventFlags {
+  url: string;
+  username: string;
+  /** Omit on save to keep existing password. */
+  password?: string;
+  passwordSet?: boolean;
+}
+
+export interface MqttSettings extends OutboundEventFlags {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  /** Omit on save to keep existing password. */
+  password?: string;
+  passwordSet?: boolean;
+  topic: string;
+  useTls: boolean;
+  connected?: boolean;
 }
 
 /** Sparse number → GIF URL map (keys "1"…"75"); board-auth only via /number-gifs. */
@@ -309,7 +346,6 @@ export const DEFAULT_STATE: GameState = {
   autoCallingRemainingMs: 0,
   theme: 0,
   brightness: 255,
-  ledVibrance: 75,
   colorMode: "theme",
   staticColor: "#00ff00",
   ledHeaderColor: "#ffd8a8",
@@ -322,8 +358,9 @@ export const DEFAULT_STATE: GameState = {
   currentNumberColor: "#ffffff",
   calledNumberBanner: false,
   winnerEffect: "sparkle",
-  webhookNumberConfigured: false,
-  webhookBingoConfigured: false,
+  webhookConfigured: false,
+  mqttConfigured: false,
+  mqttConnected: false,
   gifModeEnabled: false,
   currentGifUrl: "",
   wifiSsid: "",

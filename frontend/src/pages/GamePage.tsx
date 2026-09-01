@@ -42,6 +42,8 @@ interface Props {
   onSuppressAutoRestore?: () => void;
   uiLetterColors: LetterColors;
   stateHydrated: boolean;
+  /** When false, hold NewGameDialog so it does not race a closing unlock dialog. */
+  allowNewGameDialog?: boolean;
 }
 
 export function GamePage({
@@ -55,6 +57,7 @@ export function GamePage({
   onSuppressAutoRestore,
   uiLetterColors,
   stateHydrated,
+  allowNewGameDialog = true,
 }: Props) {
   const [localStarted, setLocalStarted] = useState(false);
   const [newGameDismissed, setNewGameDismissed] = useState(false);
@@ -63,7 +66,8 @@ export function GamePage({
   const mdUp = useMdUp();
 
   const gameActive = state.gameEstablished || localStarted;
-  const newGameOpen = stateHydrated && !gameActive && !newGameDismissed;
+  const newGameOpen =
+    allowNewGameDialog && stateHydrated && !gameActive && !newGameDismissed;
   const showPreGameControls = stateHydrated && !gameActive && newGameDismissed;
 
   // Reset local flag only when the backend actually resets

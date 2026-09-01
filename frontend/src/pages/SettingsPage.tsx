@@ -20,7 +20,6 @@ export function SettingsPage({ state, onRefresh }: Props) {
         <Settings
           settingsMode="board"
           brightness={state.brightness}
-          ledVibrance={state.ledVibrance}
           theme={state.theme}
           colorMode={state.colorMode}
           staticColor={state.staticColor}

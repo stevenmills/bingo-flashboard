@@ -25,7 +25,9 @@ import {
   LETTER_FULL_MODE_LABELS,
   CURRENT_NUMBER_EFFECT_LABELS,
   type WebhookSettings,
+  type MqttSettings,
   type NumberGifSettings,
+  DEFAULT_OUTBOUND_EVENT_FLAGS,
 } from "./types";
 import { isBingoUiThemeId, normalizeHexColor } from "./lib/bingo-ui-colors";
 
@@ -37,11 +39,28 @@ const state: GameState = JSON.parse(JSON.stringify(DEFAULT_STATE));
 state.survivorCount = state.survivorCount ?? 0;
 state.eliminatedCount = state.eliminatedCount ?? 0;
 let webhookSettings: WebhookSettings = {
-  numberCalledUrl: localStorage.getItem("bingo-webhook-number-url") ?? "",
-  bingoUrl: localStorage.getItem("bingo-webhook-bingo-url") ?? "",
+  url: localStorage.getItem("bingo-webhook-url") ?? localStorage.getItem("bingo-webhook-number-url") ?? "",
+  username: localStorage.getItem("bingo-webhook-user") ?? "",
+  passwordSet: Boolean(localStorage.getItem("bingo-webhook-password")),
+  ...DEFAULT_OUTBOUND_EVENT_FLAGS,
+  numberCalled: localStorage.getItem("bingo-webhook-number-url") ? true : DEFAULT_OUTBOUND_EVENT_FLAGS.numberCalled,
+  winnerDeclared: localStorage.getItem("bingo-webhook-bingo-url") ? true : DEFAULT_OUTBOUND_EVENT_FLAGS.winnerDeclared,
 };
-state.webhookNumberConfigured = webhookSettings.numberCalledUrl.trim().length > 0;
-state.webhookBingoConfigured = webhookSettings.bingoUrl.trim().length > 0;
+let mqttSettings: MqttSettings = {
+  enabled: localStorage.getItem("bingo-mqtt-enabled") === "true",
+  host: localStorage.getItem("bingo-mqtt-host") ?? "",
+  port: Number(localStorage.getItem("bingo-mqtt-port") || 1883),
+  username: localStorage.getItem("bingo-mqtt-user") ?? "",
+  passwordSet: Boolean(localStorage.getItem("bingo-mqtt-password")),
+  topic: localStorage.getItem("bingo-mqtt-topic") ?? "",
+  useTls: localStorage.getItem("bingo-mqtt-tls") === "true",
+  connected: false,
+  ...DEFAULT_OUTBOUND_EVENT_FLAGS,
+};
+state.webhookConfigured = webhookSettings.url.trim().length > 0;
+state.mqttConfigured =
+  mqttSettings.enabled && mqttSettings.host.trim().length > 0 && mqttSettings.topic.trim().length > 0;
+state.mqttConnected = false;
 
 function readNumberGifUrls(): Record<string, string> {
   try {
@@ -84,13 +103,6 @@ if (savedBrightnessRaw !== null) {
   const savedBrightness = Number(savedBrightnessRaw);
   if (Number.isFinite(savedBrightness)) {
     state.brightness = Math.max(0, Math.min(255, Math.round(savedBrightness)));
-  }
-}
-const savedLedVibranceRaw = localStorage.getItem("bingo-led-vibrance");
-if (savedLedVibranceRaw !== null) {
-  const savedLedVibrance = Number(savedLedVibranceRaw);
-  if (Number.isFinite(savedLedVibrance)) {
-    state.ledVibrance = Math.max(0, Math.min(100, Math.round(savedLedVibrance)));
   }
 }
 const savedScreensaverEnabledRaw = localStorage.getItem("bingo-screensaver-enabled");
@@ -837,14 +849,6 @@ export const mockApi = {
     return {};
   },
 
-  setLedVibrance: async (value: number) => {
-    await delay(10);
-    assertBoardAuth();
-    state.ledVibrance = Math.max(0, Math.min(100, Math.round(value)));
-    localStorage.setItem("bingo-led-vibrance", String(state.ledVibrance));
-    return {};
-  },
-
   setTheme: async (theme: number) => {
     await delay(10);
     assertBoardAuth();
@@ -958,7 +962,22 @@ export const mockApi = {
   getWebhooks: async (): Promise<WebhookSettings> => {
     await delay(10);
     assertBoardAuth();
-    return { ...webhookSettings };
+    return {
+      ...webhookSettings,
+      password: undefined,
+      passwordSet: Boolean(localStorage.getItem("bingo-webhook-password")),
+    };
+  },
+
+  getMqtt: async (): Promise<MqttSettings> => {
+    await delay(10);
+    assertBoardAuth();
+    return {
+      ...mqttSettings,
+      password: undefined,
+      passwordSet: Boolean(localStorage.getItem("bingo-mqtt-password")),
+      connected: Boolean(state.mqttConnected),
+    };
   },
 
   getNumberGifs: async (): Promise<NumberGifSettings> => {
@@ -1004,14 +1023,59 @@ export const mockApi = {
   setWebhooks: async (settings: WebhookSettings) => {
     await delay(10);
     assertBoardAuth();
+    const keepPass = settings.password === undefined;
+    const nextPass = keepPass
+      ? (localStorage.getItem("bingo-webhook-password") ?? "")
+      : (settings.password ?? "");
     webhookSettings = {
-      numberCalledUrl: (settings.numberCalledUrl ?? "").trim().slice(0, 256),
-      bingoUrl: (settings.bingoUrl ?? "").trim().slice(0, 256),
+      ...DEFAULT_OUTBOUND_EVENT_FLAGS,
+      ...settings,
+      url: (settings.url ?? "").trim().slice(0, 256),
+      username: (settings.username ?? "").trim().slice(0, 32),
+      password: undefined,
+      passwordSet: nextPass.length > 0,
     };
-    localStorage.setItem("bingo-webhook-number-url", webhookSettings.numberCalledUrl);
-    localStorage.setItem("bingo-webhook-bingo-url", webhookSettings.bingoUrl);
-    state.webhookNumberConfigured = webhookSettings.numberCalledUrl.length > 0;
-    state.webhookBingoConfigured = webhookSettings.bingoUrl.length > 0;
+    localStorage.setItem("bingo-webhook-url", webhookSettings.url);
+    localStorage.setItem("bingo-webhook-user", webhookSettings.username);
+    if (!keepPass) {
+      if (nextPass) localStorage.setItem("bingo-webhook-password", nextPass);
+      else localStorage.removeItem("bingo-webhook-password");
+    }
+    state.webhookConfigured = webhookSettings.url.length > 0;
+    return {};
+  },
+
+  setMqtt: async (settings: MqttSettings) => {
+    await delay(10);
+    assertBoardAuth();
+    const keepPass = settings.password === undefined;
+    const nextPass = keepPass
+      ? (localStorage.getItem("bingo-mqtt-password") ?? "")
+      : (settings.password ?? "");
+    mqttSettings = {
+      ...DEFAULT_OUTBOUND_EVENT_FLAGS,
+      ...settings,
+      host: (settings.host ?? "").trim().slice(0, 64),
+      topic: (settings.topic ?? "").trim().slice(0, 96),
+      username: (settings.username ?? "").trim().slice(0, 32),
+      port: Number.isFinite(settings.port) && settings.port > 0 ? Math.round(settings.port) : 1883,
+      password: undefined,
+      passwordSet: nextPass.length > 0,
+      connected: false,
+    };
+    localStorage.setItem("bingo-mqtt-enabled", mqttSettings.enabled ? "true" : "false");
+    localStorage.setItem("bingo-mqtt-host", mqttSettings.host);
+    localStorage.setItem("bingo-mqtt-port", String(mqttSettings.port));
+    localStorage.setItem("bingo-mqtt-user", mqttSettings.username);
+    localStorage.setItem("bingo-mqtt-topic", mqttSettings.topic);
+    localStorage.setItem("bingo-mqtt-tls", mqttSettings.useTls ? "true" : "false");
+    if (!keepPass) {
+      if (nextPass) localStorage.setItem("bingo-mqtt-password", nextPass);
+      else localStorage.removeItem("bingo-mqtt-password");
+    }
+    state.mqttConfigured =
+      mqttSettings.enabled && mqttSettings.host.length > 0 && mqttSettings.topic.length > 0;
+    state.mqttConnected = false;
     return {};
   },
 

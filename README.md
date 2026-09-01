@@ -10,7 +10,7 @@ Connect to the **`BINGO`** network → open **`http://bingo.local`** (fallback *
 
 | 🎮 Gameplay | 💡 Lights | 📱 Clients | 🔐 Safety |
 |---|---|---|---|
-| 42 game types | 19 themes + vibrance | Board host UI | PIN + 7-day token |
+| 42 game types | 19 themes | Board host UI | PIN + 7-day token |
 | Auto / manual calling | Screensavers (13) | Printed QR cards | Unlock lockout |
 | Physical buttons | Called-number banner | Live card sync | Device-signed cards |
 | Caller audio + jokes | Winner animations | Odds drawer | Optional home WiFi |
@@ -161,7 +161,7 @@ Legacy macOS `say` generator (single pack):
 - Mode chooser: **Board** vs **Card**
 - Odds drawer (Monte Carlo win estimates)
 - Per-mode light/dark themes (`bingo-theme-board` / `bingo-theme-card`; card defaults dark)
-- Settings tabs: **LEDs · Screensaver · UI · Caller · Cards · WiFi · Access**
+- Settings tabs: **LEDs · Screensaver · UI · Caller · Cards · WiFi · Webhooks · MQTT · Access**
 - Optional **STA WiFi** join (home network) alongside / instead of AP-only use
 - Fullscreen, theme toggle, live player/card counts
 - UI-only BINGO color themes (do **not** change strip colors)
@@ -179,6 +179,26 @@ Legacy macOS `say` generator (single pack):
 | Config | `include/config.h` |
 
 Realtime: WebSocket `/ws` (subscribe as `board` / `card` / `none`) + HTTP polling fallback.
+
+### Outbound integrations (STA required)
+
+Settings → **Webhooks** and **MQTT** share the same event catalog. Each channel has its own enable checkboxes.
+
+| Event | When |
+|---|---|
+| `number_called` | Number drawn / called |
+| `number_undone` | Undo last call |
+| `winner_declared` | Winner declared (UI, card bingo, or Button 2) |
+| `winner_cleared` | Winner cleared / keep-going |
+| `game_started` | Game reset / new game |
+| `game_type_changed` | Game type changed |
+| `calling_style_changed` | Manual ↔ automatic |
+
+**Webhooks:** one HTTP POST URL + optional basic auth (username empty = no `Authorization` header). Password omit-on-save keeps the stored secret.
+
+**MQTT:** broker host/port, optional username/password, publish topic, optional TLS (`setInsecure`). Master enable toggle. Publishes JSON to the configured topic when connected.
+
+Payloads always include `event`, `gameType`, and `callingStyle` (`automatic` \| `manual`). Browser caller voice is not sent.
 
 ---
 
@@ -257,7 +277,7 @@ bingo-flashboard/
 
 ## 🔑 Persistence cheatsheet
 
-**NVS (device):** brightness, vibrance, themes/colors, screensaver, auto-call seconds, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, live game snapshot.
+**NVS (device):** brightness, themes/colors, screensaver, auto-call seconds, game type, calling style, board PIN, device id, board token, letter-full / beacon / banner flags, WiFi STA creds, webhook URL/auth/flags, MQTT broker settings, live game snapshot, crash log.
 
 **Browser:** UI themes (per mode), UI letter colors, auto-call seconds UI, board token/expiry, card id + card state, caller speech/jokes/rate prefs.
 

@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <PubSubClient.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -28,8 +29,6 @@
 CRGB leds[NUM_LEDS];
 uint8_t brightness = 255;
 const uint8_t DEFAULT_BRIGHTNESS = 255;
-uint8_t ledVibrance = 75;  // 0..100
-const uint8_t DEFAULT_LED_VIBRANCE = 75;
 bool screensaverEnabled = false;
 // Screensaver types:
 // 0=text, 1=rainbow, 2=solid, 3=fire_matrix, 4=pacifica, 5=pride,
@@ -163,27 +162,73 @@ static void ensureWifiScanRadio() {
   WiFi.softAP(AP_SSID, AP_PASSWORD);
 }
 
-// --- Outbound webhooks (STA only) ---
-static char webhookNumberUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
-static char webhookBingoUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
+// --- Outbound webhooks + MQTT (STA only) ---
+static char webhookUrlBuf[WEBHOOK_URL_MAX_LEN + 1] = "";
+static char webhookUserBuf[WEBHOOK_USER_MAX_LEN + 1] = "";
+static char webhookPassBuf[WEBHOOK_PASSWORD_MAX_LEN + 1] = "";
+static uint8_t webhookEventFlags = OUT_FLAG_DEFAULT;
+
+static bool mqttEnabled = false;
+static char mqttHostBuf[MQTT_HOST_MAX_LEN + 1] = "";
+static uint16_t mqttPort = MQTT_DEFAULT_PORT;
+static char mqttUserBuf[MQTT_USER_MAX_LEN + 1] = "";
+static char mqttPassBuf[MQTT_PASSWORD_MAX_LEN + 1] = "";
+static char mqttTopicBuf[MQTT_TOPIC_MAX_LEN + 1] = "";
+static bool mqttUseTls = false;
+static uint8_t mqttEventFlags = OUT_FLAG_DEFAULT;
+static bool mqttConnected = false;
+
+WiFiClient mqttWifiClient;
+WiFiClientSecure mqttWifiClientSecure;
+PubSubClient mqttClient;
+
+enum OutboundEventKind : uint8_t {
+  OUT_EVT_NUMBER_CALLED = 0,
+  OUT_EVT_NUMBER_UNDONE,
+  OUT_EVT_WINNER_DECLARED,
+  OUT_EVT_WINNER_CLEARED,
+  OUT_EVT_GAME_STARTED,
+  OUT_EVT_GAME_TYPE_CHANGED,
+  OUT_EVT_CALLING_STYLE_CHANGED,
+};
+
+static uint8_t outboundEventFlag(OutboundEventKind kind) {
+  return (uint8_t)(1u << (uint8_t)kind);
+}
+
+static const char* outboundEventName(OutboundEventKind kind) {
+  switch (kind) {
+    case OUT_EVT_NUMBER_CALLED: return "number_called";
+    case OUT_EVT_NUMBER_UNDONE: return "number_undone";
+    case OUT_EVT_WINNER_DECLARED: return "winner_declared";
+    case OUT_EVT_WINNER_CLEARED: return "winner_cleared";
+    case OUT_EVT_GAME_STARTED: return "game_started";
+    case OUT_EVT_GAME_TYPE_CHANGED: return "game_type_changed";
+    case OUT_EVT_CALLING_STYLE_CHANGED: return "calling_style_changed";
+    default: return "unknown";
+  }
+}
+
+struct OutboundJob {
+  char body[384];
+};
+const int OUTBOUND_QUEUE_SIZE = 8;
+OutboundJob webhookQueue[OUTBOUND_QUEUE_SIZE];
+uint8_t webhookQueueHead = 0;
+uint8_t webhookQueueTail = 0;
+uint8_t webhookQueueCount = 0;
+bool webhookRequestInFlight = false;
+
+OutboundJob mqttQueue[OUTBOUND_QUEUE_SIZE];
+uint8_t mqttQueueHead = 0;
+uint8_t mqttQueueTail = 0;
+uint8_t mqttQueueCount = 0;
+unsigned long mqttLastReconnectMs = 0;
 
 // --- HUD number GIFs (board-shared) ---
 static bool gifModeEnabled = false;
 /** Indexes 1–75; empty string = no GIF for that number. */
 static char numberGifUrl[76][GIF_URL_MAX_LEN + 1];
-enum WebhookKind : uint8_t { WH_NONE = 0, WH_NUMBER = 1, WH_BINGO = 2 };
-struct WebhookJob {
-  WebhookKind kind;
-  uint8_t number;
-  uint8_t winnerCount;
-  uint32_t winnerEventId;
-};
-const int WEBHOOK_QUEUE_SIZE = 6;
-WebhookJob webhookQueue[WEBHOOK_QUEUE_SIZE];
-uint8_t webhookQueueHead = 0;
-uint8_t webhookQueueTail = 0;
-uint8_t webhookQueueCount = 0;
-bool webhookRequestInFlight = false;
 
 // --- Board auth ---
 static char boardAuthToken[33] = "";
@@ -378,9 +423,12 @@ void renderFire2012Screensaver();
 void renderSparkleScreensaver();
 void renderEffectFrame(uint8_t type);
 void renderScreensaverFrame();
-void enqueueWebhookNumberCalled(int number);
-void enqueueWebhookBingo(int triggeringNumber);
+void emitOutboundEvent(OutboundEventKind kind, int number);
 void processWebhookQueue();
+void processMqttQueue();
+void pollMqttClient();
+void appendOutboundEventFlags(JsonObject obj, uint8_t flags);
+uint8_t readOutboundEventFlags(JsonObject obj, uint8_t fallback);
 void syncSessionMarksFreeOnly(CardSession& s);
 void screensaverBufToLeds();
 void clearScreensaverBuf(CRGB color = CRGB::Black);
@@ -470,7 +518,8 @@ uint32_t effectiveUiLetterColor(int idx) {
 }
 
 CRGB boostUiColorForStrip(CRGB rgb) {
-  if (ledVibrance == 0) return rgb;
+  // Fixed strip punch (former default vibrance 75) — no user setting.
+  constexpr uint8_t kVibrance = 75;
   // Match-UI must keep the web hue. Do NOT run rgb2hsv→S=255→rgb:
   // on WS2811 that turns Tailwind blue/orange/purple into cyan/lime/magenta.
   // Expand saturation in RGB (partial), lift brightness, and tame green a little.
@@ -478,7 +527,7 @@ CRGB boostUiColorForStrip(CRGB rgb) {
   const uint8_t mn = (rgb.r < rgb.g) ? ((rgb.r < rgb.b) ? rgb.r : rgb.b) : ((rgb.g < rgb.b) ? rgb.g : rgb.b);
   if (mx == 0) return rgb;
 
-  const uint8_t amount = (uint8_t)(((uint16_t)ledVibrance * 255u) / 100u);
+  const uint8_t amount = (uint8_t)(((uint16_t)kVibrance * 255u) / 100u);
   // Pull at most ~55% of the way to fully saturated at vibrance 100.
   const uint8_t satAmount = scale8(amount, 140);
 
@@ -525,20 +574,21 @@ CRGB uiLetterColorForLetter(char letter) {
 }
 
 CRGB boostVividForStrip(CRGB rgb) {
-  if (ledVibrance == 0) return rgb;
+  // Fixed strip punch (former default vibrance 75) — no user setting.
+  constexpr uint8_t kVibrance = 75;
   // Increase saturation/brightness so selected colors read bolder on WS2811 strips.
   CHSV hsv = rgb2hsv_approximate(rgb);
-  const uint8_t satBoost = (uint8_t)(((uint16_t)ledVibrance * 80u) / 100u);
-  const uint8_t minValue = (uint8_t)(128u + (((uint16_t)ledVibrance * 107u) / 100u)); // 128..235
-  const uint8_t topBoost = (uint8_t)(((uint16_t)ledVibrance * 24u) / 100u);
+  const uint8_t satBoost = (uint8_t)(((uint16_t)kVibrance * 80u) / 100u);
+  const uint8_t minValue = (uint8_t)(128u + (((uint16_t)kVibrance * 107u) / 100u)); // 128..235
+  const uint8_t topBoost = (uint8_t)(((uint16_t)kVibrance * 24u) / 100u);
   hsv.s = qadd8(hsv.s, satBoost);
   hsv.v = hsv.v < minValue ? minValue : qadd8(hsv.v, topBoost);
   CRGB out(hsv);
 
   // Slight channel rebalance to counter common green-heavy perception.
-  const uint16_t rScale = 100u + (((uint16_t)ledVibrance * 14u) / 100u); // 100..114
-  const uint16_t gScale = 100u - (((uint16_t)ledVibrance * 12u) / 100u); // 100..88
-  const uint16_t bScale = 100u + (((uint16_t)ledVibrance * 18u) / 100u); // 100..118
+  const uint16_t rScale = 100u + (((uint16_t)kVibrance * 14u) / 100u); // 100..114
+  const uint16_t gScale = 100u - (((uint16_t)kVibrance * 12u) / 100u); // 100..88
+  const uint16_t bScale = 100u + (((uint16_t)kVibrance * 18u) / 100u); // 100..118
   uint16_t r = ((uint16_t)out.r * rScale) / 100u;
   uint16_t g = ((uint16_t)out.g * gScale) / 100u;
   uint16_t b = ((uint16_t)out.b * bScale) / 100u;
@@ -1832,34 +1882,90 @@ void syncSessionMarksFreeOnly(CardSession& s) {
   }
 }
 
-void enqueueWebhookJob(const WebhookJob& job) {
-  if (webhookQueueCount >= WEBHOOK_QUEUE_SIZE) {
-    // Drop oldest to keep the board responsive under bursty calls.
-    webhookQueueHead = (uint8_t)((webhookQueueHead + 1) % WEBHOOK_QUEUE_SIZE);
-    webhookQueueCount--;
+void enqueueOutboundJob(OutboundJob* queue, uint8_t& head, uint8_t& tail, uint8_t& count, const char* body) {
+  if (!body || !body[0]) return;
+  if (count >= OUTBOUND_QUEUE_SIZE) {
+    head = (uint8_t)((head + 1) % OUTBOUND_QUEUE_SIZE);
+    count--;
   }
-  webhookQueue[webhookQueueTail] = job;
-  webhookQueueTail = (uint8_t)((webhookQueueTail + 1) % WEBHOOK_QUEUE_SIZE);
-  webhookQueueCount++;
+  strncpy(queue[tail].body, body, sizeof(queue[tail].body) - 1);
+  queue[tail].body[sizeof(queue[tail].body) - 1] = '\0';
+  tail = (uint8_t)((tail + 1) % OUTBOUND_QUEUE_SIZE);
+  count++;
 }
 
-void enqueueWebhookNumberCalled(int number) {
-  if (webhookNumberUrlBuf[0] == '\0') return;
-  if (number < 1 || number > 75) return;
-  WebhookJob job = {};
-  job.kind = WH_NUMBER;
-  job.number = (uint8_t)number;
-  enqueueWebhookJob(job);
+void appendOutboundEventFlags(JsonObject obj, uint8_t flags) {
+  obj["numberCalled"] = (flags & OUT_FLAG_NUMBER_CALLED) != 0;
+  obj["numberUndone"] = (flags & OUT_FLAG_NUMBER_UNDONE) != 0;
+  obj["winnerDeclared"] = (flags & OUT_FLAG_WINNER_DECLARED) != 0;
+  obj["winnerCleared"] = (flags & OUT_FLAG_WINNER_CLEARED) != 0;
+  obj["gameStarted"] = (flags & OUT_FLAG_GAME_STARTED) != 0;
+  obj["gameTypeChanged"] = (flags & OUT_FLAG_GAME_TYPE_CHANGED) != 0;
+  obj["callingStyleChanged"] = (flags & OUT_FLAG_CALLING_STYLE_CHANGED) != 0;
 }
 
-void enqueueWebhookBingo(int triggeringNumber) {
-  if (webhookBingoUrlBuf[0] == '\0') return;
-  WebhookJob job = {};
-  job.kind = WH_BINGO;
-  job.number = (triggeringNumber >= 1 && triggeringNumber <= 75) ? (uint8_t)triggeringNumber : 0;
-  job.winnerCount = (uint8_t)((winnerCount < 0) ? 0 : (winnerCount > 255 ? 255 : winnerCount));
-  job.winnerEventId = winnerEventId;
-  enqueueWebhookJob(job);
+uint8_t readOutboundEventFlags(JsonObject obj, uint8_t fallback) {
+  if (!obj.containsKey("numberCalled") && !obj.containsKey("winnerDeclared") &&
+      !obj.containsKey("gameStarted")) {
+    return fallback;
+  }
+  uint8_t flags = 0;
+  if (obj["numberCalled"] | false) flags |= OUT_FLAG_NUMBER_CALLED;
+  if (obj["numberUndone"] | false) flags |= OUT_FLAG_NUMBER_UNDONE;
+  if (obj["winnerDeclared"] | false) flags |= OUT_FLAG_WINNER_DECLARED;
+  if (obj["winnerCleared"] | false) flags |= OUT_FLAG_WINNER_CLEARED;
+  if (obj["gameStarted"] | false) flags |= OUT_FLAG_GAME_STARTED;
+  if (obj["gameTypeChanged"] | false) flags |= OUT_FLAG_GAME_TYPE_CHANGED;
+  if (obj["callingStyleChanged"] | false) flags |= OUT_FLAG_CALLING_STYLE_CHANGED;
+  return flags;
+}
+
+void emitOutboundEvent(OutboundEventKind kind, int number) {
+  const uint8_t bit = outboundEventFlag(kind);
+  const bool wantWebhook = webhookUrlBuf[0] != '\0' && (webhookEventFlags & bit);
+  const bool wantMqtt = mqttEnabled && mqttHostBuf[0] != '\0' && mqttTopicBuf[0] != '\0' &&
+                        (mqttEventFlags & bit);
+  if (!wantWebhook && !wantMqtt) return;
+
+  StaticJsonDocument<384> doc;
+  doc["event"] = outboundEventName(kind);
+  doc["gameType"] = gameType;
+  doc["callingStyle"] = callingStyle;
+
+  switch (kind) {
+    case OUT_EVT_NUMBER_CALLED:
+    case OUT_EVT_NUMBER_UNDONE:
+      if (number >= 1 && number <= 75) {
+        doc["number"] = number;
+        char letter[2] = { bingoLetterForNumber(number), '\0' };
+        doc["letter"] = letter;
+      }
+      doc["calledCount"] = callOrderCount;
+      break;
+    case OUT_EVT_WINNER_DECLARED:
+      doc["winnerCount"] = winnerCount;
+      doc["winnerEventId"] = winnerEventId;
+      if (number >= 1 && number <= 75) doc["number"] = number;
+      break;
+    case OUT_EVT_WINNER_CLEARED:
+      doc["winnerEventId"] = winnerEventId;
+      break;
+    case OUT_EVT_GAME_STARTED:
+      doc["boardSeed"] = boardSeed;
+      break;
+    case OUT_EVT_GAME_TYPE_CHANGED:
+    case OUT_EVT_CALLING_STYLE_CHANGED:
+      break;
+  }
+
+  String body;
+  serializeJson(doc, body);
+  if (wantWebhook) {
+    enqueueOutboundJob(webhookQueue, webhookQueueHead, webhookQueueTail, webhookQueueCount, body.c_str());
+  }
+  if (wantMqtt) {
+    enqueueOutboundJob(mqttQueue, mqttQueueHead, mqttQueueTail, mqttQueueCount, body.c_str());
+  }
 }
 
 bool postWebhookJson(const char* url, const String& body) {
@@ -1880,6 +1986,9 @@ bool postWebhookJson(const char* url, const String& body) {
   if (!began) return false;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("User-Agent", "BingoFlashboard/1.0");
+  if (webhookUserBuf[0] != '\0') {
+    http.setAuthorization(webhookUserBuf, webhookPassBuf);
+  }
   const int code = http.POST(body);
   http.end();
   return code > 0 && code < 400;
@@ -1887,35 +1996,87 @@ bool postWebhookJson(const char* url, const String& body) {
 
 void processWebhookQueue() {
   if (!wifiStaConnected || webhookQueueCount == 0 || webhookRequestInFlight) return;
-  webhookRequestInFlight = true;
-  WebhookJob job = webhookQueue[webhookQueueHead];
-  webhookQueueHead = (uint8_t)((webhookQueueHead + 1) % WEBHOOK_QUEUE_SIZE);
-  webhookQueueCount--;
-
-  StaticJsonDocument<256> doc;
-  String body;
-  bool ok = false;
-  if (job.kind == WH_NUMBER && webhookNumberUrlBuf[0] != '\0') {
-    doc["event"] = "number_called";
-    doc["number"] = job.number;
-    char letter[2] = { bingoLetterForNumber(job.number), '\0' };
-    doc["letter"] = letter;
-    doc["calledCount"] = callOrderCount;
-    doc["gameType"] = gameType;
-    serializeJson(doc, body);
-    ok = postWebhookJson(webhookNumberUrlBuf, body);
-    (void)ok;
-  } else if (job.kind == WH_BINGO && webhookBingoUrlBuf[0] != '\0') {
-    doc["event"] = "bingo_identified";
-    doc["winnerCount"] = job.winnerCount;
-    doc["winnerEventId"] = job.winnerEventId;
-    doc["gameType"] = gameType;
-    if (job.number >= 1) doc["number"] = job.number;
-    serializeJson(doc, body);
-    ok = postWebhookJson(webhookBingoUrlBuf, body);
-    (void)ok;
+  if (webhookUrlBuf[0] == '\0') {
+    webhookQueueHead = 0;
+    webhookQueueTail = 0;
+    webhookQueueCount = 0;
+    return;
   }
+  webhookRequestInFlight = true;
+  OutboundJob job = webhookQueue[webhookQueueHead];
+  webhookQueueHead = (uint8_t)((webhookQueueHead + 1) % OUTBOUND_QUEUE_SIZE);
+  webhookQueueCount--;
+  (void)postWebhookJson(webhookUrlBuf, String(job.body));
   webhookRequestInFlight = false;
+}
+
+void mqttApplyClient() {
+  if (mqttUseTls) {
+    mqttWifiClientSecure.setInsecure();
+    mqttClient.setClient(mqttWifiClientSecure);
+  } else {
+    mqttClient.setClient(mqttWifiClient);
+  }
+  mqttClient.setServer(mqttHostBuf, mqttPort);
+  mqttClient.setBufferSize(512);
+}
+
+void mqttDisconnect() {
+  if (mqttClient.connected()) mqttClient.disconnect();
+  mqttConnected = false;
+}
+
+bool mqttTryConnect() {
+  if (!mqttEnabled || !wifiStaConnected || mqttHostBuf[0] == '\0') {
+    mqttConnected = false;
+    return false;
+  }
+  mqttApplyClient();
+  char clientId[32];
+  snprintf(clientId, sizeof(clientId), "bingo-%04u", (unsigned)(ESP.getEfuseMac() & 0xFFFF));
+  bool ok = false;
+  if (mqttUserBuf[0] != '\0') {
+    ok = mqttClient.connect(clientId, mqttUserBuf, mqttPassBuf);
+  } else {
+    ok = mqttClient.connect(clientId);
+  }
+  mqttConnected = ok;
+  return ok;
+}
+
+void pollMqttClient() {
+  if (!mqttEnabled || !wifiStaConnected || mqttHostBuf[0] == '\0') {
+    if (mqttConnected) mqttDisconnect();
+    return;
+  }
+  if (mqttClient.connected()) {
+    mqttConnected = true;
+    mqttClient.loop();
+    return;
+  }
+  mqttConnected = false;
+  const unsigned long now = millis();
+  if ((now - mqttLastReconnectMs) < 5000UL) return;
+  mqttLastReconnectMs = now;
+  mqttTryConnect();
+}
+
+void processMqttQueue() {
+  if (!wifiStaConnected || !mqttEnabled || mqttQueueCount == 0) return;
+  if (mqttTopicBuf[0] == '\0' || mqttHostBuf[0] == '\0') {
+    mqttQueueHead = 0;
+    mqttQueueTail = 0;
+    mqttQueueCount = 0;
+    return;
+  }
+  if (!mqttClient.connected()) {
+    pollMqttClient();
+    if (!mqttClient.connected()) return;
+  }
+  OutboundJob job = mqttQueue[mqttQueueHead];
+  mqttQueueHead = (uint8_t)((mqttQueueHead + 1) % OUTBOUND_QUEUE_SIZE);
+  mqttQueueCount--;
+  (void)mqttClient.publish(mqttTopicBuf, job.body);
 }
 
 void resetSessionClaimedMasks(CardSession& s) {
@@ -2170,7 +2331,7 @@ void recomputeCardWinners() {
     } else {
       winnerEventId++;
     }
-    enqueueWebhookBingo(currentNumber);
+    emitOutboundEvent(OUT_EVT_WINNER_DECLARED, currentNumber);
   }
   syncWinnerDeclared();
   // Fresh card bingo while already in winner mode: restart the 5s LED celebration.
@@ -2686,7 +2847,7 @@ int drawNext() {
       recomputeCardWinners();
       saveGameStateSnapshot();
       updateAllLeds();
-      enqueueWebhookNumberCalled(n);
+      emitOutboundEvent(OUT_EVT_NUMBER_CALLED, n);
       broadcastStateWs("number_called");
       broadcastAllCardStatesWs("card_state");
       return n;
@@ -2715,6 +2876,7 @@ bool undoLastCall() {
   recomputeCardWinners();
   saveGameStateSnapshot();
   updateAllLeds();
+  emitOutboundEvent(OUT_EVT_NUMBER_UNDONE, last);
   broadcastStateWs("number_undone");
   broadcastAllCardStatesWs("card_state");
   return true;
@@ -2762,6 +2924,7 @@ void doReset() {
   syncWinnerDeclared();
   updateAllLeds();
   broadcastStateWs("game_reset");
+  emitOutboundEvent(OUT_EVT_GAME_STARTED, 0);
   deferResetPersistence = true;
 }
 
@@ -2903,10 +3066,6 @@ void loadNvs() {
   if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return;
   uint8_t br;
   if (nvs_get_u8(nvs, NVS_BRIGHTNESS, &br) == ESP_OK) brightness = br;
-  uint8_t lv;
-  if (nvs_get_u8(nvs, NVS_LED_VIBRANCE, &lv) == ESP_OK) {
-    ledVibrance = (lv <= 100) ? lv : DEFAULT_LED_VIBRANCE;
-  }
   uint8_t se;
   if (nvs_get_u8(nvs, NVS_SCREENSAVER_ENABLED, &se) == ESP_OK) screensaverEnabled = (se != 0);
   uint8_t sty;
@@ -3054,14 +3213,50 @@ void loadNvs() {
   if (nvs_get_str(nvs, NVS_WIFI_PASSWORD, staPasswordBuf, &passLen) != ESP_OK) {
     staPasswordBuf[0] = '\0';
   }
-  size_t wnuLen = sizeof(webhookNumberUrlBuf);
-  if (nvs_get_str(nvs, NVS_WEBHOOK_NUMBER_URL, webhookNumberUrlBuf, &wnuLen) != ESP_OK) {
-    webhookNumberUrlBuf[0] = '\0';
+  size_t wnuLen = sizeof(webhookUrlBuf);
+  if (nvs_get_str(nvs, NVS_WEBHOOK_URL, webhookUrlBuf, &wnuLen) != ESP_OK) {
+    webhookUrlBuf[0] = '\0';
   }
-  size_t wbuLen = sizeof(webhookBingoUrlBuf);
-  if (nvs_get_str(nvs, NVS_WEBHOOK_BINGO_URL, webhookBingoUrlBuf, &wbuLen) != ESP_OK) {
-    webhookBingoUrlBuf[0] = '\0';
+  char legacyBingoUrl[WEBHOOK_URL_MAX_LEN + 1] = "";
+  size_t wbuLen = sizeof(legacyBingoUrl);
+  if (nvs_get_str(nvs, NVS_WEBHOOK_BINGO_URL, legacyBingoUrl, &wbuLen) != ESP_OK) {
+    legacyBingoUrl[0] = '\0';
   }
+  uint8_t wf = OUT_FLAG_DEFAULT;
+  bool hadWebhookFlags = (nvs_get_u8(nvs, NVS_WEBHOOK_FLAGS, &wf) == ESP_OK);
+  if (!hadWebhookFlags) {
+    wf = 0;
+    if (webhookUrlBuf[0] != '\0') wf |= OUT_FLAG_NUMBER_CALLED;
+    if (legacyBingoUrl[0] != '\0') wf |= OUT_FLAG_WINNER_DECLARED;
+    if (wf == 0) wf = OUT_FLAG_DEFAULT;
+  }
+  webhookEventFlags = wf;
+  if (webhookUrlBuf[0] == '\0' && legacyBingoUrl[0] != '\0') {
+    strncpy(webhookUrlBuf, legacyBingoUrl, sizeof(webhookUrlBuf) - 1);
+    webhookUrlBuf[sizeof(webhookUrlBuf) - 1] = '\0';
+  }
+  size_t whuLen = sizeof(webhookUserBuf);
+  if (nvs_get_str(nvs, NVS_WEBHOOK_USER, webhookUserBuf, &whuLen) != ESP_OK) webhookUserBuf[0] = '\0';
+  size_t whpLen = sizeof(webhookPassBuf);
+  if (nvs_get_str(nvs, NVS_WEBHOOK_PASSWORD, webhookPassBuf, &whpLen) != ESP_OK) webhookPassBuf[0] = '\0';
+
+  uint8_t me = 0;
+  if (nvs_get_u8(nvs, NVS_MQTT_ENABLED, &me) == ESP_OK) mqttEnabled = (me != 0);
+  size_t mhLen = sizeof(mqttHostBuf);
+  if (nvs_get_str(nvs, NVS_MQTT_HOST, mqttHostBuf, &mhLen) != ESP_OK) mqttHostBuf[0] = '\0';
+  uint16_t mport = MQTT_DEFAULT_PORT;
+  if (nvs_get_u16(nvs, NVS_MQTT_PORT, &mport) == ESP_OK) mqttPort = mport ? mport : MQTT_DEFAULT_PORT;
+  size_t muLen = sizeof(mqttUserBuf);
+  if (nvs_get_str(nvs, NVS_MQTT_USER, mqttUserBuf, &muLen) != ESP_OK) mqttUserBuf[0] = '\0';
+  size_t mwLen = sizeof(mqttPassBuf);
+  if (nvs_get_str(nvs, NVS_MQTT_PASSWORD, mqttPassBuf, &mwLen) != ESP_OK) mqttPassBuf[0] = '\0';
+  size_t mtLen = sizeof(mqttTopicBuf);
+  if (nvs_get_str(nvs, NVS_MQTT_TOPIC, mqttTopicBuf, &mtLen) != ESP_OK) mqttTopicBuf[0] = '\0';
+  uint8_t mtt = 0;
+  if (nvs_get_u8(nvs, NVS_MQTT_TLS, &mtt) == ESP_OK) mqttUseTls = (mtt != 0);
+  uint8_t mf = OUT_FLAG_DEFAULT;
+  if (nvs_get_u8(nvs, NVS_MQTT_FLAGS, &mf) == ESP_OK) mqttEventFlags = mf;
+  else mqttEventFlags = OUT_FLAG_DEFAULT;
   uint8_t gme = 0;
   if (nvs_get_u8(nvs, NVS_GIF_MODE_ENABLED, &gme) == ESP_OK) gifModeEnabled = (gme != 0);
   clearNumberGifUrls();
@@ -3079,7 +3274,6 @@ void loadNvs() {
 void saveNvsSettings() {
   if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
   nvs_set_u8(nvs, NVS_BRIGHTNESS, brightness);
-  nvs_set_u8(nvs, NVS_LED_VIBRANCE, ledVibrance);
   nvs_set_u8(nvs, NVS_SCREENSAVER_ENABLED, screensaverEnabled ? 1 : 0);
   nvs_set_u8(nvs, NVS_SCREENSAVER_TYPE, screensaverType);
   nvs_set_u8(nvs, NVS_WINNER_EFFECT, winnerEffectType);
@@ -3117,8 +3311,19 @@ void saveNvsSettings() {
   nvs_set_u8(nvs, NVS_CALLED_NUM_BANNER, calledNumberBannerEnabled ? 1 : 0);
   nvs_set_str(nvs, NVS_WIFI_SSID, staSsidBuf);
   nvs_set_str(nvs, NVS_WIFI_PASSWORD, staPasswordBuf);
-  nvs_set_str(nvs, NVS_WEBHOOK_NUMBER_URL, webhookNumberUrlBuf);
-  nvs_set_str(nvs, NVS_WEBHOOK_BINGO_URL, webhookBingoUrlBuf);
+  nvs_set_str(nvs, NVS_WEBHOOK_URL, webhookUrlBuf);
+  nvs_erase_key(nvs, NVS_WEBHOOK_BINGO_URL);
+  nvs_set_u8(nvs, NVS_WEBHOOK_FLAGS, webhookEventFlags);
+  nvs_set_str(nvs, NVS_WEBHOOK_USER, webhookUserBuf);
+  nvs_set_str(nvs, NVS_WEBHOOK_PASSWORD, webhookPassBuf);
+  nvs_set_u8(nvs, NVS_MQTT_ENABLED, mqttEnabled ? 1 : 0);
+  nvs_set_str(nvs, NVS_MQTT_HOST, mqttHostBuf);
+  nvs_set_u16(nvs, NVS_MQTT_PORT, mqttPort);
+  nvs_set_str(nvs, NVS_MQTT_USER, mqttUserBuf);
+  nvs_set_str(nvs, NVS_MQTT_PASSWORD, mqttPassBuf);
+  nvs_set_str(nvs, NVS_MQTT_TOPIC, mqttTopicBuf);
+  nvs_set_u8(nvs, NVS_MQTT_TLS, mqttUseTls ? 1 : 0);
+  nvs_set_u8(nvs, NVS_MQTT_FLAGS, mqttEventFlags);
   nvs_set_u8(nvs, NVS_GIF_MODE_ENABLED, gifModeEnabled ? 1 : 0);
   nvs_commit(nvs);
   nvs_close(nvs);
@@ -3296,7 +3501,6 @@ void populateStateJson(JsonObject doc) {
   doc["autoCallingRemainingMs"] = autoCallingRemainingMsNow();
   doc["theme"] = themeId;
   doc["brightness"] = brightness;
-  doc["ledVibrance"] = ledVibrance;
   doc["colorMode"] = colorMode;
   doc["patternIndex"] = patternIdx;
   char hex[8];
@@ -3330,8 +3534,9 @@ void populateStateJson(JsonObject doc) {
   doc["currentNumberColor"] = currentNumHex;
   doc["calledNumberBanner"] = calledNumberBannerEnabled;
   doc["winnerEffect"] = screensaverTypeToString(winnerEffectType);
-  doc["webhookNumberConfigured"] = (webhookNumberUrlBuf[0] != '\0');
-  doc["webhookBingoConfigured"] = (webhookBingoUrlBuf[0] != '\0');
+  doc["webhookConfigured"] = (webhookUrlBuf[0] != '\0');
+  doc["mqttConfigured"] = mqttEnabled && mqttHostBuf[0] != '\0' && mqttTopicBuf[0] != '\0';
+  doc["mqttConnected"] = mqttConnected;
   doc["gifModeEnabled"] = gifModeEnabled;
   // Always include the mapped URL for the current number so HUD can show it as
   // soon as GIFs are turned on (client still gates display on gifModeEnabled).
@@ -3537,6 +3742,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     }
     saveNvsCallingStyleOnly();
     broadcastStateWs("calling_style_changed");
+    emitOutboundEvent(OUT_EVT_CALLING_STYLE_CHANGED, 0);
     sendWsCommandResult(client, requestId, true, 200, "{}");
     return;
   }
@@ -3558,7 +3764,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     recomputeCardWinners();
     saveGameStateSnapshot();
     updateAllLeds();
-    enqueueWebhookNumberCalled(num);
+    emitOutboundEvent(OUT_EVT_NUMBER_CALLED, num);
     broadcastStateWs("number_called");
     broadcastAllCardStatesWs("card_state");
     sendWsCommandResult(client, requestId, true, 200, buildStateJson());
@@ -3580,6 +3786,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     recomputeCardWinners();
     updateAllLeds();
     broadcastStateWs("game_type_changed");
+    emitOutboundEvent(OUT_EVT_GAME_TYPE_CHANGED, 0);
     broadcastAllCardStatesWs("card_state");
     saveNvsGameTypeOnly();
     sendWsCommandResult(client, requestId, true, 200, "{}");
@@ -3601,6 +3808,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     recomputeCardWinners();
     updateAllLeds();
     broadcastStateWs("game_type_changed");
+    emitOutboundEvent(OUT_EVT_GAME_TYPE_CHANGED, 0);
     broadcastAllCardStatesWs("card_state");
     saveNvsGameTypeOnly();
     sendWsCommandResult(client, requestId, true, 200, "{}");
@@ -3614,7 +3822,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     manualWinnerDeclared = true;
     winnerEventId++;
     syncWinnerDeclared();
-    enqueueWebhookBingo(currentNumber);
+    emitOutboundEvent(OUT_EVT_WINNER_DECLARED, currentNumber);
     broadcastStateWs("winner_changed");
     broadcastAllCardStatesWs("card_state");
     sendWsCommandResult(client, requestId, true, 200, "{}");
@@ -3633,6 +3841,7 @@ void handleWsCommand(AsyncWebSocketClient* client, JsonObject obj) {
     recomputeCardWinners();
     updateAllLeds();
     broadcastStateWs("winner_changed");
+    emitOutboundEvent(OUT_EVT_WINNER_CLEARED, 0);
     broadcastAllCardStatesWs("card_state");
     sendWsCommandResult(client, requestId, true, 200, "{}");
     return;
@@ -4285,6 +4494,7 @@ void setup() {
       }
       saveNvsCallingStyleOnly();
       broadcastStateWs("calling_style_changed");
+      emitOutboundEvent(OUT_EVT_CALLING_STYLE_CHANGED, 0);
       req->send(200, "application/json", "{}");
     } else req->send(400, "application/json", "{\"error\":\"invalid\"}");
   }));
@@ -4308,7 +4518,7 @@ void setup() {
     recomputeCardWinners();
     saveGameStateSnapshot();
     updateAllLeds();
-    enqueueWebhookNumberCalled(num);
+    emitOutboundEvent(OUT_EVT_NUMBER_CALLED, num);
     broadcastStateWs("number_called");
     broadcastAllCardStatesWs("card_state");
     sendStateJson(req);
@@ -4327,6 +4537,7 @@ void setup() {
       updateAllLeds();
       req->send(200, "application/json", "{}");
       broadcastStateWs("game_type_changed");
+      emitOutboundEvent(OUT_EVT_GAME_TYPE_CHANGED, 0);
       broadcastAllCardStatesWs("card_state");
       saveNvsGameTypeOnly();
     } else req->send(400, "application/json", "{\"error\":\"invalid\"}");
@@ -4345,6 +4556,7 @@ void setup() {
       updateAllLeds();
       req->send(200, "application/json", "{}");
       broadcastStateWs("game_type_changed");
+      emitOutboundEvent(OUT_EVT_GAME_TYPE_CHANGED, 0);
       broadcastAllCardStatesWs("card_state");
       saveNvsGameTypeOnly();
     } else req->send(400, "application/json", "{\"error\":\"invalid\"}");
@@ -4356,7 +4568,7 @@ void setup() {
     manualWinnerDeclared = true;
     winnerEventId++;
     syncWinnerDeclared();
-    enqueueWebhookBingo(currentNumber);
+    emitOutboundEvent(OUT_EVT_WINNER_DECLARED, currentNumber);
     broadcastStateWs("winner_changed");
     broadcastAllCardStatesWs("card_state");
     req->send(200, "application/json", "{}");
@@ -4372,6 +4584,7 @@ void setup() {
     recomputeCardWinners();
     updateAllLeds();
     broadcastStateWs("winner_changed");
+    emitOutboundEvent(OUT_EVT_WINNER_CLEARED, 0);
     broadcastAllCardStatesWs("card_state");
     req->send(200, "application/json", "{}");
   });
@@ -4400,34 +4613,6 @@ void setup() {
         saveNvsSettings();
         broadcastStateWs("brightness_changed");
       }
-    }
-    req->send(200, "application/json", "{}");
-  }));
-
-  server.on("/vibrance", HTTP_POST, [](AsyncWebServerRequest* req) {
-    if (!requireBoardAuth(req)) return;
-    if (req->hasParam("value", true)) {
-      int v = req->getParam("value", true)->value().toInt();
-      if (v < 0) v = 0;
-      if (v > 100) v = 100;
-      ledVibrance = (uint8_t)v;
-      updateAllLeds();
-      saveNvsSettings();
-      broadcastStateWs("vibrance_changed");
-    }
-    req->send(200, "application/json", "{}");
-  });
-  server.addHandler(new AsyncCallbackJsonWebHandler("/vibrance", [](AsyncWebServerRequest* req, JsonVariant& json) {
-    if (!requireBoardAuth(req)) return;
-    JsonObject obj = json.as<JsonObject>();
-    if (obj.containsKey("value")) {
-      int v = obj["value"].as<int>();
-      if (v < 0) v = 0;
-      if (v > 100) v = 100;
-      ledVibrance = (uint8_t)v;
-      updateAllLeds();
-      saveNvsSettings();
-      broadcastStateWs("vibrance_changed");
     }
     req->send(200, "application/json", "{}");
   }));
@@ -4848,9 +5033,11 @@ void setup() {
 
   server.on("/api/webhooks", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!requireBoardAuth(req)) return;
-    StaticJsonDocument<640> doc;
-    doc["numberCalledUrl"] = webhookNumberUrlBuf;
-    doc["bingoUrl"] = webhookBingoUrlBuf;
+    StaticJsonDocument<768> doc;
+    doc["url"] = webhookUrlBuf;
+    doc["username"] = webhookUserBuf;
+    doc["passwordSet"] = (webhookPassBuf[0] != '\0');
+    appendOutboundEventFlags(doc.to<JsonObject>(), webhookEventFlags);
     String out;
     serializeJson(doc, out);
     req->send(200, "application/json", out);
@@ -4858,14 +5045,66 @@ void setup() {
   server.addHandler(new AsyncCallbackJsonWebHandler("/webhooks", [](AsyncWebServerRequest* req, JsonVariant& json) {
     if (!requireBoardAuth(req)) return;
     JsonObject obj = json.as<JsonObject>();
-    const char* numberUrl = obj["numberCalledUrl"] | "";
-    const char* bingoUrl = obj["bingoUrl"] | "";
-    strncpy(webhookNumberUrlBuf, numberUrl, sizeof(webhookNumberUrlBuf) - 1);
-    webhookNumberUrlBuf[sizeof(webhookNumberUrlBuf) - 1] = '\0';
-    strncpy(webhookBingoUrlBuf, bingoUrl, sizeof(webhookBingoUrlBuf) - 1);
-    webhookBingoUrlBuf[sizeof(webhookBingoUrlBuf) - 1] = '\0';
+    const char* url = obj["url"] | "";
+    strncpy(webhookUrlBuf, url, sizeof(webhookUrlBuf) - 1);
+    webhookUrlBuf[sizeof(webhookUrlBuf) - 1] = '\0';
+    const char* user = obj["username"] | "";
+    strncpy(webhookUserBuf, user, sizeof(webhookUserBuf) - 1);
+    webhookUserBuf[sizeof(webhookUserBuf) - 1] = '\0';
+    if (!obj["password"].isNull()) {
+      const char* pass = obj["password"] | "";
+      strncpy(webhookPassBuf, pass, sizeof(webhookPassBuf) - 1);
+      webhookPassBuf[sizeof(webhookPassBuf) - 1] = '\0';
+    }
+    webhookEventFlags = readOutboundEventFlags(obj, webhookEventFlags);
     saveNvsSettings();
     broadcastStateWs("webhooks_changed");
+    req->send(200, "application/json", "{}");
+  }));
+
+  server.on("/api/mqtt", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!requireBoardAuth(req)) return;
+    StaticJsonDocument<768> doc;
+    doc["enabled"] = mqttEnabled;
+    doc["host"] = mqttHostBuf;
+    doc["port"] = mqttPort;
+    doc["username"] = mqttUserBuf;
+    doc["passwordSet"] = (mqttPassBuf[0] != '\0');
+    doc["topic"] = mqttTopicBuf;
+    doc["useTls"] = mqttUseTls;
+    doc["connected"] = mqttConnected;
+    appendOutboundEventFlags(doc.to<JsonObject>(), mqttEventFlags);
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
+  server.addHandler(new AsyncCallbackJsonWebHandler("/mqtt", [](AsyncWebServerRequest* req, JsonVariant& json) {
+    if (!requireBoardAuth(req)) return;
+    JsonObject obj = json.as<JsonObject>();
+    mqttEnabled = obj["enabled"] | false;
+    const char* host = obj["host"] | "";
+    strncpy(mqttHostBuf, host, sizeof(mqttHostBuf) - 1);
+    mqttHostBuf[sizeof(mqttHostBuf) - 1] = '\0';
+    int port = obj["port"] | MQTT_DEFAULT_PORT;
+    if (port < 1 || port > 65535) port = MQTT_DEFAULT_PORT;
+    mqttPort = (uint16_t)port;
+    const char* user = obj["username"] | "";
+    strncpy(mqttUserBuf, user, sizeof(mqttUserBuf) - 1);
+    mqttUserBuf[sizeof(mqttUserBuf) - 1] = '\0';
+    if (!obj["password"].isNull()) {
+      const char* pass = obj["password"] | "";
+      strncpy(mqttPassBuf, pass, sizeof(mqttPassBuf) - 1);
+      mqttPassBuf[sizeof(mqttPassBuf) - 1] = '\0';
+    }
+    const char* topic = obj["topic"] | "";
+    strncpy(mqttTopicBuf, topic, sizeof(mqttTopicBuf) - 1);
+    mqttTopicBuf[sizeof(mqttTopicBuf) - 1] = '\0';
+    mqttUseTls = obj["useTls"] | false;
+    mqttEventFlags = readOutboundEventFlags(obj, mqttEventFlags);
+    saveNvsSettings();
+    mqttDisconnect();
+    mqttLastReconnectMs = 0;
+    broadcastStateWs("mqtt_changed");
     req->send(200, "application/json", "{}");
   }));
 
@@ -5298,6 +5537,7 @@ void handleButton1ShortPress() {
   recomputeCardWinners();
   updateAllLeds();
   broadcastStateWs("game_type_changed");
+  emitOutboundEvent(OUT_EVT_GAME_TYPE_CHANGED, 0);
   broadcastAllCardStatesWs("card_state");
   saveNvsGameTypeOnly();
 }
@@ -5325,6 +5565,7 @@ void handleButton2LongPress() {
     if (!gameEstablished) gameEstablished = true;
     drawNext();
     broadcastStateWs("calling_style_changed");
+    emitOutboundEvent(OUT_EVT_CALLING_STYLE_CHANGED, 0);
     return;
   }
 
@@ -5337,6 +5578,7 @@ void handleButton2LongPress() {
       claimCurrentWinningPatterns(cardSessions[i]);
     }
     recomputeCardWinners();
+    emitOutboundEvent(OUT_EVT_WINNER_CLEARED, 0);
   } else {
     // Declare winner immediately — skip call-out audio deferral that made
     // physical long-press look like a no-op while autoCallingHold was set.
@@ -5350,7 +5592,7 @@ void handleButton2LongPress() {
     }
     pendingWinnerActivation = false;
     syncWinnerDeclared(true);
-    enqueueWebhookBingo(currentNumber);
+    emitOutboundEvent(OUT_EVT_WINNER_DECLARED, currentNumber);
   }
   updateAllLeds();
   broadcastStateWs("winner_changed");
@@ -5499,6 +5741,8 @@ void loop() {
 
   ws.cleanupClients();
   processWebhookQueue();
+  pollMqttClient();
+  processMqttQueue();
   updateAllLeds();
   FastLED.show();
   delay(20);

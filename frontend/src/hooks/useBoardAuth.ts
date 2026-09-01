@@ -71,15 +71,19 @@ export function useBoardAuth() {
   }, []);
 
   const unlockWithPin = useCallback(
-    async (pin: string) => {
+    async (pin: string, opts?: { closeDialog?: boolean }) => {
       const trimmed = pin.trim();
       if (!trimmed) return false;
       try {
         const result = await api.unlockBoard(trimmed);
         persistSession(result.token, result.ttlMs);
-        setUnlockOpen(false);
         setUnlockError(null);
-        setPendingMode(null);
+        // Caller may keep the dialog open until mode transition finishes — closing
+        // unlock and opening NewGameDialog in the same tick leaves a stuck overlay.
+        if (opts?.closeDialog !== false) {
+          setUnlockOpen(false);
+          setPendingMode(null);
+        }
         return true;
       } catch {
         setUnlockError("Invalid board PIN.");

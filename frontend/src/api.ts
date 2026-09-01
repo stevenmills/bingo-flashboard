@@ -12,6 +12,7 @@ import type {
   CurrentNumberEffect,
   ScreensaverType,
   WebhookSettings,
+  MqttSettings,
   NumberGifSettings,
 } from "./types";
 import {
@@ -556,9 +557,6 @@ const realApi = {
   setBrightness: (value: number) =>
     postForm("/brightness", { value: String(value) }),
 
-  setLedVibrance: (value: number) =>
-    postForm("/vibrance", { value: String(value) }),
-
   setTheme: (theme: number) =>
     postForm("/theme", { id: String(theme) }),
 
@@ -627,6 +625,24 @@ const realApi = {
 
   setWebhooks: (settings: WebhookSettings) =>
     postBoardJson("/webhooks", settings),
+
+  getMqtt: async (): Promise<MqttSettings> => {
+    syncBoardTokenFromStorage();
+    const { signal, cancel } = abortAfterMs(fetchTimeoutMs());
+    try {
+      const headers: Record<string, string> = {};
+      if (boardToken) headers["X-Board-Token"] = boardToken;
+      const res = await fetch(`${BASE}/api/mqtt`, { signal, headers });
+      cancel();
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    } catch (err) {
+      cancel();
+      throw err;
+    }
+  },
+
+  setMqtt: (settings: MqttSettings) => postBoardJson("/mqtt", settings),
 
   getNumberGifs: async (): Promise<NumberGifSettings> => {
     syncBoardTokenFromStorage();
@@ -814,9 +830,6 @@ export const api = {
   setBrightness: async (v: number) =>
     shouldUseMock() ? mockApi.setBrightness(v) : realApi.setBrightness(v),
 
-  setLedVibrance: async (v: number) =>
-    shouldUseMock() ? mockApi.setLedVibrance(v) : realApi.setLedVibrance(v),
-
   setTheme: async (t: number) =>
     shouldUseMock() ? mockApi.setTheme(t) : realApi.setTheme(t),
 
@@ -858,6 +871,12 @@ export const api = {
 
   setWebhooks: async (settings: WebhookSettings) =>
     shouldUseMock() ? mockApi.setWebhooks(settings) : realApi.setWebhooks(settings),
+
+  getMqtt: async (): Promise<MqttSettings> =>
+    shouldUseMock() ? mockApi.getMqtt() : realApi.getMqtt(),
+
+  setMqtt: async (settings: MqttSettings) =>
+    shouldUseMock() ? mockApi.setMqtt(settings) : realApi.setMqtt(settings),
 
   getNumberGifs: async (): Promise<NumberGifSettings> =>
     shouldUseMock() ? mockApi.getNumberGifs() : realApi.getNumberGifs(),

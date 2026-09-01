@@ -75,6 +75,7 @@ export default defineConfig({
       "/called-number-banner": API_TARGET,
       "/winner-effect": API_TARGET,
       "/webhooks": API_TARGET,
+      "/mqtt": API_TARGET,
       "/number-gifs": API_TARGET,
       "/gif-mode": API_TARGET,
       "/wifi": API_TARGET,

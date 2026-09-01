@@ -30,7 +30,6 @@
 #define NVS_THEME     "theme"
 #define NVS_COLOR_MODE "cm"
 #define NVS_STATIC_COLOR "sc"
-#define NVS_LED_VIBRANCE "lv"
 #define NVS_LED_HEADER_COLOR "hc"
 #define NVS_GAME_TYPE_LED_COLOR "gc"
 #define NVS_SCREENSAVER_ENABLED "se"
@@ -62,8 +61,19 @@
 #define NVS_CURRENT_NUM_COLOR "cnc"
 #define NVS_CALLED_NUM_BANNER "cnb"
 #define NVS_WINNER_EFFECT "we"
-#define NVS_WEBHOOK_NUMBER_URL "wnu"
-#define NVS_WEBHOOK_BINGO_URL "wbu"
+#define NVS_WEBHOOK_URL "wnu"
+#define NVS_WEBHOOK_BINGO_URL "wbu"  // legacy; migrated into wnu + flags
+#define NVS_WEBHOOK_FLAGS "wf"
+#define NVS_WEBHOOK_USER "whu"
+#define NVS_WEBHOOK_PASSWORD "whp"
+#define NVS_MQTT_ENABLED "me"
+#define NVS_MQTT_HOST "mh"
+#define NVS_MQTT_PORT "mp"
+#define NVS_MQTT_USER "mu"
+#define NVS_MQTT_PASSWORD "mw"
+#define NVS_MQTT_TOPIC "mt"
+#define NVS_MQTT_TLS "mtt"
+#define NVS_MQTT_FLAGS "mf"
 #define NVS_WIFI_SSID "ws"
 #define NVS_WIFI_PASSWORD "wp"
 #define NVS_GIF_MODE_ENABLED "gme"
@@ -75,6 +85,24 @@
 #define WIFI_SSID_MAX_LEN 32
 #define WIFI_PASSWORD_MAX_LEN 64
 #define WEBHOOK_URL_MAX_LEN 256
+#define WEBHOOK_USER_MAX_LEN 32
+#define WEBHOOK_PASSWORD_MAX_LEN 64
+#define MQTT_HOST_MAX_LEN 64
+#define MQTT_USER_MAX_LEN 32
+#define MQTT_PASSWORD_MAX_LEN 64
+#define MQTT_TOPIC_MAX_LEN 96
+#define MQTT_DEFAULT_PORT 1883
+
+/** Shared outbound event bitflags (webhooks + MQTT). */
+#define OUT_FLAG_NUMBER_CALLED         (1u << 0)
+#define OUT_FLAG_NUMBER_UNDONE         (1u << 1)
+#define OUT_FLAG_WINNER_DECLARED       (1u << 2)
+#define OUT_FLAG_WINNER_CLEARED        (1u << 3)
+#define OUT_FLAG_GAME_STARTED          (1u << 4)
+#define OUT_FLAG_GAME_TYPE_CHANGED     (1u << 5)
+#define OUT_FLAG_CALLING_STYLE_CHANGED (1u << 6)
+#define OUT_FLAG_DEFAULT (OUT_FLAG_NUMBER_CALLED | OUT_FLAG_WINNER_DECLARED)
+
 /** Per-number GIF URL cap (CDN links are often long). */
 #define GIF_URL_MAX_LEN 256
 /** Sparse JSON map blob max size in NVS. */

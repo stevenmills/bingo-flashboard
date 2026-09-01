@@ -25,6 +25,8 @@ import {
   type LetterFullMode,
   type CurrentNumberEffect,
   type LedLetterColors,
+  type OutboundEventFlags,
+  DEFAULT_OUTBOUND_EVENT_FLAGS,
 } from "@/types";
 import {
   BINGO_UI_THEME_LABELS,
@@ -36,7 +38,7 @@ import {
 } from "@/lib/bingo-ui-colors";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { Check, Copy, FileStack, Image, Lightbulb, Lock, MonitorPlay, Palette, Play, Power, RefreshCw, Square, Volume2, Webhook, Wifi, X } from "lucide-react";
+import { Check, Copy, FileStack, Image, Lightbulb, Lock, MonitorPlay, Palette, Play, Power, Radio, RefreshCw, Square, Volume2, Webhook, Wifi, X } from "lucide-react";
 import { buildCardClaimUrl, generateSignedPrintableCards } from "@/lib/bingo-card-codec";
 import {
   CARD_FILL_DEFAULT,
@@ -60,8 +62,19 @@ type SettingsTabId =
   | "cards"
   | "wifi"
   | "webhooks"
+  | "mqtt"
   | "gifs"
   | "access";
+
+const OUTBOUND_EVENT_LABELS: Array<{ key: keyof OutboundEventFlags; label: string }> = [
+  { key: "numberCalled", label: "Number called" },
+  { key: "numberUndone", label: "Number undone" },
+  { key: "winnerDeclared", label: "Winner declared" },
+  { key: "winnerCleared", label: "Winner cleared" },
+  { key: "gameStarted", label: "Game started / reset" },
+  { key: "gameTypeChanged", label: "Game type changed" },
+  { key: "callingStyleChanged", label: "Calling style changed" },
+];
 
 const GIF_URL_MAX_LEN = 256;
 
@@ -154,7 +167,6 @@ interface Props {
   settingsMode: AppMode;
   settingsOpen?: boolean;
   brightness: number;
-  ledVibrance: number;
   theme: number;
   colorMode: ColorMode;
   staticColor: string;
@@ -196,7 +208,6 @@ export function Settings({
   settingsMode,
   settingsOpen = true,
   brightness,
-  ledVibrance,
   theme,
   colorMode,
   staticColor,
@@ -233,7 +244,6 @@ export function Settings({
   onLockAllDevices,
 }: Props) {
   const [localBrightnessPercent, setLocalBrightnessPercent] = useState(rawToPercent(brightness));
-  const [localLedVibrance, setLocalLedVibrance] = useState(ledVibrance);
   const [localCallerSpeechRate, setLocalCallerSpeechRate] = useState(callerSpeechRate);
   const [localCallerVoice, setLocalCallerVoice] = useState<CallerVoiceId>(callerVoice);
   const [callerExamplePlaying, setCallerExamplePlaying] = useState(false);
@@ -258,10 +268,29 @@ export function Settings({
   const [localCurrentNumberColor, setLocalCurrentNumberColor] = useState(currentNumberColor);
   const [localCalledNumberBanner, setLocalCalledNumberBanner] = useState(calledNumberBanner);
   const [localWinnerEffect, setLocalWinnerEffect] = useState<ScreensaverType>(winnerEffect);
-  const [localWebhookNumberUrl, setLocalWebhookNumberUrl] = useState("");
-  const [localWebhookBingoUrl, setLocalWebhookBingoUrl] = useState("");
+  const [localWebhookUrl, setLocalWebhookUrl] = useState("");
+  const [localWebhookUsername, setLocalWebhookUsername] = useState("");
+  const [localWebhookPassword, setLocalWebhookPassword] = useState("");
+  const [webhookPasswordSet, setWebhookPasswordSet] = useState(false);
+  const [localWebhookEvents, setLocalWebhookEvents] = useState<OutboundEventFlags>({
+    ...DEFAULT_OUTBOUND_EVENT_FLAGS,
+  });
   const [webhooksLoaded, setWebhooksLoaded] = useState(false);
   const [webhooksMessage, setWebhooksMessage] = useState<string | null>(null);
+  const [localMqttEnabled, setLocalMqttEnabled] = useState(false);
+  const [localMqttHost, setLocalMqttHost] = useState("");
+  const [localMqttPort, setLocalMqttPort] = useState("1883");
+  const [localMqttUsername, setLocalMqttUsername] = useState("");
+  const [localMqttPassword, setLocalMqttPassword] = useState("");
+  const [mqttPasswordSet, setMqttPasswordSet] = useState(false);
+  const [localMqttTopic, setLocalMqttTopic] = useState("");
+  const [localMqttUseTls, setLocalMqttUseTls] = useState(false);
+  const [localMqttEvents, setLocalMqttEvents] = useState<OutboundEventFlags>({
+    ...DEFAULT_OUTBOUND_EVENT_FLAGS,
+  });
+  const [mqttLoaded, setMqttLoaded] = useState(false);
+  const [mqttMessage, setMqttMessage] = useState<string | null>(null);
+  const [mqttConnectedHint, setMqttConnectedHint] = useState(false);
   const [localGifUrls, setLocalGifUrls] = useState<Record<string, string>>(() => emptyGifUrlDrafts());
   const [gifsLoaded, setGifsLoaded] = useState(false);
   const [gifsMessage, setGifsMessage] = useState<string | null>(null);
@@ -293,7 +322,6 @@ export function Settings({
   const wasSettingsOpenRef = useRef(settingsOpen);
   const serverStateRef = useRef({
     brightness,
-    ledVibrance,
     theme,
     colorMode,
     staticColor,
@@ -315,7 +343,6 @@ export function Settings({
 
   serverStateRef.current = {
     brightness,
-    ledVibrance,
     theme,
     colorMode,
     staticColor,
@@ -350,7 +377,6 @@ export function Settings({
 
     const s = serverStateRef.current;
     setLocalBrightnessPercent(rawToPercent(s.brightness));
-    setLocalLedVibrance(s.ledVibrance);
     setLocalTheme(s.theme);
     setLocalColorMode(s.colorMode);
     setLocalColor(s.staticColor);
@@ -371,6 +397,8 @@ export function Settings({
     setLocalWifiPassword("");
     setWebhooksLoaded(false);
     setWebhooksMessage(null);
+    setMqttLoaded(false);
+    setMqttMessage(null);
     setGifsLoaded(false);
     setGifsMessage(null);
     setGifJsonPaste("");
@@ -547,16 +575,6 @@ export function Settings({
     const percent = value[0];
     setLocalBrightnessPercent(percent);
     persistSetting(() => api.setBrightness(percentToRaw(percent)));
-  };
-
-  const handleLedVibrance = (value: number[]) => {
-    setLocalLedVibrance(value[0]);
-  };
-
-  const handleLedVibranceCommit = (value: number[]) => {
-    const next = value[0];
-    setLocalLedVibrance(next);
-    persistSetting(() => api.setLedVibrance(next));
   };
 
   const handleColorPicker = (e: ChangeEvent<HTMLInputElement>) => {
@@ -766,6 +784,7 @@ export function Settings({
       { id: "cards", label: "Cards", icon: <FileStack className="h-3.5 w-3.5" /> },
       { id: "wifi", label: "WiFi", icon: <Wifi className="h-3.5 w-3.5" /> },
       { id: "webhooks", label: "Webhooks", icon: <Webhook className="h-3.5 w-3.5" /> },
+      { id: "mqtt", label: "MQTT", icon: <Radio className="h-3.5 w-3.5" /> },
       { id: "gifs", label: "GIFs", icon: <Image className="h-3.5 w-3.5" /> },
       { id: "access", label: "Access", icon: <Lock className="h-3.5 w-3.5" /> }
     );
@@ -880,6 +899,7 @@ export function Settings({
 
   useEffect(() => {
     if (settingsTab === "webhooks") loadWebhooks();
+    if (settingsTab === "mqtt") loadMqtt();
     if (settingsTab === "gifs") loadNumberGifs();
   }, [settingsTab, boardAuthGranted]);
 
@@ -956,8 +976,19 @@ export function Settings({
     void api
       .getWebhooks()
       .then((settings) => {
-        setLocalWebhookNumberUrl(settings.numberCalledUrl ?? "");
-        setLocalWebhookBingoUrl(settings.bingoUrl ?? "");
+        setLocalWebhookUrl(settings.url ?? "");
+        setLocalWebhookUsername(settings.username ?? "");
+        setLocalWebhookPassword("");
+        setWebhookPasswordSet(Boolean(settings.passwordSet));
+        setLocalWebhookEvents({
+          numberCalled: Boolean(settings.numberCalled),
+          numberUndone: Boolean(settings.numberUndone),
+          winnerDeclared: Boolean(settings.winnerDeclared),
+          winnerCleared: Boolean(settings.winnerCleared),
+          gameStarted: Boolean(settings.gameStarted),
+          gameTypeChanged: Boolean(settings.gameTypeChanged),
+          callingStyleChanged: Boolean(settings.callingStyleChanged),
+        });
         setWebhooksLoaded(true);
       })
       .catch((error: unknown) => {
@@ -968,18 +999,89 @@ export function Settings({
 
   const handleWebhooksSave = () => {
     setWebhooksMessage(null);
+    const payload: Parameters<typeof api.setWebhooks>[0] = {
+      url: localWebhookUrl.trim(),
+      username: localWebhookUsername.trim(),
+      ...localWebhookEvents,
+    };
+    if (localWebhookPassword.length > 0) {
+      payload.password = localWebhookPassword;
+    } else if (!webhookPasswordSet) {
+      payload.password = "";
+    }
     void api
-      .setWebhooks({
-        numberCalledUrl: localWebhookNumberUrl.trim(),
-        bingoUrl: localWebhookBingoUrl.trim(),
-      })
+      .setWebhooks(payload)
       .then(() => {
         setWebhooksMessage("Webhooks saved.");
+        setLocalWebhookPassword("");
+        if (payload.password !== undefined) setWebhookPasswordSet(payload.password.length > 0);
         onRefresh({ force: true });
       })
       .catch((error: unknown) => {
         handleBoardAuthFailure(error);
         setWebhooksMessage("Unable to save webhooks.");
+      });
+  };
+
+  const loadMqtt = () => {
+    if (!boardAuthGranted || mqttLoaded) return;
+    void api
+      .getMqtt()
+      .then((settings) => {
+        setLocalMqttEnabled(Boolean(settings.enabled));
+        setLocalMqttHost(settings.host ?? "");
+        setLocalMqttPort(String(settings.port || 1883));
+        setLocalMqttUsername(settings.username ?? "");
+        setLocalMqttPassword("");
+        setMqttPasswordSet(Boolean(settings.passwordSet));
+        setLocalMqttTopic(settings.topic ?? "");
+        setLocalMqttUseTls(Boolean(settings.useTls));
+        setMqttConnectedHint(Boolean(settings.connected));
+        setLocalMqttEvents({
+          numberCalled: Boolean(settings.numberCalled),
+          numberUndone: Boolean(settings.numberUndone),
+          winnerDeclared: Boolean(settings.winnerDeclared),
+          winnerCleared: Boolean(settings.winnerCleared),
+          gameStarted: Boolean(settings.gameStarted),
+          gameTypeChanged: Boolean(settings.gameTypeChanged),
+          callingStyleChanged: Boolean(settings.callingStyleChanged),
+        });
+        setMqttLoaded(true);
+      })
+      .catch((error: unknown) => {
+        handleBoardAuthFailure(error);
+        setMqttMessage("Unable to load MQTT settings.");
+      });
+  };
+
+  const handleMqttSave = () => {
+    setMqttMessage(null);
+    const port = Number.parseInt(localMqttPort, 10);
+    const payload: Parameters<typeof api.setMqtt>[0] = {
+      enabled: localMqttEnabled,
+      host: localMqttHost.trim(),
+      port: Number.isFinite(port) && port > 0 ? port : 1883,
+      username: localMqttUsername.trim(),
+      topic: localMqttTopic.trim(),
+      useTls: localMqttUseTls,
+      ...localMqttEvents,
+    };
+    if (localMqttPassword.length > 0) {
+      payload.password = localMqttPassword;
+    } else if (!mqttPasswordSet) {
+      payload.password = "";
+    }
+    void api
+      .setMqtt(payload)
+      .then(() => {
+        setMqttMessage("MQTT settings saved.");
+        setLocalMqttPassword("");
+        if (payload.password !== undefined) setMqttPasswordSet(payload.password.length > 0);
+        onRefresh({ force: true });
+      })
+      .catch((error: unknown) => {
+        handleBoardAuthFailure(error);
+        setMqttMessage("Unable to save MQTT settings.");
       });
   };
 
@@ -1221,7 +1323,7 @@ export function Settings({
               description="Brightness, themes, and how LEDs look during a game."
             >
               <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
-              <SettingsGroup title="Brightness & vibrance">
+              <SettingsGroup title="Brightness">
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <Label>Brightness</Label>
@@ -1236,23 +1338,6 @@ export function Settings({
                     step={1}
                     onValueChange={handleBrightness}
                     onValueCommit={handleBrightnessCommit}
-                    accentColor={letterColors.N}
-                  />
-                </div>
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <Label>LED Vibrance</Label>
-                    <span className="text-sm text-muted-foreground tabular-nums">
-                      {localLedVibrance}%
-                    </span>
-                  </div>
-                  <Slider
-                    value={[localLedVibrance]}
-                    min={0}
-                    max={100}
-                    step={1}
-                    onValueChange={handleLedVibrance}
-                    onValueCommit={handleLedVibranceCommit}
                     accentColor={letterColors.N}
                   />
                 </div>
@@ -2115,16 +2200,16 @@ export function Settings({
           >
             <SettingsPanel
               title="Webhooks"
-              description="POST JSON to these URLs when events happen on the board. Requires home WiFi (STA) — the BINGO access point has no internet route."
+              description="POST JSON to this URL when selected board events happen. Requires home WiFi (STA). Event name is in the JSON body as event."
             >
               <SettingsGroup>
                 <div className="space-y-3">
                   <div className="space-y-1.5">
-                    <Label>Number called URL</Label>
+                    <Label>URL</Label>
                     <Input
-                      value={localWebhookNumberUrl}
-                      onChange={(e) => setLocalWebhookNumberUrl(e.target.value)}
-                      placeholder="https://example.com/hooks/bingo-call"
+                      value={localWebhookUrl}
+                      onChange={(e) => setLocalWebhookUrl(e.target.value)}
+                      placeholder="https://example.com/hooks/bingo"
                       disabled={!boardAuthGranted}
                       maxLength={256}
                       style={{ borderColor: letterColors.N }}
@@ -2134,28 +2219,55 @@ export function Settings({
                       }}
                       onBlur={(e) => blurWithLetterN(e, letterColors.N)}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Body: {"{"} event, number, letter, calledCount, gameType {"}"}
-                    </p>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label>Bingo identified URL</Label>
-                    <Input
-                      value={localWebhookBingoUrl}
-                      onChange={(e) => setLocalWebhookBingoUrl(e.target.value)}
-                      placeholder="https://example.com/hooks/bingo-win"
-                      disabled={!boardAuthGranted}
-                      maxLength={256}
-                      style={{ borderColor: letterColors.N }}
-                      onFocus={(e) => {
-                        loadWebhooks();
-                        focusWithLetterN(e, letterColors.N);
-                      }}
-                      onBlur={(e) => blurWithLetterN(e, letterColors.N)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Body: {"{"} event, winnerCount, winnerEventId, gameType, number {"}"}
-                    </p>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Basic auth username</Label>
+                      <Input
+                        value={localWebhookUsername}
+                        onChange={(e) => setLocalWebhookUsername(e.target.value)}
+                        placeholder="optional"
+                        disabled={!boardAuthGranted}
+                        maxLength={32}
+                        autoComplete="off"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                        onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Basic auth password</Label>
+                      <Input
+                        type="password"
+                        value={localWebhookPassword}
+                        onChange={(e) => setLocalWebhookPassword(e.target.value)}
+                        placeholder={webhookPasswordSet ? "•••••••• (leave blank to keep)" : "optional"}
+                        disabled={!boardAuthGranted}
+                        maxLength={64}
+                        autoComplete="new-password"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                        onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Publish events</Label>
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      {OUTBOUND_EVENT_LABELS.map(({ key, label }) => (
+                        <label key={key} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={localWebhookEvents[key]}
+                            disabled={!boardAuthGranted}
+                            onChange={(e) =>
+                              setLocalWebhookEvents((prev) => ({ ...prev, [key]: e.target.checked }))
+                            }
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
                   </div>
                   <Button
                     type="button"
@@ -2172,6 +2284,155 @@ export function Settings({
                   {wifiMode !== "sta" || !wifiConnected ? (
                     <p className="text-xs text-amber-600 dark:text-amber-400">
                       Board is on the BINGO access point — configure WiFi so outbound webhooks can reach the internet.
+                    </p>
+                  ) : null}
+                </div>
+              </SettingsGroup>
+            </SettingsPanel>
+          </TabsContent>
+
+          <TabsContent
+            value="mqtt"
+            className="mt-0 outline-none"
+            onFocusCapture={loadMqtt}
+          >
+            <SettingsPanel
+              title="MQTT"
+              description="Publish the same event JSON to an MQTT broker over home WiFi (STA)."
+            >
+              <SettingsGroup>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={localMqttEnabled}
+                      disabled={!boardAuthGranted}
+                      onChange={(e) => setLocalMqttEnabled(e.target.checked)}
+                    />
+                    Enable MQTT
+                  </label>
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label>Host</Label>
+                      <Input
+                        value={localMqttHost}
+                        onChange={(e) => setLocalMqttHost(e.target.value)}
+                        placeholder="mqtt.example.com"
+                        disabled={!boardAuthGranted}
+                        maxLength={64}
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => {
+                          loadMqtt();
+                          focusWithLetterN(e, letterColors.N);
+                        }}
+                        onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Port</Label>
+                      <Input
+                        value={localMqttPort}
+                        onChange={(e) => setLocalMqttPort(e.target.value)}
+                        placeholder={localMqttUseTls ? "8883" : "1883"}
+                        disabled={!boardAuthGranted}
+                        inputMode="numeric"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                        onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Topic</Label>
+                    <Input
+                      value={localMqttTopic}
+                      onChange={(e) => setLocalMqttTopic(e.target.value)}
+                      placeholder="bingo/events"
+                      disabled={!boardAuthGranted}
+                      maxLength={96}
+                      style={{ borderColor: letterColors.N }}
+                      onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                      onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                    />
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Username</Label>
+                      <Input
+                        value={localMqttUsername}
+                        onChange={(e) => setLocalMqttUsername(e.target.value)}
+                        placeholder="optional"
+                        disabled={!boardAuthGranted}
+                        maxLength={32}
+                        autoComplete="off"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                        onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Password</Label>
+                      <Input
+                        type="password"
+                        value={localMqttPassword}
+                        onChange={(e) => setLocalMqttPassword(e.target.value)}
+                        placeholder={mqttPasswordSet ? "•••••••• (leave blank to keep)" : "optional"}
+                        disabled={!boardAuthGranted}
+                        maxLength={64}
+                        autoComplete="new-password"
+                        style={{ borderColor: letterColors.N }}
+                        onFocus={(e) => focusWithLetterN(e, letterColors.N)}
+                        onBlur={(e) => blurWithLetterN(e, letterColors.N)}
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={localMqttUseTls}
+                      disabled={!boardAuthGranted}
+                      onChange={(e) => setLocalMqttUseTls(e.target.checked)}
+                    />
+                    Use TLS (insecure cert accepted)
+                  </label>
+                  <div className="space-y-2">
+                    <Label>Publish events</Label>
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      {OUTBOUND_EVENT_LABELS.map(({ key, label }) => (
+                        <label key={key} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={localMqttEvents[key]}
+                            disabled={!boardAuthGranted}
+                            onChange={(e) =>
+                              setLocalMqttEvents((prev) => ({ ...prev, [key]: e.target.checked }))
+                            }
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={handleMqttSave}
+                    disabled={!boardAuthGranted}
+                    className="text-white"
+                    style={{ backgroundColor: letterColors.N }}
+                  >
+                    Save MQTT
+                  </Button>
+                  {mqttMessage && (
+                    <p className="text-xs text-muted-foreground">{mqttMessage}</p>
+                  )}
+                  {mqttLoaded ? (
+                    <p className="text-xs text-muted-foreground">
+                      Broker status: {mqttConnectedHint ? "connected" : "not connected"}
+                    </p>
+                  ) : null}
+                  {wifiMode !== "sta" || !wifiConnected ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Board is on the BINGO access point — configure WiFi so MQTT can reach your broker.
                     </p>
                   ) : null}
                 </div>
